@@ -821,152 +821,154 @@ export default function App() {
               </div>
             </div>
 
-            {summaryTotals ? (
-              <div className="summary-table">
-                <div
-                  className="summary-row clickable"
-                  onClick={() => {
-                    setPositionTab('faturalar')
-                    setTypeFilter('HAVALE')
-                  }}
-                >
-                  <div>HAVALE</div>
-                  <div>{formatMoney(summaryTotals.havaleTutari)}</div>
-                </div>
-                {summaryTotals.iskonto > 0 ? (
-                  <div className="summary-row">
-                    <div>İSKONTO</div>
-                    <div>{formatMoney(summaryTotals.iskonto)}</div>
+            <div className="table-scroll">
+              {summaryTotals ? (
+                <div className="summary-table">
+                  <div
+                    className="summary-row clickable"
+                    onClick={() => {
+                      setPositionTab('faturalar')
+                      setTypeFilter('HAVALE')
+                    }}
+                  >
+                    <div>HAVALE</div>
+                    <div>{formatMoney(summaryTotals.havaleTutari)}</div>
                   </div>
-                ) : null}
-                {summaryTotals.iskontoToplam > 0 ? (
-                  <div className="summary-row">
-                    <div>İSKONTO TOPLAMI</div>
-                    <div>{formatMoney(summaryTotals.iskontoToplam)}</div>
+                  {summaryTotals.iskonto > 0 ? (
+                    <div className="summary-row">
+                      <div>İSKONTO</div>
+                      <div>{formatMoney(summaryTotals.iskonto)}</div>
+                    </div>
+                  ) : null}
+                  {summaryTotals.iskontoToplam > 0 ? (
+                    <div className="summary-row">
+                      <div>İSKONTO TOPLAMI</div>
+                      <div>{formatMoney(summaryTotals.iskontoToplam)}</div>
+                    </div>
+                  ) : null}
+                  <div
+                    className="summary-row clickable"
+                    onClick={() => {
+                      setPositionTab('faturalar')
+                      setTypeFilter('NAKIT')
+                    }}
+                  >
+                    <div>NAKİT TOPLAM</div>
+                    <div>{formatMoney(summaryTotals.nakitToplam)}</div>
                   </div>
-                ) : null}
-                <div
-                  className="summary-row clickable"
-                  onClick={() => {
-                    setPositionTab('faturalar')
-                    setTypeFilter('NAKIT')
-                  }}
-                >
-                  <div>NAKİT TOPLAM</div>
-                  <div>{formatMoney(summaryTotals.nakitToplam)}</div>
+                  <div
+                    className="summary-row clickable"
+                    onClick={() => {
+                      setPositionTab('tahsilatlar')
+                      setTypeFilter('VADETAHHAV')
+                    }}
+                  >
+                    <div>VADELİ TAHSİLAT HAVALE</div>
+                    <div>{formatMoney(summaryTotals.vadeliTahsilatHavale)}</div>
+                  </div>
+                  <div className="summary-row total">
+                    <div>TOPLAM NAKİT (Torba Tutarı)</div>
+                    <div>{formatMoney(summaryTotals.torbaTutari)}</div>
+                  </div>
+                  <div className="summary-row">
+                    <div>FARK (Mutabakat)</div>
+                    <div>{mutabakatSaved ? formatMoney(mutabakatSaved.diffAmount) : '-'}</div>
+                  </div>
                 </div>
-                <div
-                  className="summary-row clickable"
-                  onClick={() => {
-                    setPositionTab('tahsilatlar')
-                    setTypeFilter('VADETAHHAV')
-                  }}
-                >
-                  <div>VADELİ TAHSİLAT HAVALE</div>
-                  <div>{formatMoney(summaryTotals.vadeliTahsilatHavale)}</div>
-                </div>
-                <div className="summary-row total">
-                  <div>TOPLAM NAKİT (Torba Tutarı)</div>
-                  <div>{formatMoney(summaryTotals.torbaTutari)}</div>
-                </div>
-                <div className="summary-row">
-                  <div>FARK (Mutabakat)</div>
-                  <div>{mutabakatSaved ? formatMoney(mutabakatSaved.diffAmount) : '-'}</div>
-                </div>
+              ) : null}
+
+              <div className="table-search">
+                <input
+                  value={detailSearch}
+                  onChange={(e) => setDetailSearch(e.target.value)}
+                  placeholder={positionTab === 'faturalar' ? 'Ara (müşteri, vergi no, fatura no...)' : 'Ara (müşteri, vergi no, fatura no...)'}
+                />
+                <button className="btn btn-secondary" type="button" onClick={() => setDetailSearch('')} disabled={!detailSearch.trim()}>
+                  Temizle
+                </button>
               </div>
-            ) : null}
 
-            <div className="table-search">
-              <input
-                value={detailSearch}
-                onChange={(e) => setDetailSearch(e.target.value)}
-                placeholder={positionTab === 'faturalar' ? 'Ara (müşteri, vergi no, fatura no...)' : 'Ara (müşteri, vergi no, fatura no...)'}
-              />
-              <button className="btn btn-secondary" type="button" onClick={() => setDetailSearch('')} disabled={!detailSearch.trim()}>
-                Temizle
-              </button>
-            </div>
-
-            <div className="table-wrapper">
-              {positionTab === 'faturalar' ? (
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Müşteri</th>
-                      <th>Vergi No</th>
-                      <th>Tutar</th>
-                      <th>Ödeme Tipi</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detailInvoices.length === 0 ? (
+              <div className="table-wrapper">
+                {positionTab === 'faturalar' ? (
+                  <table>
+                    <thead>
                       <tr>
-                        <td colSpan={5} style={{ textAlign: 'center', color: '#718096' }}>
-                          Detay bulunamadı
-                        </td>
+                        <th>Müşteri</th>
+                        <th>Vergi No</th>
+                        <th>Tutar</th>
+                        <th>Ödeme Tipi</th>
+                        <th></th>
                       </tr>
-                    ) : (
-                      detailInvoices.map((inv) => {
-                        const total = invoiceTotalAmount(inv)
-                        const allocs = getInvoiceAllocations(inv, invoiceAllocations)
-                        const selectedAmount = typeFilter ? allocationAmountForType(allocs, typeFilter) : total
-                        return (
-                          <tr key={inv.code}>
-                            <td>{inv.customer.registeredName}</td>
-                            <td>{inv.customer.taxNumber}</td>
-                            <td>{formatMoney(total)}</td>
-                            <td>{typeFilter ? `${paymentTypeLabel(typeFilter)}: ${formatMoney(selectedAmount)}` : allocationSummary(allocs)}</td>
-                            <td>
-                              <button className="btn btn-secondary" type="button" onClick={() => setEditingInvoice(inv)}>
-                                Düzenle
-                              </button>
-                            </td>
-                          </tr>
-                        )
-                      })
-                    )}
-                  </tbody>
-                </table>
-              ) : (
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Müşteri</th>
-                      <th>Ödeme Tipi</th>
-                      <th>Tutar</th>
-                      <th>Tarih</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detailPayments.length === 0 ? (
+                    </thead>
+                    <tbody>
+                      {detailInvoices.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} style={{ textAlign: 'center', color: '#718096' }}>
+                            Detay bulunamadı
+                          </td>
+                        </tr>
+                      ) : (
+                        detailInvoices.map((inv) => {
+                          const total = invoiceTotalAmount(inv)
+                          const allocs = getInvoiceAllocations(inv, invoiceAllocations)
+                          const selectedAmount = typeFilter ? allocationAmountForType(allocs, typeFilter) : total
+                          return (
+                            <tr key={inv.code}>
+                              <td>{inv.customer.registeredName}</td>
+                              <td>{inv.customer.taxNumber}</td>
+                              <td>{formatMoney(total)}</td>
+                              <td>{typeFilter ? `${paymentTypeLabel(typeFilter)}: ${formatMoney(selectedAmount)}` : allocationSummary(allocs)}</td>
+                              <td>
+                                <button className="btn btn-secondary" type="button" onClick={() => setEditingInvoice(inv)}>
+                                  Düzenle
+                                </button>
+                              </td>
+                            </tr>
+                          )
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                ) : (
+                  <table>
+                    <thead>
                       <tr>
-                        <td colSpan={5} style={{ textAlign: 'center', color: '#718096' }}>
-                          Detay bulunamadı
-                        </td>
+                        <th>Müşteri</th>
+                        <th>Ödeme Tipi</th>
+                        <th>Tutar</th>
+                        <th>Tarih</th>
+                        <th></th>
                       </tr>
-                    ) : (
-                      detailPayments.map((r) => {
-                        const selectedAmount = typeFilter ? allocationAmountForType(r.allocs, typeFilter) : r.c.amount
-                        return (
-                          <tr key={r.key}>
-                            <td>{r.c.customer.registeredName}</td>
-                            <td>{typeFilter ? paymentTypeLabel(typeFilter) : r.c.paymentFormDescription ?? r.c.paymentFormCode ?? '-'}</td>
-                            <td>{formatMoney(selectedAmount)}</td>
-                            <td>{formatDateTr(r.c.issueDate)}</td>
-                            <td>
-                              <button className="btn btn-secondary" type="button" onClick={() => setEditingPayment({ collection: r.c, key: r.key })}>
-                                Düzenle
-                              </button>
-                            </td>
-                          </tr>
-                        )
-                      })
-                    )}
-                  </tbody>
-                </table>
-              )}
+                    </thead>
+                    <tbody>
+                      {detailPayments.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} style={{ textAlign: 'center', color: '#718096' }}>
+                            Detay bulunamadı
+                          </td>
+                        </tr>
+                      ) : (
+                        detailPayments.map((r) => {
+                          const selectedAmount = typeFilter ? allocationAmountForType(r.allocs, typeFilter) : r.c.amount
+                          return (
+                            <tr key={r.key}>
+                              <td>{r.c.customer.registeredName}</td>
+                              <td>{typeFilter ? paymentTypeLabel(typeFilter) : r.c.paymentFormDescription ?? r.c.paymentFormCode ?? '-'}</td>
+                              <td>{formatMoney(selectedAmount)}</td>
+                              <td>{formatDateTr(r.c.issueDate)}</td>
+                              <td>
+                                <button className="btn btn-secondary" type="button" onClick={() => setEditingPayment({ collection: r.c, key: r.key })}>
+                                  Düzenle
+                                </button>
+                              </td>
+                            </tr>
+                          )
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
           </div>
 
