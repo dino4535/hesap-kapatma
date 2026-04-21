@@ -39,6 +39,7 @@ export function deriveInvoiceAllocations(inv: Invoice): Allocation[] {
     const amountAllocations: Allocation[] = []
     for (const p of inv.payments) {
       const t = normalizePaymentType(p.paymentFormCode, p.paymentFormDescription)
+      if (t === 'VADETAH' || t === 'VADETAHHAV') continue
       if (!t) continue
       seenTypes.push(t)
       const amount = Number(p.amount) || 0

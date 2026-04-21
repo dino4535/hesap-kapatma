@@ -852,7 +852,13 @@ WHERE i.PositionCode = @PositionCode
         code: String(row.PositionCode ?? ''),
         description: row.PositionDescription ?? undefined,
       },
-      payments: [],
+      payments: [] as Array<{
+        code?: string
+        issueDate?: string
+        amount: number
+        paymentFormCode?: string
+        paymentFormDescription?: string
+      }>,
       source: row.SourceFileName
         ? {
             fileName: String(row.SourceFileName),
@@ -888,6 +894,25 @@ WHERE i.PositionCode = @PositionCode
           }
         : undefined,
     }))
+
+    const paymentsByInvoiceCode = new Map<string, Array<{ code?: string; issueDate?: string; amount: number; paymentFormCode?: string; paymentFormDescription?: string }>>()
+    for (const c of collections) {
+      const invoiceCode = (c.invoiceCode ?? '').trim()
+      if (!invoiceCode) continue
+      const arr = paymentsByInvoiceCode.get(invoiceCode) ?? []
+      arr.push({
+        code: c.code,
+        issueDate: c.issueDate,
+        amount: Number(c.amount ?? 0),
+        paymentFormCode: c.paymentFormCode,
+        paymentFormDescription: c.paymentFormDescription,
+      })
+      paymentsByInvoiceCode.set(invoiceCode, arr)
+    }
+
+    for (const inv of invoices) {
+      inv.payments = paymentsByInvoiceCode.get(inv.code) ?? []
+    }
 
     const invoiceAllocations: Record<string, unknown> = {}
     for (const row of invAllocRes.recordset ?? []) {
