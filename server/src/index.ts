@@ -366,9 +366,70 @@ WHEN NOT MATCHED THEN INSERT (
   return { paymentCount: 0 }
 }
 
+async function ensureInvoiceStub(pool: mssql.ConnectionPool, args: {
+  invoiceCode: string
+  positionCode?: string
+  positionDescription?: string
+  customerCode?: string
+  customerName?: string
+  customerTaxNumber?: string
+  customerLicenseNumber?: string
+  source: SalesFileMeta
+}) {
+  const invoiceCode = args.invoiceCode.trim()
+  if (!invoiceCode) return
+
+  const positionCode = (args.positionCode ?? '').trim() || 'Bilinmeyen'
+  const customerName = (args.customerName ?? '').trim() || '-'
+
+  await pool
+    .request()
+    .input('Code', mssql.NVarChar(64), invoiceCode)
+    .input('SalesType', mssql.NVarChar(32), 'UNKNOWN')
+    .input('NetAmount', mssql.Decimal(18, 4), 0)
+    .input('CustomerCode', mssql.NVarChar(64), args.customerCode ?? null)
+    .input('CustomerName', mssql.NVarChar(256), customerName)
+    .input('CustomerTaxNumber', mssql.NVarChar(64), args.customerTaxNumber ?? null)
+    .input('CustomerLicenseNumber', mssql.NVarChar(64), args.customerLicenseNumber ?? null)
+    .input('PositionCode', mssql.NVarChar(64), positionCode)
+    .input('PositionDescription', mssql.NVarChar(256), args.positionDescription ?? null)
+    .input('SourceFileName', mssql.NVarChar(260), args.source.fileName)
+    .input('SourceFileDate', mssql.Date, args.source.fileDate ? new Date(args.source.fileDate) : null)
+    .input('SourceDepotCode', mssql.NVarChar(32), args.source.depotCode ?? null)
+    .query(
+      `
+IF NOT EXISTS (SELECT 1 FROM dbo.Invoices WHERE Code = @Code)
+BEGIN
+  INSERT INTO dbo.Invoices (
+    Code, SalesType, NetAmount,
+    CustomerCode, CustomerName, CustomerTaxNumber, CustomerLicenseNumber,
+    PositionCode, PositionDescription,
+    SourceFileName, SourceFileDate, SourceDepotCode
+  ) VALUES (
+    @Code, @SalesType, @NetAmount,
+    @CustomerCode, @CustomerName, @CustomerTaxNumber, @CustomerLicenseNumber,
+    @PositionCode, @PositionDescription,
+    @SourceFileName, @SourceFileDate, @SourceDepotCode
+  );
+END
+`,
+    )
+}
+
 async function insertCollection(pool: mssql.ConnectionPool, c: RawCollection, source: SalesFileMeta) {
   const invoiceCode = toStringOrUndef(c.INVOICE_CODE) ?? ''
   if (!invoiceCode) return
+
+  await ensureInvoiceStub(pool, {
+    invoiceCode,
+    positionCode: toStringOrUndef(c.POSITION?.CODE),
+    positionDescription: toStringOrUndef(c.POSITION?.DESCRIPTION),
+    customerCode: toStringOrUndef(c.CUSTOMER?.CODE),
+    customerName: toStringOrUndef(c.CUSTOMER?.REGISTEREDNAME),
+    customerTaxNumber: toStringOrUndef(c.CUSTOMER?.TAXNUMBER),
+    customerLicenseNumber: toStringOrUndef(c.CUSTOMER?.LICENSENUMBER),
+    source,
+  })
 
   const code = toStringOrUndef(c.CODE)
   const issueDate = toStringOrUndef(c.ISSUEDATE)
