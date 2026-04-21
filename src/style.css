@@ -6,7 +6,18 @@
 
 body {
   font-family: 'Segoe UI', sans-serif;
-  background: #f5f7fa;
+  background: radial-gradient(1200px 600px at 20% 10%, #e6f0ff 0%, rgba(230, 240, 255, 0) 60%),
+    radial-gradient(900px 500px at 80% 0%, #efe6ff 0%, rgba(239, 230, 255, 0) 55%), #f5f7fa;
+  padding: 0;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.app-container {
+  max-width: 1200px;
+  margin: 0 auto;
   padding: 20px;
 }
 
@@ -72,6 +83,11 @@ body {
   gap: 15px;
   margin-bottom: 20px;
   flex-wrap: wrap;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  padding: 14px 16px;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.06);
 }
 
 .filter-group {
@@ -344,8 +360,16 @@ td {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 0;
+  padding: 14px 16px;
   margin-bottom: 12px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  border-radius: 12px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.06);
+  position: sticky;
+  top: 12px;
+  z-index: 1000;
+  backdrop-filter: blur(8px);
 }
 
 .topbar-left {
@@ -370,7 +394,7 @@ td {
 }
 
 .page {
-  min-height: calc(100vh - 40px);
+  min-height: 100vh;
   display: grid;
   place-items: center;
 }

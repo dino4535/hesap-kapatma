@@ -1,5 +1,14 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
-import { fetchPositionData, fetchPositions, importSalesFiles, saveInvoiceAllocationsSql, savePaymentAllocationsSql, type PositionRow } from './data/api'
+import {
+  fetchImportFiles,
+  fetchPositionData,
+  fetchPositions,
+  importSalesFiles,
+  saveInvoiceAllocationsSql,
+  savePaymentAllocationsSql,
+  type ImportFileRow,
+  type PositionRow,
+} from './data/api'
 import { clearSessionUser, loadSessionUser, saveSessionUser } from './data/local'
 import { toCsv } from './domain/csv'
 import { transferAmount, type Allocation, allocationAmountForType, computePaymentKey, getInvoiceAllocations, getPaymentAllocations, invoiceTotalAmount } from './domain/allocations'
@@ -178,6 +187,9 @@ export default function App() {
   const [fileInputKey, setFileInputKey] = useState(0)
   const [selectedPosition, setSelectedPosition] = useState<string | null>(null)
 
+  const [importFiles, setImportFiles] = useState<ImportFileRow[]>([])
+  const [selectedDatasetKey, setSelectedDatasetKey] = useState<string>('')
+
   const [positions, setPositions] = useState<PositionRow[]>([])
   const [positionsLoading, setPositionsLoading] = useState(false)
 
@@ -194,8 +206,45 @@ export default function App() {
 
   useEffect(() => {
     if (!currentUser) return
+    fetchImportFiles()
+      .then((r) => {
+        if (!r.ok) throw new Error(r.message || 'Import listesi alınamadı')
+        setImportFiles(r.files)
+        if (r.files.length > 0 && !selectedDatasetKey) {
+          const first = r.files[0]
+          const key = `${first.fileDate ?? ''}|${first.depotCode ?? ''}`
+          setSelectedDatasetKey(key)
+        }
+      })
+      .catch((e) => {
+        setStatus({ type: 'error', message: e instanceof Error ? e.message : 'Import listesi alınamadı' })
+        setImportFiles([])
+      })
+  }, [currentUser, selectedDatasetKey])
+
+  const selectedDataset = useMemo(() => {
+    if (selectedDatasetKey === 'all') return { date: null as string | null, depot: null as string | null }
+    const [date, depot] = selectedDatasetKey.split('|')
+    return { date: date || null, depot: depot || null }
+  }, [selectedDatasetKey])
+
+  const datasetOptions = useMemo(() => {
+    const seen = new Set<string>()
+    const items: Array<{ key: string; label: string; date?: string; depot?: string }> = []
+    for (const f of importFiles) {
+      const key = `${f.fileDate ?? ''}|${f.depotCode ?? ''}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      const parts = [f.fileDate ?? 'Tarih yok', f.depotCode ? `Depo: ${f.depotCode}` : null].filter(Boolean)
+      items.push({ key, label: parts.join(' • '), date: f.fileDate, depot: f.depotCode })
+    }
+    return items
+  }, [importFiles])
+
+  useEffect(() => {
+    if (!currentUser) return
     setPositionsLoading(true)
-    fetchPositions()
+    fetchPositions({ date: selectedDataset.date, depot: selectedDataset.depot })
       .then((r) => {
         if (!r.ok) throw new Error(r.message || 'Pozisyonlar alınamadı')
         setPositions(r.positions)
@@ -205,13 +254,13 @@ export default function App() {
         setPositions([])
       })
       .finally(() => setPositionsLoading(false))
-  }, [currentUser])
+  }, [currentUser, selectedDataset.date, selectedDataset.depot])
 
   useEffect(() => {
     if (!currentUser) return
     if (!selectedPosition) return
     setStatus({ type: 'info', message: 'Pozisyon verisi alınıyor...' })
-    fetchPositionData(selectedPosition)
+    fetchPositionData(selectedPosition, { date: selectedDataset.date, depot: selectedDataset.depot })
       .then((r) => {
         if (!r.ok) throw new Error(r.message || 'Pozisyon verisi alınamadı')
         const inv = r.invoices as Invoice[]
@@ -237,7 +286,7 @@ export default function App() {
         setPaymentAllocations({})
         setStatus({ type: 'error', message: e instanceof Error ? e.message : 'Pozisyon verisi alınamadı' })
       })
-  }, [currentUser, selectedPosition])
+  }, [currentUser, selectedPosition, selectedDataset.date, selectedDataset.depot])
 
   const onLogin = (userId: string) => {
     saveSessionUser(userId)
@@ -275,14 +324,17 @@ export default function App() {
             ? ` (Atlandı: ${skippedFileCount} dosya, ${skippedPositionsCount} pozisyon)`
             : ''),
       })
-      setPositionsLoading(true)
-      const pos = await fetchPositions()
-      if (pos.ok) setPositions(pos.positions)
+      const list = await fetchImportFiles()
+      if (list.ok) {
+        setImportFiles(list.files)
+        const firstImported = imported[0]
+        if (firstImported?.fileDate) {
+          setSelectedDatasetKey(`${firstImported.fileDate ?? ''}|${firstImported.depotCode ?? ''}`)
+        }
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Import sırasında hata oluştu'
       setStatus({ type: 'error', message: msg })
-    } finally {
-      setPositionsLoading(false)
     }
 
     setSelectedFiles([])
@@ -439,11 +491,16 @@ export default function App() {
   if (!currentUser) return <LoginPage onLogin={onLogin} />
 
   return (
-    <div>
+    <div className="app-shell">
+      <div className="app-container">
       <div className="topbar">
         <div className="topbar-left">
           <div className="app-title">Hesap Kapatma</div>
-          <div className="app-subtitle">{currentUser}</div>
+          <div className="app-subtitle">
+            {currentUser}
+            {selectedDataset.date ? ` • ${selectedDataset.date}` : ''}
+            {selectedDataset.depot ? ` • ${selectedDataset.depot}` : ''}
+          </div>
         </div>
         <div className="topbar-right">
           {selectedPosition ? (
@@ -470,6 +527,28 @@ export default function App() {
           <div className="header">
             <h1>Hesap Kapatma</h1>
             <p>Kullanıcı bazlı ekran</p>
+          </div>
+
+          <div className="filters">
+            <div className="filter-group">
+              <label>Tarih / Depo</label>
+              <select
+                value={selectedDatasetKey}
+                onChange={(e) => {
+                  setSelectedDatasetKey(e.target.value)
+                  setSelectedPosition(null)
+                  setTypeFilter(null)
+                  setPositionTab('faturalar')
+                }}
+              >
+                <option value="all">Tümü</option>
+                {datasetOptions.map((d) => (
+                  <option key={d.key} value={d.key}>
+                    {d.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="upload-section">
@@ -802,6 +881,7 @@ export default function App() {
           </Modal>
         </>
       )}
+      </div>
     </div>
   )
 }

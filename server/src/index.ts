@@ -648,17 +648,71 @@ app.post('/api/import', upload.array('files'), async (req, res) => {
   }
 })
 
-app.get('/api/positions', async (_req, res) => {
+app.get('/api/import-files', async (_req, res) => {
   try {
     const pool = await getPool()
     await ensureSchema(pool)
     const r = await pool.request().query(`
+SELECT
+  FileName AS fileName,
+  FileDate AS fileDate,
+  DepotCode AS depotCode,
+  ImportedAt AS importedAt,
+  InvoiceCount AS invoiceCount,
+  PaymentCount AS paymentCount
+FROM dbo.ImportFiles
+ORDER BY FileDate DESC, ImportedAt DESC
+`)
+    const files = (r.recordset ?? []).map((row) => ({
+      fileName: String(row.fileName ?? ''),
+      fileDate: row.fileDate ? new Date(row.fileDate).toISOString().slice(0, 10) : undefined,
+      depotCode: row.depotCode ?? undefined,
+      importedAt: row.importedAt ? new Date(row.importedAt).toISOString() : undefined,
+      invoiceCount: Number(row.invoiceCount ?? 0),
+      paymentCount: Number(row.paymentCount ?? 0),
+    }))
+    res.json({ ok: true, files })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
+function parseQueryDate(value: unknown) {
+  if (typeof value !== 'string') return { ok: true as const, date: null as Date | null }
+  const s = value.trim()
+  if (!s) return { ok: true as const, date: null as Date | null }
+  const d = new Date(s)
+  if (Number.isNaN(d.getTime())) return { ok: false as const, error: 'Geçersiz tarih formatı (YYYY-MM-DD bekleniyor)' }
+  return { ok: true as const, date: d }
+}
+
+app.get('/api/positions', async (req, res) => {
+  try {
+    const parsedDate = parseQueryDate(req.query.date)
+    if (!parsedDate.ok) {
+      res.status(400).send(parsedDate.error)
+      return
+    }
+    const depot = typeof req.query.depot === 'string' ? req.query.depot.trim() : ''
+    const sourceFileDate = parsedDate.date
+    const sourceDepotCode = depot || null
+
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const r = await pool
+      .request()
+      .input('SourceFileDate', mssql.Date, sourceFileDate)
+      .input('SourceDepotCode', mssql.NVarChar(32), sourceDepotCode)
+      .query(`
 SELECT
   PositionCode AS code,
   MAX(PositionDescription) AS description,
   COUNT(1) AS invoiceCount
 FROM dbo.Invoices
 WHERE PositionCode IS NOT NULL AND LTRIM(RTRIM(PositionCode)) <> ''
+  AND (@SourceFileDate IS NULL OR SourceFileDate = @SourceFileDate)
+  AND (@SourceDepotCode IS NULL OR SourceDepotCode = @SourceDepotCode)
 GROUP BY PositionCode
 ORDER BY PositionCode
 `)
@@ -677,12 +731,23 @@ app.get('/api/positions/:code', async (req, res) => {
       return
     }
 
+    const parsedDate = parseQueryDate(req.query.date)
+    if (!parsedDate.ok) {
+      res.status(400).send(parsedDate.error)
+      return
+    }
+    const depot = typeof req.query.depot === 'string' ? req.query.depot.trim() : ''
+    const sourceFileDate = parsedDate.date
+    const sourceDepotCode = depot || null
+
     const pool = await getPool()
     await ensureSchema(pool)
 
     const invRes = await pool
       .request()
       .input('PositionCode', mssql.NVarChar(64), positionCode)
+      .input('SourceFileDate', mssql.Date, sourceFileDate)
+      .input('SourceDepotCode', mssql.NVarChar(32), sourceDepotCode)
       .query(
         `
 SELECT
@@ -692,6 +757,8 @@ SELECT
   SourceFileName, SourceFileDate, SourceDepotCode
 FROM dbo.Invoices
 WHERE PositionCode = @PositionCode
+  AND (@SourceFileDate IS NULL OR SourceFileDate = @SourceFileDate)
+  AND (@SourceDepotCode IS NULL OR SourceDepotCode = @SourceDepotCode)
 ORDER BY Code
 `,
       )
@@ -699,6 +766,8 @@ ORDER BY Code
     const payRes = await pool
       .request()
       .input('PositionCode', mssql.NVarChar(64), positionCode)
+      .input('SourceFileDate', mssql.Date, sourceFileDate)
+      .input('SourceDepotCode', mssql.NVarChar(32), sourceDepotCode)
       .query(
         `
 SELECT
@@ -721,6 +790,8 @@ SELECT
 FROM dbo.Payments p
 JOIN dbo.Invoices i ON i.Code = p.InvoiceCode
 WHERE i.PositionCode = @PositionCode
+  AND (@SourceFileDate IS NULL OR i.SourceFileDate = @SourceFileDate)
+  AND (@SourceDepotCode IS NULL OR i.SourceDepotCode = @SourceDepotCode)
 ORDER BY p.Id
 `,
       )
@@ -728,18 +799,24 @@ ORDER BY p.Id
     const invAllocRes = await pool
       .request()
       .input('PositionCode', mssql.NVarChar(64), positionCode)
+      .input('SourceFileDate', mssql.Date, sourceFileDate)
+      .input('SourceDepotCode', mssql.NVarChar(32), sourceDepotCode)
       .query(
         `
 SELECT ia.InvoiceCode, ia.AllocationsJson
 FROM dbo.InvoiceAllocations ia
 JOIN dbo.Invoices i ON i.Code = ia.InvoiceCode
 WHERE i.PositionCode = @PositionCode
+  AND (@SourceFileDate IS NULL OR i.SourceFileDate = @SourceFileDate)
+  AND (@SourceDepotCode IS NULL OR i.SourceDepotCode = @SourceDepotCode)
 `,
       )
 
     const payAllocRes = await pool
       .request()
       .input('PositionCode', mssql.NVarChar(64), positionCode)
+      .input('SourceFileDate', mssql.Date, sourceFileDate)
+      .input('SourceDepotCode', mssql.NVarChar(32), sourceDepotCode)
       .query(
         `
 SELECT pa.PaymentKey, pa.AllocationsJson
@@ -747,6 +824,8 @@ FROM dbo.PaymentAllocations pa
 JOIN dbo.Payments p ON p.PaymentKey = pa.PaymentKey
 JOIN dbo.Invoices i ON i.Code = p.InvoiceCode
 WHERE i.PositionCode = @PositionCode
+  AND (@SourceFileDate IS NULL OR i.SourceFileDate = @SourceFileDate)
+  AND (@SourceDepotCode IS NULL OR i.SourceDepotCode = @SourceDepotCode)
 `,
       )
 

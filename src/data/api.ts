@@ -14,6 +14,15 @@ export interface ImportResult {
   message?: string
 }
 
+export interface ImportFileRow {
+  fileName: string
+  fileDate?: string
+  depotCode?: string
+  importedAt?: string
+  invoiceCount: number
+  paymentCount: number
+}
+
 export async function importSalesFiles(files: File[]): Promise<ImportResult> {
   const form = new FormData()
   for (const f of files) form.append('files', f, f.name)
@@ -26,14 +35,30 @@ export async function importSalesFiles(files: File[]): Promise<ImportResult> {
   return (await res.json()) as ImportResult
 }
 
+export async function fetchImportFiles(): Promise<{ ok: boolean; files: ImportFileRow[]; message?: string }> {
+  const res = await fetch('/api/import-files')
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, files: [], message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; files: ImportFileRow[] }
+}
+
 export interface PositionRow {
   code: string
   description?: string
   invoiceCount: number
 }
 
-export async function fetchPositions(): Promise<{ ok: boolean; positions: PositionRow[]; message?: string }> {
-  const res = await fetch('/api/positions')
+export async function fetchPositions(args?: {
+  date?: string | null
+  depot?: string | null
+}): Promise<{ ok: boolean; positions: PositionRow[]; message?: string }> {
+  const qs = new URLSearchParams()
+  if (args?.date) qs.set('date', args.date)
+  if (args?.depot) qs.set('depot', args.depot)
+  const url = qs.toString() ? `/api/positions?${qs.toString()}` : '/api/positions'
+  const res = await fetch(url)
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     return { ok: false, positions: [], message: text || `HTTP ${res.status}` }
@@ -41,7 +66,10 @@ export async function fetchPositions(): Promise<{ ok: boolean; positions: Positi
   return (await res.json()) as { ok: boolean; positions: PositionRow[] }
 }
 
-export async function fetchPositionData(positionCode: string): Promise<{
+export async function fetchPositionData(
+  positionCode: string,
+  args?: { date?: string | null; depot?: string | null },
+): Promise<{
   ok: boolean
   positionCode: string
   invoices: unknown[]
@@ -50,7 +78,13 @@ export async function fetchPositionData(positionCode: string): Promise<{
   paymentAllocations: Record<string, unknown>
   message?: string
 }> {
-  const res = await fetch(`/api/positions/${encodeURIComponent(positionCode)}`)
+  const qs = new URLSearchParams()
+  if (args?.date) qs.set('date', args.date)
+  if (args?.depot) qs.set('depot', args.depot)
+  const url = qs.toString()
+    ? `/api/positions/${encodeURIComponent(positionCode)}?${qs.toString()}`
+    : `/api/positions/${encodeURIComponent(positionCode)}`
+  const res = await fetch(url)
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     return {
