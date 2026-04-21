@@ -61,6 +61,20 @@ type RawInvoice = {
   PAYMENTS?: unknown
 }
 
+type RawInvoicePayment = {
+  CODE?: unknown
+  ISSUEDATE?: unknown
+  AMOUNT?: unknown
+  PAYMENTFORM?: {
+    CODE?: unknown
+    DESCRIPTION?: unknown
+  }
+  PAYMENT_FORM?: {
+    CODE?: unknown
+    DESCRIPTION?: unknown
+  }
+}
+
 type RawCollection = {
   POSITION?: {
     CODE?: unknown
@@ -85,6 +99,17 @@ type RawCollection = {
 const toStringOrUndef = (v: unknown) => (typeof v === 'string' ? v : undefined)
 const toNumberOrUndef = (v: unknown) => (typeof v === 'number' ? v : undefined)
 
+function toNumberFlexible(v: unknown) {
+  const n = toNumberOrUndef(v)
+  if (typeof n === 'number') return n
+  if (typeof v !== 'string') return undefined
+  const s = v.trim()
+  if (!s) return undefined
+  const cleaned = s.replaceAll('.', '').replace(',', '.')
+  const parsed = Number(cleaned)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
 function safeDate(value?: string) {
   if (!value) return null
   const d = new Date(value)
@@ -96,6 +121,10 @@ function safeDate(value?: string) {
 
 function computePaymentKey(invoiceCode: string, p: { code?: string; issueDate?: string; amount: number; formCode?: string }) {
   return `${invoiceCode}|${p.code ?? ''}|${p.issueDate ?? ''}|${p.amount}|${p.formCode ?? ''}`
+}
+
+function computeInvoicePaymentKey(invoiceCode: string, p: { code?: string; issueDate?: string; amount: number; formCode?: string }) {
+  return `INV|${computePaymentKey(invoiceCode, p)}`
 }
 
 let poolPromise: Promise<mssql.ConnectionPool> | null = null
@@ -198,6 +227,11 @@ BEGIN
     SourceFileName NVARCHAR(260) NULL,
     CONSTRAINT FK_Payments_Invoices FOREIGN KEY (InvoiceCode) REFERENCES dbo.Invoices(Code)
   );
+END
+
+IF COL_LENGTH('dbo.Payments', 'PaymentSource') IS NULL
+BEGIN
+  ALTER TABLE dbo.Payments ADD PaymentSource NVARCHAR(16) NOT NULL CONSTRAINT DF_Payments_PaymentSource DEFAULT ('COLLECTION');
 END
 
 IF OBJECT_ID('dbo.InvoiceAllocations', 'U') IS NULL
@@ -363,7 +397,49 @@ WHEN NOT MATCHED THEN INSERT (
 );
 `)
 
-  return { paymentCount: 0 }
+  let paymentCount = 0
+  if (Array.isArray(inv.PAYMENTS)) {
+    for (const raw of inv.PAYMENTS as RawInvoicePayment[]) {
+      if (!raw || typeof raw !== 'object') continue
+      const pCode = toStringOrUndef(raw.CODE)
+      const pIssueDate = toStringOrUndef(raw.ISSUEDATE)
+      const pAmount = toNumberFlexible(raw.AMOUNT) ?? 0
+      if (pAmount <= 0) continue
+
+      const form = (raw.PAYMENTFORM ?? raw.PAYMENT_FORM) as { CODE?: unknown; DESCRIPTION?: unknown } | undefined
+      const formCode = toStringOrUndef(form?.CODE)
+      const formDesc = toStringOrUndef(form?.DESCRIPTION)
+
+      const paymentKey = computeInvoicePaymentKey(code, { code: pCode ?? undefined, issueDate: pIssueDate ?? undefined, amount: pAmount, formCode })
+
+      const insertRes = await pool
+        .request()
+        .input('PaymentKey', mssql.NVarChar(300), paymentKey)
+        .input('InvoiceCode', mssql.NVarChar(64), code)
+        .input('Code', mssql.NVarChar(64), pCode ?? null)
+        .input('IssueDate', mssql.DateTime2(0), safeDate(pIssueDate ?? undefined))
+        .input('Amount', mssql.Decimal(18, 4), pAmount)
+        .input('PaymentFormCode', mssql.NVarChar(32), formCode ?? null)
+        .input('PaymentFormDescription', mssql.NVarChar(64), formDesc ?? null)
+        .input('SourceFileName', mssql.NVarChar(260), source.fileName)
+        .input('PaymentSource', mssql.NVarChar(16), 'INVOICE')
+        .query(`
+DECLARE @Inserted BIT = 0;
+IF NOT EXISTS (SELECT 1 FROM dbo.Payments WHERE PaymentKey = @PaymentKey)
+BEGIN
+  INSERT INTO dbo.Payments (PaymentKey, InvoiceCode, Code, IssueDate, Amount, PaymentFormCode, PaymentFormDescription, SourceFileName, PaymentSource)
+  VALUES (@PaymentKey, @InvoiceCode, @Code, @IssueDate, @Amount, @PaymentFormCode, @PaymentFormDescription, @SourceFileName, @PaymentSource);
+  SET @Inserted = 1;
+END
+SELECT @Inserted AS Inserted;
+`)
+
+      const inserted = Boolean((insertRes.recordset?.[0] as { Inserted?: unknown } | undefined)?.Inserted)
+      if (inserted) paymentCount += 1
+    }
+  }
+
+  return { paymentCount }
 }
 
 async function ensureInvoiceStub(pool: mssql.ConnectionPool, args: {
@@ -468,17 +544,7 @@ async function importFile(pool: mssql.ConnectionPool, fileName: string, content:
   const existingRow = existing.recordset?.[0] as
     | { FileName: string; FileDate: Date | null; DepotCode: string | null; InvoiceCount: number; PaymentCount: number }
     | undefined
-  if (existingRow) {
-    return {
-      fileName: existingRow.FileName,
-      fileDate: existingRow.FileDate ? existingRow.FileDate.toISOString().slice(0, 10) : meta.fileDate,
-      depotCode: existingRow.DepotCode ?? meta.depotCode,
-      invoiceCount: existingRow.InvoiceCount,
-      paymentCount: existingRow.PaymentCount,
-      skipped: true,
-      skippedPositions: [],
-    }
-  }
+  const isReprocess = !!existingRow
 
   const parsed = JSON.parse(content) as RawSalesFile
   if (!parsed || !Array.isArray(parsed.INVOICES)) {
@@ -489,7 +555,7 @@ async function importFile(pool: mssql.ConnectionPool, fileName: string, content:
   const collections = Array.isArray(parsed.COLLECTIONS) ? (parsed.COLLECTIONS as RawCollection[]) : []
 
   let skippedPositions: string[] = []
-  if (meta.fileDate) {
+  if (meta.fileDate && !isReprocess) {
     const r = await pool
       .request()
       .input('SourceFileDate', mssql.Date, new Date(meta.fileDate))
@@ -543,9 +609,9 @@ END
 `)
 
   return {
-    fileName: meta.fileName,
-    fileDate: meta.fileDate,
-    depotCode: meta.depotCode,
+    fileName: existingRow?.FileName ?? meta.fileName,
+    fileDate: meta.fileDate ?? (existingRow?.FileDate ? existingRow.FileDate.toISOString().slice(0, 10) : undefined),
+    depotCode: meta.depotCode ?? (existingRow?.DepotCode ?? undefined),
     invoiceCount,
     paymentCount,
     skipped: false,
@@ -790,6 +856,31 @@ SELECT
 FROM dbo.Payments p
 JOIN dbo.Invoices i ON i.Code = p.InvoiceCode
 WHERE i.PositionCode = @PositionCode
+  AND p.PaymentSource = 'COLLECTION'
+  AND (@SourceFileDate IS NULL OR i.SourceFileDate = @SourceFileDate)
+  AND (@SourceDepotCode IS NULL OR i.SourceDepotCode = @SourceDepotCode)
+ORDER BY p.Id
+`,
+      )
+
+    const invPayRes = await pool
+      .request()
+      .input('PositionCode', mssql.NVarChar(64), positionCode)
+      .input('SourceFileDate', mssql.Date, sourceFileDate)
+      .input('SourceDepotCode', mssql.NVarChar(32), sourceDepotCode)
+      .query(
+        `
+SELECT
+  p.InvoiceCode,
+  p.Code,
+  p.IssueDate,
+  p.Amount,
+  p.PaymentFormCode,
+  p.PaymentFormDescription
+FROM dbo.Payments p
+JOIN dbo.Invoices i ON i.Code = p.InvoiceCode
+WHERE i.PositionCode = @PositionCode
+  AND p.PaymentSource = 'INVOICE'
   AND (@SourceFileDate IS NULL OR i.SourceFileDate = @SourceFileDate)
   AND (@SourceDepotCode IS NULL OR i.SourceDepotCode = @SourceDepotCode)
 ORDER BY p.Id
@@ -895,17 +986,20 @@ WHERE i.PositionCode = @PositionCode
         : undefined,
     }))
 
-    const paymentsByInvoiceCode = new Map<string, Array<{ code?: string; issueDate?: string; amount: number; paymentFormCode?: string; paymentFormDescription?: string }>>()
-    for (const c of collections) {
-      const invoiceCode = (c.invoiceCode ?? '').trim()
+    const paymentsByInvoiceCode = new Map<
+      string,
+      Array<{ code?: string; issueDate?: string; amount: number; paymentFormCode?: string; paymentFormDescription?: string }>
+    >()
+    for (const row of invPayRes.recordset ?? []) {
+      const invoiceCode = String(row.InvoiceCode ?? '').trim()
       if (!invoiceCode) continue
       const arr = paymentsByInvoiceCode.get(invoiceCode) ?? []
       arr.push({
-        code: c.code,
-        issueDate: c.issueDate,
-        amount: Number(c.amount ?? 0),
-        paymentFormCode: c.paymentFormCode,
-        paymentFormDescription: c.paymentFormDescription,
+        code: row.Code ?? undefined,
+        issueDate: row.IssueDate ? new Date(row.IssueDate).toISOString() : undefined,
+        amount: Number(row.Amount ?? 0),
+        paymentFormCode: row.PaymentFormCode ?? undefined,
+        paymentFormDescription: row.PaymentFormDescription ?? undefined,
       })
       paymentsByInvoiceCode.set(invoiceCode, arr)
     }

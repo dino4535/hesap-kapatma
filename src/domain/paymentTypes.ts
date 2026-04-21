@@ -25,7 +25,19 @@ export function normalizePaymentType(formCode?: string, formDescription?: string
 
   if (code === 'VADETAHHAV' || desc.includes('vadeli tahsilat havale')) return 'VADETAHHAV'
   if (code.startsWith('VADETAH') || desc.includes('vadeli tahsilat')) return 'VADETAH'
-  if (code === 'HAVALE' || desc.includes('havale')) return 'HAVALE'
+  if (
+    code === 'HAVALE' ||
+    code === 'EFT' ||
+    code === 'FAST' ||
+    code.includes('HAVALE') ||
+    code.includes('EFT') ||
+    code.includes('FAST') ||
+    desc.includes('havale') ||
+    desc.includes('eft') ||
+    desc.includes('fast') ||
+    desc.includes('transfer')
+  )
+    return 'HAVALE'
   if (code === 'CASH' || code === 'NAKIT' || desc.includes('nakit')) return 'NAKIT'
   if (code === 'BANKCARD' || code === 'CARD' || desc.includes('kart')) return 'BANKCARD'
   if (code === 'VADELI' || desc.includes('vadeli')) return 'VADELI'
@@ -35,8 +47,8 @@ export function normalizePaymentType(formCode?: string, formDescription?: string
 export function normalizeInvoiceSalesType(salesType?: string): PaymentType | undefined {
   const s = (salesType ?? '').trim().toUpperCase()
   if (!s) return undefined
-  if (s.includes('VADEL')) return 'VADELI'
   if (s.includes('HAVALE') || s.includes('EFT') || s.includes('FAST') || s.includes('TRANSFER') || s.includes('WIRE')) return 'HAVALE'
+  if (s.includes('VADEL')) return 'VADELI'
   if (s.includes('KART') || s.includes('CARD') || s.includes('BANKCARD')) return 'BANKCARD'
   if (s.includes('NAKIT') || s.includes('HHSATIS')) return 'NAKIT'
   return undefined
