@@ -10,21 +10,12 @@ import {
   type PositionRow,
 } from './data/api'
 import { clearSessionUser, loadSessionUser, saveSessionUser } from './data/local'
-import { toCsv } from './domain/csv'
 import { transferAmount, type Allocation, allocationAmountForType, computePaymentKey, getInvoiceAllocations, getPaymentAllocations, invoiceTotalAmount } from './domain/allocations'
 import { formatDateTr, formatMoney } from './domain/format'
 import type { Collection, Invoice } from './domain/models'
 import { PAYMENT_TYPES, type PaymentType, paymentTypeLabel } from './domain/paymentTypes'
 
 type StatusType = 'success' | 'error' | 'info'
-
-function downloadCsv(csv: string, fileName: string) {
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-  const link = document.createElement('a')
-  link.href = URL.createObjectURL(blob)
-  link.download = fileName
-  link.click()
-}
 
 function sumAllocations(allocs: Allocation[]) {
   return allocs.reduce((s, a) => s + (a.amount ?? 0), 0)
@@ -38,6 +29,19 @@ function allocationSummary(allocs: Allocation[]) {
 }
 
 type SqlCollectionRow = Collection & { paymentKey?: string }
+
+function depotLabel(depotCode?: string) {
+  if (!depotCode) return ''
+  if (depotCode === 'DIST2K') return 'İzmir'
+  if (depotCode === 'DIST28') return 'Salihli'
+  if (depotCode === 'DIT2F') return 'Manisa'
+  return depotCode
+}
+
+const BANKNOTES = [200, 100, 50, 20, 10, 5, 1] as const
+type Banknote = (typeof BANKNOTES)[number]
+
+const BANKS = ['Ziraat', 'İş Bankası', 'Garanti', 'Yapı Kredi', 'Akbank', 'VakıfBank', 'Halkbank', 'QNB', 'DenizBank'] as const
 
 function LoginPage(props: { onLogin: (userId: string) => void }) {
   const [userId, setUserId] = useState('')
@@ -202,6 +206,20 @@ export default function App() {
   const [typeFilter, setTypeFilter] = useState<PaymentType | null>(null)
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null)
   const [editingPayment, setEditingPayment] = useState<{ collection: Collection; key: string } | null>(null)
+  const [mutabakatOpen, setMutabakatOpen] = useState(false)
+  const [mutabakatMode, setMutabakatMode] = useState<'NAKIT' | 'BANKA'>('NAKIT')
+  const [banknoteCounts, setBanknoteCounts] = useState<Record<Banknote, number>>({
+    200: 0,
+    100: 0,
+    50: 0,
+    20: 0,
+    10: 0,
+    5: 0,
+    1: 0,
+  })
+  const [bankName, setBankName] = useState<string>('')
+  const [yatanTutar, setYatanTutar] = useState<number>(0)
+  const [manimDekontNo, setManimDekontNo] = useState<string>('')
 
   useEffect(() => {
     if (!currentUser) return
@@ -234,15 +252,7 @@ export default function App() {
       const key = `${f.fileDate ?? ''}|${f.depotCode ?? ''}`
       if (seen.has(key)) continue
       seen.add(key)
-      const depotLabel =
-        f.depotCode === 'DIST2K'
-          ? 'İzmir'
-          : f.depotCode === 'DIST28'
-            ? 'Salihli'
-            : f.depotCode === 'DIT2F'
-              ? 'Manisa'
-              : f.depotCode
-      const parts = [f.fileDate ? formatDateTr(f.fileDate) : 'Tarih yok', depotLabel ? `Depo: ${depotLabel}` : null].filter(Boolean)
+      const parts = [f.fileDate ? formatDateTr(f.fileDate) : 'Tarih yok', depotLabel(f.depotCode) ? `Depo: ${depotLabel(f.depotCode)}` : null].filter(Boolean)
       items.push({ key, label: parts.join(' • '), date: f.fileDate, depot: f.depotCode })
     }
     return items
@@ -443,9 +453,13 @@ export default function App() {
     return rows
   }, [selectedPosition, positionCollections, typeFilter, paymentAllocations])
 
-  const onExport = () => {
-    const data = positionTab === 'faturalar' ? detailInvoices : detailPayments.map((r) => r.c)
-    downloadCsv(toCsv(data, positionTab), `hesap-kapatma-${positionTab}-${new Date().toISOString().split('T')[0]}.csv`)
+  const openMutabakat = () => {
+    setMutabakatOpen(true)
+    setMutabakatMode('NAKIT')
+    setBanknoteCounts({ 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 1: 0 })
+    setBankName('')
+    setYatanTutar(0)
+    setManimDekontNo('')
   }
 
   const updateInvoiceAllocations = (invoiceCode: string, next: Allocation[]) => {
@@ -619,8 +633,8 @@ export default function App() {
             <div className="table-header">
               <span className="table-title">{positionTab === 'faturalar' ? 'Özet (Faturalar)' : 'Özet (Tahsilatlar)'}</span>
               <div className="actions">
-                <button className="btn btn-secondary" type="button" onClick={onExport}>
-                  CSV İndir
+                <button className="btn btn-secondary" type="button" onClick={openMutabakat} disabled={!summaryTotals}>
+                  Mutabakat Ekranı
                 </button>
               </div>
             </div>
@@ -787,6 +801,129 @@ export default function App() {
                 onChange={(next) => updatePaymentAllocations(editingPayment.key, next)}
               />
             ) : null}
+          </Modal>
+
+          <Modal title="Mutabakat" open={mutabakatOpen} onClose={() => setMutabakatOpen(false)}>
+            <div className="mutabakat">
+              <div className="mutabakat-meta">
+                <div className="mutabakat-meta-row">
+                  <div className="mutabakat-label">Tarih</div>
+                  <div className="mutabakat-value">{selectedDataset.date ? formatDateTr(selectedDataset.date) : '-'}</div>
+                </div>
+                <div className="mutabakat-meta-row">
+                  <div className="mutabakat-label">Depo</div>
+                  <div className="mutabakat-value">{selectedDataset.depot ? depotLabel(selectedDataset.depot) : '-'}</div>
+                </div>
+                <div className="mutabakat-meta-row">
+                  <div className="mutabakat-label">Pozisyon</div>
+                  <div className="mutabakat-value">{selectedPosition ?? '-'}</div>
+                </div>
+                <div className="mutabakat-meta-row">
+                  <div className="mutabakat-label">Torba Tutarı</div>
+                  <div className="mutabakat-value">{formatMoney(summaryTotals?.torbaTutari ?? 0)}</div>
+                </div>
+              </div>
+
+              <div className="mutabakat-choice">
+                <label className="mutabakat-radio">
+                  <input
+                    type="radio"
+                    name="mutabakatMode"
+                    checked={mutabakatMode === 'NAKIT'}
+                    onChange={() => setMutabakatMode('NAKIT')}
+                  />
+                  <span>Nakit</span>
+                </label>
+                <label className="mutabakat-radio">
+                  <input
+                    type="radio"
+                    name="mutabakatMode"
+                    checked={mutabakatMode === 'BANKA'}
+                    onChange={() => setMutabakatMode('BANKA')}
+                  />
+                  <span>Bankaya Yatan</span>
+                </label>
+              </div>
+
+              {mutabakatMode === 'NAKIT' ? (
+                <>
+                  <div className="mutabakat-section-title">Banknot Döküm Listesi</div>
+                  <table className="mini-table">
+                    <thead>
+                      <tr>
+                        <th>Banknot</th>
+                        <th>Adet</th>
+                        <th>Tutar</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {BANKNOTES.map((d) => {
+                        const count = banknoteCounts[d] ?? 0
+                        const total = d * count
+                        return (
+                          <tr key={d}>
+                            <td>{d}</td>
+                            <td>
+                              <input
+                                type="number"
+                                min={0}
+                                value={count || ''}
+                                onChange={(e) => {
+                                  const next = Math.max(0, Number(e.target.value || 0))
+                                  setBanknoteCounts((prev) => ({ ...prev, [d]: next }))
+                                }}
+                              />
+                            </td>
+                            <td>{formatMoney(total)}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+
+                  <div className="mutabakat-totals">
+                    <div>
+                      Girilen Toplam: {formatMoney(BANKNOTES.reduce((s, d) => s + d * (banknoteCounts[d] ?? 0), 0))}
+                    </div>
+                    <div>
+                      Fark:{' '}
+                      {formatMoney(
+                        BANKNOTES.reduce((s, d) => s + d * (banknoteCounts[d] ?? 0), 0) - (summaryTotals?.torbaTutari ?? 0),
+                      )}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="mutabakat-section-title">Bankaya Yatan</div>
+                  <div className="mutabakat-form">
+                    <div className="mutabakat-field">
+                      <label>Banka</label>
+                      <select value={bankName} onChange={(e) => setBankName(e.target.value)}>
+                        <option value="">Seçiniz</option>
+                        {BANKS.map((b) => (
+                          <option key={b} value={b}>
+                            {b}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="mutabakat-field">
+                      <label>Yatan Tutar</label>
+                      <input type="number" value={yatanTutar || ''} onChange={(e) => setYatanTutar(Number(e.target.value || 0))} />
+                    </div>
+                    <div className="mutabakat-field">
+                      <label>Manim Dekont No</label>
+                      <input value={manimDekontNo} onChange={(e) => setManimDekontNo(e.target.value)} />
+                    </div>
+                  </div>
+                  <div className="mutabakat-totals">
+                    <div>Girilen Tutar: {formatMoney(yatanTutar || 0)}</div>
+                    <div>Fark: {formatMoney((yatanTutar || 0) - (summaryTotals?.torbaTutari ?? 0))}</div>
+                  </div>
+                </>
+              )}
+            </div>
           </Modal>
         </>
       )}
