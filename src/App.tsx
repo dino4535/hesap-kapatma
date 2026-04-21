@@ -200,7 +200,6 @@ export default function App() {
 
   const [positionTab, setPositionTab] = useState<'faturalar' | 'tahsilatlar'>('faturalar')
   const [typeFilter, setTypeFilter] = useState<PaymentType | null>(null)
-  const [cashListOpen, setCashListOpen] = useState(false)
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null)
   const [editingPayment, setEditingPayment] = useState<{ collection: Collection; key: string } | null>(null)
 
@@ -436,25 +435,6 @@ export default function App() {
     return rows
   }, [selectedPosition, positionCollections, typeFilter, paymentAllocations])
 
-  const cashInvoices = useMemo(() => {
-    if (!selectedPosition) return []
-    return positionInvoices
-      .map((inv) => ({ inv, allocs: getInvoiceAllocations(inv, invoiceAllocations) }))
-      .filter((r) => allocationAmountForType(r.allocs, 'NAKIT') > 0)
-  }, [selectedPosition, positionInvoices, invoiceAllocations])
-
-  const cashCollections = useMemo(() => {
-    if (!selectedPosition) return []
-    const rows: Array<{ key: string; c: Collection; allocs: Allocation[] }> = []
-    for (const c of positionCollections) {
-      const key = c.paymentKey ?? computePaymentKey(c.invoiceCode ?? '', c)
-      const allocs = getPaymentAllocations(key, c, paymentAllocations)
-      if (allocationAmountForType(allocs, 'NAKIT') <= 0) continue
-      rows.push({ key, c, allocs })
-    }
-    return rows
-  }, [selectedPosition, positionCollections, paymentAllocations])
-
   const onExport = () => {
     const data = positionTab === 'faturalar' ? detailInvoices : detailPayments.map((r) => r.c)
     downloadCsv(toCsv(data, positionTab), `hesap-kapatma-${positionTab}-${new Date().toISOString().split('T')[0]}.csv`)
@@ -664,7 +644,8 @@ export default function App() {
                 <div
                   className="summary-row clickable"
                   onClick={() => {
-                    setCashListOpen(true)
+                    setPositionTab('faturalar')
+                    setTypeFilter('NAKIT')
                   }}
                 >
                   <div>NAKİT TOPLAM</div>
@@ -798,86 +779,6 @@ export default function App() {
                 onChange={(next) => updatePaymentAllocations(editingPayment.key, next)}
               />
             ) : null}
-          </Modal>
-
-          <Modal title="Nakit Faturalar ve Tahsilatlar" open={cashListOpen} onClose={() => setCashListOpen(false)}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div>
-                <div style={{ fontWeight: 600, marginBottom: 8 }}>Nakit Faturalar</div>
-                <div className="table-wrapper" style={{ margin: 0 }}>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Müşteri</th>
-                        <th>Vergi No</th>
-                        <th>Nakit Tutar</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {cashInvoices.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} style={{ textAlign: 'center', color: '#718096' }}>
-                            Detay bulunamadı
-                          </td>
-                        </tr>
-                      ) : (
-                        cashInvoices.map(({ inv, allocs }) => (
-                          <tr key={inv.code}>
-                            <td>{inv.customer.registeredName}</td>
-                            <td>{inv.customer.taxNumber}</td>
-                            <td>{formatMoney(allocationAmountForType(allocs, 'NAKIT'))}</td>
-                            <td>
-                              <button className="btn btn-secondary" type="button" onClick={() => setEditingInvoice(inv)}>
-                                Düzenle
-                              </button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <div>
-                <div style={{ fontWeight: 600, marginBottom: 8 }}>Nakit Tahsilatlar</div>
-                <div className="table-wrapper" style={{ margin: 0 }}>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Müşteri</th>
-                        <th>Tutar</th>
-                        <th>Tarih</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {cashCollections.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} style={{ textAlign: 'center', color: '#718096' }}>
-                            Detay bulunamadı
-                          </td>
-                        </tr>
-                      ) : (
-                        cashCollections.map((r) => (
-                          <tr key={r.key}>
-                            <td>{r.c.customer.registeredName}</td>
-                            <td>{formatMoney(allocationAmountForType(r.allocs, 'NAKIT'))}</td>
-                            <td>{formatDateTr(r.c.issueDate)}</td>
-                            <td>
-                              <button className="btn btn-secondary" type="button" onClick={() => setEditingPayment({ collection: r.c, key: r.key })}>
-                                Düzenle
-                              </button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
           </Modal>
         </>
       )}

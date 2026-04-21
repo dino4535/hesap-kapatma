@@ -36,7 +36,7 @@ export function normalizeInvoiceSalesType(salesType?: string): PaymentType | und
   const s = (salesType ?? '').trim().toUpperCase()
   if (!s) return undefined
   if (s.includes('VADEL')) return 'VADELI'
-  if (s.includes('HAVALE')) return 'HAVALE'
+  if (s.includes('HAVALE') || s.includes('EFT') || s.includes('FAST') || s.includes('TRANSFER') || s.includes('WIRE')) return 'HAVALE'
   if (s.includes('KART') || s.includes('CARD') || s.includes('BANKCARD')) return 'BANKCARD'
   if (s.includes('NAKIT') || s.includes('HHSATIS')) return 'NAKIT'
   return undefined
