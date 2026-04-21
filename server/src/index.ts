@@ -559,7 +559,7 @@ app.post('/api/users', async (req, res) => {
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { files: 20, fileSize: 100 * 1024 * 1024 },
+  limits: { files: 20, fileSize: 300 * 1024 * 1024 },
 })
 
 app.post('/api/import', upload.array('files'), async (req, res) => {
