@@ -218,15 +218,16 @@ IF COL_LENGTH('dbo.Invoices', 'IsStub') IS NULL
 BEGIN
   ALTER TABLE dbo.Invoices ADD IsStub BIT NOT NULL CONSTRAINT DF_Invoices_IsStub DEFAULT (0);
 END
-
+EXEC(N'
 UPDATE dbo.Invoices
 SET IsStub = 1
 WHERE IsStub = 0
-  AND SalesType = 'UNKNOWN'
+  AND SalesType = ''UNKNOWN''
   AND NetAmount = 0
   AND LegalNumber IS NULL
   AND IssueDate IS NULL
   AND DueDate IS NULL;
+');
 
 IF OBJECT_ID('dbo.Payments', 'U') IS NULL
 BEGIN
