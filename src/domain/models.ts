@@ -1,0 +1,67 @@
+export type SalesType = string
+
+export type PaymentFormCode = string
+
+export interface SalesFileMeta {
+  fileName: string
+  fileDate?: string
+  depotCode?: string
+}
+
+export interface InvoiceCustomer {
+  code?: string
+  registeredName: string
+  taxNumber?: string
+  licenseNumber?: string
+}
+
+export interface InvoicePosition {
+  code: string
+  description?: string
+}
+
+export interface Payment {
+  code?: string
+  issueDate?: string
+  amount: number
+  paymentFormCode?: PaymentFormCode
+  paymentFormDescription?: string
+}
+
+export interface Collection extends Payment {
+  invoiceCode?: string
+  customer: InvoiceCustomer
+  position: InvoicePosition
+  source?: SalesFileMeta
+}
+
+export interface Invoice {
+  code: string
+  legalNumber?: string
+  status?: string
+  salesType: SalesType
+  issueDate?: string
+  dueDate?: string
+  creditDays?: number
+  netAmount: number
+  grossAmount?: number
+  outstandingAmount?: number
+  taxAmount?: number
+  totalDiscount?: number
+  customer: InvoiceCustomer
+  position: InvoicePosition
+  payments: Payment[]
+  source?: SalesFileMeta
+}
+
+export interface NormalizedSalesFile {
+  invoices: Invoice[]
+  collections: Collection[]
+}
+
+export interface RepStats {
+  total: number
+  vadeli: number
+  hhsat: number
+  count: number
+}
