@@ -101,11 +101,16 @@ function LoginPage(props: { onLogin: (userId: string) => void }) {
   )
 }
 
-function Modal(props: { title: string; open: boolean; onClose: () => void; children: ReactNode }) {
+function Modal(props: { title: string; open: boolean; onClose: () => void; children: ReactNode; size?: 'default' | 'wide' }) {
   if (!props.open) return null
   return (
     <div className="modal-backdrop" onClick={props.onClose} role="presentation">
-      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+      <div
+        className={props.size === 'wide' ? 'modal modal-wide' : 'modal'}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+      >
         <div className="modal-header">
           <div className="modal-title">{props.title}</div>
           <button className="modal-close" type="button" onClick={props.onClose}>
@@ -196,6 +201,7 @@ export default function App() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [fileInputKey, setFileInputKey] = useState(0)
   const [selectedPosition, setSelectedPosition] = useState<string | null>(null)
+  const [detailSearch, setDetailSearch] = useState('')
 
   const [importFiles, setImportFiles] = useState<ImportFileRow[]>([])
   const [selectedDatasetKey, setSelectedDatasetKey] = useState<string>('')
@@ -460,21 +466,50 @@ export default function App() {
 
   const detailInvoices = useMemo(() => {
     if (!selectedPosition) return []
-    if (!typeFilter) return positionInvoices
-    return positionInvoices.filter((inv) => allocationAmountForType(getInvoiceAllocations(inv, invoiceAllocations), typeFilter) > 0)
-  }, [selectedPosition, positionInvoices, typeFilter, invoiceAllocations])
+    const q = detailSearch.trim().toLowerCase()
+    const byType = typeFilter
+      ? positionInvoices.filter((inv) => allocationAmountForType(getInvoiceAllocations(inv, invoiceAllocations), typeFilter) > 0)
+      : positionInvoices
+    if (!q) return byType
+    return byType.filter((inv) => {
+      const hay = [
+        inv.customer.registeredName,
+        inv.customer.taxNumber ?? '',
+        inv.code,
+        inv.legalNumber ?? '',
+        inv.position.code,
+      ]
+        .join(' ')
+        .toLowerCase()
+      return hay.includes(q)
+    })
+  }, [selectedPosition, positionInvoices, typeFilter, invoiceAllocations, detailSearch])
 
   const detailPayments = useMemo(() => {
     if (!selectedPosition) return []
+    const q = detailSearch.trim().toLowerCase()
     const rows: Array<{ key: string; c: Collection; allocs: Allocation[] }> = []
     for (const c of positionCollections) {
       const key = c.paymentKey ?? computePaymentKey(c.invoiceCode ?? '', c)
       const allocs = getPaymentAllocations(key, c, paymentAllocations)
       if (typeFilter && allocationAmountForType(allocs, typeFilter) <= 0) continue
+      if (q) {
+        const hay = [
+          c.customer.registeredName,
+          c.customer.taxNumber ?? '',
+          c.invoiceCode ?? '',
+          c.code ?? '',
+          c.paymentFormDescription ?? '',
+          c.paymentFormCode ?? '',
+        ]
+          .join(' ')
+          .toLowerCase()
+        if (!hay.includes(q)) continue
+      }
       rows.push({ key, c, allocs })
     }
     return rows
-  }, [selectedPosition, positionCollections, typeFilter, paymentAllocations])
+  }, [selectedPosition, positionCollections, typeFilter, paymentAllocations, detailSearch])
 
   const openMutabakat = () => {
     setMutabakatOpen(true)
@@ -759,6 +794,7 @@ export default function App() {
                 onClick={() => {
                   setPositionTab('faturalar')
                   setTypeFilter(null)
+                  setDetailSearch('')
                 }}
               >
                 Faturalar
@@ -769,6 +805,7 @@ export default function App() {
                 onClick={() => {
                   setPositionTab('tahsilatlar')
                   setTypeFilter(null)
+                  setDetailSearch('')
                 }}
               >
                 Tahsilatlar
@@ -838,6 +875,17 @@ export default function App() {
                 </div>
               </div>
             ) : null}
+
+            <div className="table-search">
+              <input
+                value={detailSearch}
+                onChange={(e) => setDetailSearch(e.target.value)}
+                placeholder={positionTab === 'faturalar' ? 'Ara (müşteri, vergi no, fatura no...)' : 'Ara (müşteri, vergi no, fatura no...)'}
+              />
+              <button className="btn btn-secondary" type="button" onClick={() => setDetailSearch('')} disabled={!detailSearch.trim()}>
+                Temizle
+              </button>
+            </div>
 
             <div className="table-wrapper">
               {positionTab === 'faturalar' ? (
@@ -952,7 +1000,7 @@ export default function App() {
             ) : null}
           </Modal>
 
-          <Modal title="Mutabakat" open={mutabakatOpen} onClose={() => setMutabakatOpen(false)}>
+          <Modal title="Mutabakat" open={mutabakatOpen} onClose={() => setMutabakatOpen(false)} size="wide">
             <div className="mutabakat">
               <div className="mutabakat-meta">
                 <div className="mutabakat-meta-row">
