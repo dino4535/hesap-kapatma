@@ -283,6 +283,33 @@ BEGIN
     ChangedAt DATETIME2(0) NOT NULL CONSTRAINT DF_AllocationEdits_ChangedAt DEFAULT (SYSUTCDATETIME())
   );
 END
+
+IF OBJECT_ID('dbo.Mutabakat', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.Mutabakat (
+    SourceFileDate DATE NOT NULL,
+    DepotCode NVARCHAR(32) NOT NULL,
+    PositionCode NVARCHAR(64) NOT NULL,
+    Mode NVARCHAR(8) NOT NULL,
+    TorbaTutari DECIMAL(18,4) NOT NULL,
+    EnteredAmount DECIMAL(18,4) NOT NULL,
+    AdjustmentAmount DECIMAL(18,4) NOT NULL,
+    DiffAmount DECIMAL(18,4) NOT NULL,
+    CashJson NVARCHAR(MAX) NULL,
+    BankName NVARCHAR(64) NULL,
+    BankDepositAmount DECIMAL(18,4) NULL,
+    DekontNo NVARCHAR(64) NULL,
+    AdjustmentsJson NVARCHAR(MAX) NULL,
+    Status NVARCHAR(16) NOT NULL CONSTRAINT DF_Mutabakat_Status DEFAULT ('DRAFT'),
+    CreatedBy NVARCHAR(64) NULL,
+    CreatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_Mutabakat_CreatedAt DEFAULT (SYSUTCDATETIME()),
+    UpdatedBy NVARCHAR(64) NULL,
+    UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_Mutabakat_UpdatedAt DEFAULT (SYSUTCDATETIME()),
+    CompletedBy NVARCHAR(64) NULL,
+    CompletedAt DATETIME2(0) NULL,
+    CONSTRAINT PK_Mutabakat PRIMARY KEY (SourceFileDate, DepotCode, PositionCode)
+  );
+END
 `)
 }
 
@@ -1063,6 +1090,502 @@ WHERE i.PositionCode = @PositionCode
       collections,
       invoiceAllocations,
       paymentAllocations,
+    })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
+app.get('/api/mutabakat', async (req, res) => {
+  try {
+    const parsedDate = parseQueryDate(req.query.date)
+    if (!parsedDate.ok || !parsedDate.date) {
+      res.status(400).send(parsedDate.ok ? 'Tarih zorunlu' : parsedDate.error)
+      return
+    }
+    const depot = typeof req.query.depot === 'string' ? req.query.depot.trim() : ''
+    const position = typeof req.query.position === 'string' ? req.query.position.trim() : ''
+    if (!depot || !position) {
+      res.status(400).send('Depo ve pozisyon zorunlu')
+      return
+    }
+
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const r = await pool
+      .request()
+      .input('SourceFileDate', mssql.Date, parsedDate.date)
+      .input('DepotCode', mssql.NVarChar(32), depot)
+      .input('PositionCode', mssql.NVarChar(64), position)
+      .query(
+        `
+SELECT TOP 1
+  SourceFileDate,
+  DepotCode,
+  PositionCode,
+  Mode,
+  TorbaTutari,
+  EnteredAmount,
+  AdjustmentAmount,
+  DiffAmount,
+  CashJson,
+  BankName,
+  BankDepositAmount,
+  DekontNo,
+  AdjustmentsJson,
+  Status,
+  UpdatedBy,
+  UpdatedAt,
+  CompletedBy,
+  CompletedAt
+FROM dbo.Mutabakat
+WHERE SourceFileDate = @SourceFileDate
+  AND DepotCode = @DepotCode
+  AND PositionCode = @PositionCode
+`,
+      )
+
+    const row = r.recordset?.[0] as
+      | {
+          SourceFileDate: Date
+          DepotCode: string
+          PositionCode: string
+          Mode: string
+          TorbaTutari: unknown
+          EnteredAmount: unknown
+          AdjustmentAmount: unknown
+          DiffAmount: unknown
+          CashJson: string | null
+          BankName: string | null
+          BankDepositAmount: unknown
+          DekontNo: string | null
+          AdjustmentsJson: string | null
+          Status: string
+          UpdatedBy: string | null
+          UpdatedAt: Date | null
+          CompletedBy: string | null
+          CompletedAt: Date | null
+        }
+      | undefined
+
+    if (!row) {
+      res.json({ ok: true, record: null })
+      return
+    }
+
+    let cashJson: unknown = undefined
+    if (row.CashJson) {
+      try {
+        cashJson = JSON.parse(row.CashJson)
+      } catch {
+        cashJson = undefined
+      }
+    }
+    let adjustments: unknown = undefined
+    if (row.AdjustmentsJson) {
+      try {
+        adjustments = JSON.parse(row.AdjustmentsJson)
+      } catch {
+        adjustments = undefined
+      }
+    }
+
+    res.json({
+      ok: true,
+      record: {
+        sourceFileDate: row.SourceFileDate.toISOString().slice(0, 10),
+        depotCode: row.DepotCode,
+        positionCode: row.PositionCode,
+        mode: row.Mode,
+        torbaTutari: Number(row.TorbaTutari ?? 0),
+        enteredAmount: Number(row.EnteredAmount ?? 0),
+        adjustmentAmount: Number(row.AdjustmentAmount ?? 0),
+        diffAmount: Number(row.DiffAmount ?? 0),
+        cashJson,
+        bankName: row.BankName ?? undefined,
+        bankDepositAmount: row.BankDepositAmount != null ? Number(row.BankDepositAmount) : undefined,
+        dekontNo: row.DekontNo ?? undefined,
+        adjustments: Array.isArray(adjustments) ? adjustments : undefined,
+        status: row.Status,
+        updatedBy: row.UpdatedBy ?? undefined,
+        updatedAt: row.UpdatedAt ? new Date(row.UpdatedAt).toISOString() : undefined,
+        completedBy: row.CompletedBy ?? undefined,
+        completedAt: row.CompletedAt ? new Date(row.CompletedAt).toISOString() : undefined,
+      },
+    })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
+app.post('/api/mutabakat', async (req, res) => {
+  try {
+    const userName = String(req.header('x-user') ?? '').trim()
+    if (!userName) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+
+    const parsedDate = parseQueryDate(req.body?.sourceFileDate)
+    if (!parsedDate.ok || !parsedDate.date) {
+      res.status(400).send(parsedDate.ok ? 'Tarih zorunlu' : parsedDate.error)
+      return
+    }
+
+    const depotCode = String(req.body?.depotCode ?? '').trim()
+    const positionCode = String(req.body?.positionCode ?? '').trim()
+    const mode = String(req.body?.mode ?? '').trim().toUpperCase()
+    if (!depotCode || !positionCode || (mode !== 'NAKIT' && mode !== 'BANKA')) {
+      res.status(400).send('Eksik alan')
+      return
+    }
+
+    const torbaTutari = toNumberFlexible(req.body?.torbaTutari) ?? toNumberOrUndef(req.body?.torbaTutari) ?? null
+    const enteredAmount = toNumberFlexible(req.body?.enteredAmount) ?? toNumberOrUndef(req.body?.enteredAmount) ?? null
+    if (torbaTutari == null || enteredAmount == null) {
+      res.status(400).send('Tutar zorunlu')
+      return
+    }
+
+    const adjustments = req.body?.adjustments
+    const adjustmentsJson = Array.isArray(adjustments) ? JSON.stringify(adjustments) : null
+    const adjustmentAmount = Array.isArray(adjustments)
+      ? adjustments.reduce((s: number, a: any) => s + (toNumberFlexible(a?.amount) ?? toNumberOrUndef(a?.amount) ?? 0), 0)
+      : 0
+    const diffAmount = enteredAmount + adjustmentAmount - torbaTutari
+
+    const cashJson = req.body?.cashJson
+    const cashJsonStr = cashJson != null ? JSON.stringify(cashJson) : null
+    const bankName = String(req.body?.bankName ?? '').trim() || null
+    const bankDepositAmount = toNumberFlexible(req.body?.bankDepositAmount) ?? toNumberOrUndef(req.body?.bankDepositAmount) ?? null
+    const dekontNo = String(req.body?.dekontNo ?? '').trim() || null
+
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const active = await requireActiveUser(pool, userName)
+    if (!active) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+
+    const existing = await pool
+      .request()
+      .input('SourceFileDate', mssql.Date, parsedDate.date)
+      .input('DepotCode', mssql.NVarChar(32), depotCode)
+      .input('PositionCode', mssql.NVarChar(64), positionCode)
+      .query(
+        `
+SELECT TOP 1 Status
+FROM dbo.Mutabakat
+WHERE SourceFileDate = @SourceFileDate
+  AND DepotCode = @DepotCode
+  AND PositionCode = @PositionCode
+`,
+      )
+    const existingStatus = (existing.recordset?.[0]?.Status as string | undefined) ?? null
+    if (existingStatus === 'COMPLETED') {
+      res.status(409).send('Mutabakat tamamlanmış')
+      return
+    }
+
+    await pool
+      .request()
+      .input('SourceFileDate', mssql.Date, parsedDate.date)
+      .input('DepotCode', mssql.NVarChar(32), depotCode)
+      .input('PositionCode', mssql.NVarChar(64), positionCode)
+      .input('Mode', mssql.NVarChar(8), mode)
+      .input('TorbaTutari', mssql.Decimal(18, 4), torbaTutari)
+      .input('EnteredAmount', mssql.Decimal(18, 4), enteredAmount)
+      .input('AdjustmentAmount', mssql.Decimal(18, 4), adjustmentAmount)
+      .input('DiffAmount', mssql.Decimal(18, 4), diffAmount)
+      .input('CashJson', mssql.NVarChar(mssql.MAX), cashJsonStr)
+      .input('BankName', mssql.NVarChar(64), bankName)
+      .input('BankDepositAmount', mssql.Decimal(18, 4), bankDepositAmount)
+      .input('DekontNo', mssql.NVarChar(64), dekontNo)
+      .input('AdjustmentsJson', mssql.NVarChar(mssql.MAX), adjustmentsJson)
+      .input('UserName', mssql.NVarChar(64), userName)
+      .query(
+        `
+MERGE dbo.Mutabakat WITH (HOLDLOCK) AS t
+USING (SELECT
+  @SourceFileDate AS SourceFileDate,
+  @DepotCode AS DepotCode,
+  @PositionCode AS PositionCode,
+  @Mode AS Mode,
+  @TorbaTutari AS TorbaTutari,
+  @EnteredAmount AS EnteredAmount,
+  @AdjustmentAmount AS AdjustmentAmount,
+  @DiffAmount AS DiffAmount,
+  @CashJson AS CashJson,
+  @BankName AS BankName,
+  @BankDepositAmount AS BankDepositAmount,
+  @DekontNo AS DekontNo,
+  @AdjustmentsJson AS AdjustmentsJson,
+  @UserName AS UserName
+) AS s
+ON t.SourceFileDate = s.SourceFileDate AND t.DepotCode = s.DepotCode AND t.PositionCode = s.PositionCode
+WHEN MATCHED THEN
+  UPDATE SET
+    Mode = s.Mode,
+    TorbaTutari = s.TorbaTutari,
+    EnteredAmount = s.EnteredAmount,
+    AdjustmentAmount = s.AdjustmentAmount,
+    DiffAmount = s.DiffAmount,
+    CashJson = s.CashJson,
+    BankName = s.BankName,
+    BankDepositAmount = s.BankDepositAmount,
+    DekontNo = s.DekontNo,
+    AdjustmentsJson = s.AdjustmentsJson,
+    UpdatedBy = s.UserName,
+    UpdatedAt = SYSUTCDATETIME()
+WHEN NOT MATCHED THEN
+  INSERT (
+    SourceFileDate, DepotCode, PositionCode, Mode,
+    TorbaTutari, EnteredAmount, AdjustmentAmount, DiffAmount,
+    CashJson, BankName, BankDepositAmount, DekontNo, AdjustmentsJson,
+    CreatedBy, UpdatedBy
+  )
+  VALUES (
+    s.SourceFileDate, s.DepotCode, s.PositionCode, s.Mode,
+    s.TorbaTutari, s.EnteredAmount, s.AdjustmentAmount, s.DiffAmount,
+    s.CashJson, s.BankName, s.BankDepositAmount, s.DekontNo, s.AdjustmentsJson,
+    s.UserName, s.UserName
+  );
+`,
+      )
+
+    const readBack = await pool
+      .request()
+      .input('SourceFileDate', mssql.Date, parsedDate.date)
+      .input('DepotCode', mssql.NVarChar(32), depotCode)
+      .input('PositionCode', mssql.NVarChar(64), positionCode)
+      .query(
+        `
+SELECT TOP 1
+  SourceFileDate,
+  DepotCode,
+  PositionCode,
+  Mode,
+  TorbaTutari,
+  EnteredAmount,
+  AdjustmentAmount,
+  DiffAmount,
+  CashJson,
+  BankName,
+  BankDepositAmount,
+  DekontNo,
+  AdjustmentsJson,
+  Status,
+  UpdatedBy,
+  UpdatedAt,
+  CompletedBy,
+  CompletedAt
+FROM dbo.Mutabakat
+WHERE SourceFileDate = @SourceFileDate
+  AND DepotCode = @DepotCode
+  AND PositionCode = @PositionCode
+`,
+      )
+
+    const row = readBack.recordset?.[0] as any
+    let outCash: unknown = undefined
+    if (row?.CashJson) {
+      try {
+        outCash = JSON.parse(String(row.CashJson))
+      } catch {
+        outCash = undefined
+      }
+    }
+    let outAdj: unknown = undefined
+    if (row?.AdjustmentsJson) {
+      try {
+        outAdj = JSON.parse(String(row.AdjustmentsJson))
+      } catch {
+        outAdj = undefined
+      }
+    }
+
+    res.json({
+      ok: true,
+      record: {
+        sourceFileDate: new Date(row.SourceFileDate).toISOString().slice(0, 10),
+        depotCode: String(row.DepotCode),
+        positionCode: String(row.PositionCode),
+        mode: String(row.Mode),
+        torbaTutari: Number(row.TorbaTutari ?? 0),
+        enteredAmount: Number(row.EnteredAmount ?? 0),
+        adjustmentAmount: Number(row.AdjustmentAmount ?? 0),
+        diffAmount: Number(row.DiffAmount ?? 0),
+        cashJson: outCash,
+        bankName: row.BankName ?? undefined,
+        bankDepositAmount: row.BankDepositAmount != null ? Number(row.BankDepositAmount) : undefined,
+        dekontNo: row.DekontNo ?? undefined,
+        adjustments: Array.isArray(outAdj) ? outAdj : undefined,
+        status: String(row.Status),
+        updatedBy: row.UpdatedBy ?? undefined,
+        updatedAt: row.UpdatedAt ? new Date(row.UpdatedAt).toISOString() : undefined,
+        completedBy: row.CompletedBy ?? undefined,
+        completedAt: row.CompletedAt ? new Date(row.CompletedAt).toISOString() : undefined,
+      },
+    })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
+app.post('/api/mutabakat/complete', async (req, res) => {
+  try {
+    const userName = String(req.header('x-user') ?? '').trim()
+    if (!userName) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+    const parsedDate = parseQueryDate(req.body?.sourceFileDate)
+    if (!parsedDate.ok || !parsedDate.date) {
+      res.status(400).send(parsedDate.ok ? 'Tarih zorunlu' : parsedDate.error)
+      return
+    }
+    const depotCode = String(req.body?.depotCode ?? '').trim()
+    const positionCode = String(req.body?.positionCode ?? '').trim()
+    if (!depotCode || !positionCode) {
+      res.status(400).send('Eksik alan')
+      return
+    }
+
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const active = await requireActiveUser(pool, userName)
+    if (!active) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+
+    const current = await pool
+      .request()
+      .input('SourceFileDate', mssql.Date, parsedDate.date)
+      .input('DepotCode', mssql.NVarChar(32), depotCode)
+      .input('PositionCode', mssql.NVarChar(64), positionCode)
+      .query(
+        `
+SELECT TOP 1 DiffAmount, Status
+FROM dbo.Mutabakat
+WHERE SourceFileDate = @SourceFileDate
+  AND DepotCode = @DepotCode
+  AND PositionCode = @PositionCode
+`,
+      )
+
+    const row = current.recordset?.[0] as { DiffAmount: unknown; Status: string } | undefined
+    if (!row) {
+      res.status(404).send('Mutabakat kaydı bulunamadı')
+      return
+    }
+    if (row.Status === 'COMPLETED') {
+      res.status(409).send('Mutabakat zaten tamamlanmış')
+      return
+    }
+    const diff = Number(row.DiffAmount ?? 0)
+    if (Math.abs(diff) >= 0.01) {
+      res.status(400).send('Fark sıfır değil')
+      return
+    }
+
+    await pool
+      .request()
+      .input('SourceFileDate', mssql.Date, parsedDate.date)
+      .input('DepotCode', mssql.NVarChar(32), depotCode)
+      .input('PositionCode', mssql.NVarChar(64), positionCode)
+      .input('UserName', mssql.NVarChar(64), userName)
+      .query(
+        `
+UPDATE dbo.Mutabakat
+SET Status = 'COMPLETED',
+    CompletedBy = @UserName,
+    CompletedAt = SYSUTCDATETIME(),
+    UpdatedBy = @UserName,
+    UpdatedAt = SYSUTCDATETIME()
+WHERE SourceFileDate = @SourceFileDate
+  AND DepotCode = @DepotCode
+  AND PositionCode = @PositionCode
+`,
+      )
+
+    const readBack = await pool
+      .request()
+      .input('SourceFileDate', mssql.Date, parsedDate.date)
+      .input('DepotCode', mssql.NVarChar(32), depotCode)
+      .input('PositionCode', mssql.NVarChar(64), positionCode)
+      .query(
+        `
+SELECT TOP 1
+  SourceFileDate,
+  DepotCode,
+  PositionCode,
+  Mode,
+  TorbaTutari,
+  EnteredAmount,
+  AdjustmentAmount,
+  DiffAmount,
+  CashJson,
+  BankName,
+  BankDepositAmount,
+  DekontNo,
+  AdjustmentsJson,
+  Status,
+  UpdatedBy,
+  UpdatedAt,
+  CompletedBy,
+  CompletedAt
+FROM dbo.Mutabakat
+WHERE SourceFileDate = @SourceFileDate
+  AND DepotCode = @DepotCode
+  AND PositionCode = @PositionCode
+`,
+      )
+
+    const rrow = readBack.recordset?.[0] as any
+    let outCash: unknown = undefined
+    if (rrow?.CashJson) {
+      try {
+        outCash = JSON.parse(String(rrow.CashJson))
+      } catch {
+        outCash = undefined
+      }
+    }
+    let outAdj: unknown = undefined
+    if (rrow?.AdjustmentsJson) {
+      try {
+        outAdj = JSON.parse(String(rrow.AdjustmentsJson))
+      } catch {
+        outAdj = undefined
+      }
+    }
+
+    res.json({
+      ok: true,
+      record: {
+        sourceFileDate: new Date(rrow.SourceFileDate).toISOString().slice(0, 10),
+        depotCode: String(rrow.DepotCode),
+        positionCode: String(rrow.PositionCode),
+        mode: String(rrow.Mode),
+        torbaTutari: Number(rrow.TorbaTutari ?? 0),
+        enteredAmount: Number(rrow.EnteredAmount ?? 0),
+        adjustmentAmount: Number(rrow.AdjustmentAmount ?? 0),
+        diffAmount: Number(rrow.DiffAmount ?? 0),
+        cashJson: outCash,
+        bankName: rrow.BankName ?? undefined,
+        bankDepositAmount: rrow.BankDepositAmount != null ? Number(rrow.BankDepositAmount) : undefined,
+        dekontNo: rrow.DekontNo ?? undefined,
+        adjustments: Array.isArray(outAdj) ? outAdj : undefined,
+        status: String(rrow.Status),
+        updatedBy: rrow.UpdatedBy ?? undefined,
+        updatedAt: rrow.UpdatedAt ? new Date(rrow.UpdatedAt).toISOString() : undefined,
+        completedBy: rrow.CompletedBy ?? undefined,
+        completedAt: rrow.CompletedAt ? new Date(rrow.CompletedAt).toISOString() : undefined,
+      },
     })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'

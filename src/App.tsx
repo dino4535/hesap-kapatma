@@ -1,11 +1,17 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import {
+  completeMutabakat,
   fetchImportFiles,
+  fetchMutabakat,
   fetchPositionData,
   fetchPositions,
   importSalesFiles,
+  saveMutabakat,
   saveInvoiceAllocationsSql,
   savePaymentAllocationsSql,
+  type MutabakatAdjustment,
+  type MutabakatMode,
+  type MutabakatRecord,
   type ImportFileRow,
   type PositionRow,
 } from './data/api'
@@ -206,8 +212,9 @@ export default function App() {
   const [typeFilter, setTypeFilter] = useState<PaymentType | null>(null)
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null)
   const [editingPayment, setEditingPayment] = useState<{ collection: Collection; key: string } | null>(null)
+  const [mutabakatRecord, setMutabakatRecord] = useState<MutabakatRecord | null>(null)
   const [mutabakatOpen, setMutabakatOpen] = useState(false)
-  const [mutabakatMode, setMutabakatMode] = useState<'NAKIT' | 'BANKA'>('NAKIT')
+  const [mutabakatMode, setMutabakatMode] = useState<MutabakatMode>('NAKIT')
   const [banknoteCounts, setBanknoteCounts] = useState<Record<Banknote, number>>({
     200: 0,
     100: 0,
@@ -220,6 +227,7 @@ export default function App() {
   const [bankName, setBankName] = useState<string>('')
   const [yatanTutar, setYatanTutar] = useState<number>(0)
   const [manimDekontNo, setManimDekontNo] = useState<string>('')
+  const [mutabakatAdjustments, setMutabakatAdjustments] = useState<MutabakatAdjustment[]>([])
 
   useEffect(() => {
     if (!currentUser) return
@@ -304,6 +312,21 @@ export default function App() {
         setStatus({ type: 'error', message: e instanceof Error ? e.message : 'Pozisyon verisi alınamadı' })
       })
   }, [currentUser, selectedPosition, selectedDataset.date, selectedDataset.depot])
+
+  useEffect(() => {
+    if (!selectedPosition || !selectedDataset.date || !selectedDataset.depot) {
+      setMutabakatRecord(null)
+      return
+    }
+    fetchMutabakat({ date: selectedDataset.date, depot: selectedDataset.depot, position: selectedPosition })
+      .then((r) => {
+        if (!r.ok) throw new Error(r.message || 'Mutabakat bilgisi alınamadı')
+        setMutabakatRecord(r.record)
+      })
+      .catch(() => {
+        setMutabakatRecord(null)
+      })
+  }, [selectedPosition, selectedDataset.date, selectedDataset.depot])
 
   const onLogin = (userId: string) => {
     saveSessionUser(userId)
@@ -455,11 +478,133 @@ export default function App() {
 
   const openMutabakat = () => {
     setMutabakatOpen(true)
+    if (
+      mutabakatRecord &&
+      mutabakatRecord.sourceFileDate === selectedDataset.date &&
+      mutabakatRecord.depotCode === selectedDataset.depot &&
+      mutabakatRecord.positionCode === selectedPosition
+    ) {
+      setMutabakatMode(mutabakatRecord.mode)
+      const cash = (mutabakatRecord.cashJson ?? {}) as { banknoteCounts?: Record<string, unknown> }
+      const bn = cash.banknoteCounts ?? {}
+      setBanknoteCounts({
+        200: Number(bn['200'] ?? 0),
+        100: Number(bn['100'] ?? 0),
+        50: Number(bn['50'] ?? 0),
+        20: Number(bn['20'] ?? 0),
+        10: Number(bn['10'] ?? 0),
+        5: Number(bn['5'] ?? 0),
+        1: Number(bn['1'] ?? 0),
+      })
+      setBankName(mutabakatRecord.bankName ?? '')
+      setYatanTutar(mutabakatRecord.bankDepositAmount ?? 0)
+      setManimDekontNo(mutabakatRecord.dekontNo ?? '')
+      setMutabakatAdjustments(mutabakatRecord.adjustments ?? [])
+      return
+    }
+
     setMutabakatMode('NAKIT')
     setBanknoteCounts({ 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 1: 0 })
     setBankName('')
     setYatanTutar(0)
     setManimDekontNo('')
+    setMutabakatAdjustments([])
+  }
+
+  const torbaTutari = summaryTotals?.torbaTutari ?? 0
+  const cashTotal = BANKNOTES.reduce((s, d) => s + d * (banknoteCounts[d] ?? 0), 0)
+  const adjustmentTotal = mutabakatAdjustments.reduce((s, a) => s + (Number(a.amount) || 0), 0)
+  const enteredTotal = mutabakatMode === 'NAKIT' ? cashTotal : Number(yatanTutar) || 0
+  const mutabakatFark = enteredTotal + adjustmentTotal - torbaTutari
+
+  const mutabakatSaved =
+    mutabakatRecord &&
+    mutabakatRecord.sourceFileDate === selectedDataset.date &&
+    mutabakatRecord.depotCode === selectedDataset.depot &&
+    mutabakatRecord.positionCode === selectedPosition
+      ? mutabakatRecord
+      : null
+
+  const addMutabakatAdjustment = () => {
+    const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
+    setMutabakatAdjustments((prev) => prev.concat([{ id, type: 'ACIK', description: '', amount: 0 }]))
+  }
+
+  const saveMutabakatData = async () => {
+    if (!currentUser) return
+    if (!selectedDataset.date || !selectedDataset.depot || !selectedPosition) return
+    if (!summaryTotals) return
+    if (mutabakatSaved?.status === 'COMPLETED') {
+      setStatus({ type: 'error', message: 'Bu pozisyon için mutabakat tamamlanmış. Değişiklik yapılamaz.' })
+      return
+    }
+    if (mutabakatMode === 'BANKA') {
+      if (!bankName) {
+        setStatus({ type: 'error', message: 'Lütfen banka seçin' })
+        return
+      }
+      if ((Number(yatanTutar) || 0) <= 0) {
+        setStatus({ type: 'error', message: 'Lütfen yatan tutarı girin' })
+        return
+      }
+    }
+
+    setStatus({ type: 'info', message: 'Mutabakat kaydediliyor...' })
+    const cleanAdjustments = mutabakatAdjustments.map((a) => ({
+      id: String(a.id),
+      type: a.type,
+      description: (a.description ?? '').trim(),
+      amount: Number(a.amount) || 0,
+    }))
+    const r = await saveMutabakat({
+      userName: currentUser,
+      record: {
+        sourceFileDate: selectedDataset.date,
+        depotCode: selectedDataset.depot,
+        positionCode: selectedPosition,
+        mode: mutabakatMode,
+        torbaTutari,
+        enteredAmount: enteredTotal,
+        cashJson: mutabakatMode === 'NAKIT' ? { banknoteCounts } : undefined,
+        bankName: mutabakatMode === 'BANKA' ? bankName : undefined,
+        bankDepositAmount: mutabakatMode === 'BANKA' ? enteredTotal : undefined,
+        dekontNo: mutabakatMode === 'BANKA' ? manimDekontNo : undefined,
+        adjustments: cleanAdjustments,
+      },
+    })
+    if (!r.ok || !r.record) {
+      setStatus({ type: 'error', message: r.message || 'Mutabakat kaydedilemedi' })
+      return
+    }
+    setMutabakatRecord(r.record)
+    setStatus({
+      type: 'success',
+      message: Math.abs(Number(r.record.diffAmount) || 0) < 0.01 ? 'Mutabakat kaydedildi (Fark 0: Mutabakatı Tamamla aktif)' : 'Mutabakat kaydedildi',
+    })
+  }
+
+  const completeMutabakatData = async () => {
+    if (!currentUser) return
+    if (!mutabakatSaved) return
+    if (mutabakatSaved.status === 'COMPLETED') return
+    if (Math.abs(mutabakatFark) >= 0.01) {
+      setStatus({ type: 'error', message: 'Fark sıfır değil. Mutabakat tamamlanamaz.' })
+      return
+    }
+
+    setStatus({ type: 'info', message: 'Mutabakat tamamlanıyor...' })
+    const r = await completeMutabakat({
+      userName: currentUser,
+      sourceFileDate: mutabakatSaved.sourceFileDate,
+      depotCode: mutabakatSaved.depotCode,
+      positionCode: mutabakatSaved.positionCode,
+    })
+    if (!r.ok || !r.record) {
+      setStatus({ type: 'error', message: r.message || 'Mutabakat tamamlanamadı' })
+      return
+    }
+    setMutabakatRecord(r.record)
+    setStatus({ type: 'success', message: 'Mutabakat tamamlandı' })
   }
 
   const updateInvoiceAllocations = (invoiceCode: string, next: Allocation[]) => {
@@ -687,6 +832,10 @@ export default function App() {
                   <div>TOPLAM NAKİT (Torba Tutarı)</div>
                   <div>{formatMoney(summaryTotals.torbaTutari)}</div>
                 </div>
+                <div className="summary-row">
+                  <div>FARK (Mutabakat)</div>
+                  <div>{mutabakatSaved ? formatMoney(mutabakatSaved.diffAmount) : '-'}</div>
+                </div>
               </div>
             ) : null}
 
@@ -820,7 +969,7 @@ export default function App() {
                 </div>
                 <div className="mutabakat-meta-row">
                   <div className="mutabakat-label">Torba Tutarı</div>
-                  <div className="mutabakat-value">{formatMoney(summaryTotals?.torbaTutari ?? 0)}</div>
+                  <div className="mutabakat-value">{formatMoney(torbaTutari)}</div>
                 </div>
               </div>
 
@@ -843,6 +992,23 @@ export default function App() {
                   />
                   <span>Bankaya Yatan</span>
                 </label>
+              </div>
+
+              <div className="mutabakat-actions">
+                <button className="btn btn-primary" type="button" onClick={saveMutabakatData} disabled={!selectedDataset.date || !selectedDataset.depot || !selectedPosition || !summaryTotals || mutabakatSaved?.status === 'COMPLETED'}>
+                  Kaydet
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  type="button"
+                  onClick={completeMutabakatData}
+                  disabled={!mutabakatSaved || mutabakatSaved.status === 'COMPLETED' || Math.abs(mutabakatFark) >= 0.01}
+                >
+                  Mutabakatı Tamamla
+                </button>
+                <div className="mutabakat-status">
+                  {mutabakatSaved ? (mutabakatSaved.status === 'COMPLETED' ? 'Durum: Tamamlandı' : 'Durum: Taslak') : 'Durum: Kayıt yok'}
+                </div>
               </div>
 
               {mutabakatMode === 'NAKIT' ? (
@@ -882,15 +1048,9 @@ export default function App() {
                   </table>
 
                   <div className="mutabakat-totals">
-                    <div>
-                      Girilen Toplam: {formatMoney(BANKNOTES.reduce((s, d) => s + d * (banknoteCounts[d] ?? 0), 0))}
-                    </div>
-                    <div>
-                      Fark:{' '}
-                      {formatMoney(
-                        BANKNOTES.reduce((s, d) => s + d * (banknoteCounts[d] ?? 0), 0) - (summaryTotals?.torbaTutari ?? 0),
-                      )}
-                    </div>
+                    <div>Girilen Toplam: {formatMoney(enteredTotal)}</div>
+                    <div>Düzeltme: {formatMoney(adjustmentTotal)}</div>
+                    <div>Fark: {formatMoney(mutabakatFark)}</div>
                   </div>
                 </>
               ) : (
@@ -918,11 +1078,221 @@ export default function App() {
                     </div>
                   </div>
                   <div className="mutabakat-totals">
-                    <div>Girilen Tutar: {formatMoney(yatanTutar || 0)}</div>
-                    <div>Fark: {formatMoney((yatanTutar || 0) - (summaryTotals?.torbaTutari ?? 0))}</div>
+                    <div>Girilen Tutar: {formatMoney(enteredTotal)}</div>
+                    <div>Düzeltme: {formatMoney(adjustmentTotal)}</div>
+                    <div>Fark: {formatMoney(mutabakatFark)}</div>
                   </div>
                 </>
               )}
+
+              <div className="mutabakat-section-title">Düzeltme Kayıtları</div>
+              <div className="mutabakat-actions">
+                <button className="btn btn-secondary" type="button" onClick={addMutabakatAdjustment} disabled={mutabakatSaved?.status === 'COMPLETED'}>
+                  Kayıt Ekle
+                </button>
+                <div className="mutabakat-hint">{Math.abs(mutabakatFark) < 0.01 ? 'Fark 0. Mutabakatı tamamla aktif.' : ''}</div>
+              </div>
+              <table className="mini-table">
+                <thead>
+                  <tr>
+                    <th>Tip</th>
+                    <th>Açıklama</th>
+                    <th>Tutar</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {mutabakatAdjustments.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} style={{ textAlign: 'center', color: '#718096' }}>
+                        Kayıt yok
+                      </td>
+                    </tr>
+                  ) : (
+                    mutabakatAdjustments.map((a) => (
+                      <tr key={a.id}>
+                        <td>
+                          <select
+                            value={a.type}
+                            onChange={(e) => setMutabakatAdjustments((prev) => prev.map((x) => (x.id === a.id ? { ...x, type: e.target.value as MutabakatAdjustment['type'] } : x)))}
+                            disabled={mutabakatSaved?.status === 'COMPLETED'}
+                          >
+                            <option value="ACIK">Temsilci Açığı</option>
+                            <option value="HATALI_TAHSILAT">Hatalı Tahsilat</option>
+                            <option value="DIGER">Diğer</option>
+                          </select>
+                        </td>
+                        <td>
+                          <input
+                            value={a.description ?? ''}
+                            onChange={(e) => setMutabakatAdjustments((prev) => prev.map((x) => (x.id === a.id ? { ...x, description: e.target.value } : x)))}
+                            disabled={mutabakatSaved?.status === 'COMPLETED'}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            value={a.amount || ''}
+                            onChange={(e) => setMutabakatAdjustments((prev) => prev.map((x) => (x.id === a.id ? { ...x, amount: Number(e.target.value || 0) } : x)))}
+                            disabled={mutabakatSaved?.status === 'COMPLETED'}
+                          />
+                        </td>
+                        <td>
+                          <button
+                            className="btn btn-secondary"
+                            type="button"
+                            onClick={() => setMutabakatAdjustments((prev) => prev.filter((x) => x.id !== a.id))}
+                            disabled={mutabakatSaved?.status === 'COMPLETED'}
+                          >
+                            Sil
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+
+              <div className="mutabakat-section-title">Ödeme Tipi Değişen Faturalar</div>
+              <table className="mini-table">
+                <thead>
+                  <tr>
+                    <th>Bayi</th>
+                    <th>Fatura</th>
+                    <th>Dağılım</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {positionInvoices.filter((inv) => Array.isArray(invoiceAllocations[inv.code]) && (invoiceAllocations[inv.code]?.length ?? 0) > 0).length === 0 ? (
+                    <tr>
+                      <td colSpan={3} style={{ textAlign: 'center', color: '#718096' }}>
+                        Kayıt yok
+                      </td>
+                    </tr>
+                  ) : (
+                    positionInvoices
+                      .filter((inv) => Array.isArray(invoiceAllocations[inv.code]) && (invoiceAllocations[inv.code]?.length ?? 0) > 0)
+                      .map((inv) => (
+                        <tr key={inv.code}>
+                          <td>{inv.customer.registeredName}</td>
+                          <td>{inv.code}</td>
+                          <td>{allocationSummary(getInvoiceAllocations(inv, invoiceAllocations))}</td>
+                        </tr>
+                      ))
+                  )}
+                </tbody>
+              </table>
+
+              <div className="mutabakat-section-title">Ödeme Tipi Değişen Tahsilatlar</div>
+              <table className="mini-table">
+                <thead>
+                  <tr>
+                    <th>Bayi</th>
+                    <th>Fatura</th>
+                    <th>Dağılım</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {positionCollections.filter((c) => {
+                    const key = c.paymentKey ?? computePaymentKey(c.invoiceCode ?? '', c)
+                    return Array.isArray(paymentAllocations[key]) && (paymentAllocations[key]?.length ?? 0) > 0
+                  }).length === 0 ? (
+                    <tr>
+                      <td colSpan={3} style={{ textAlign: 'center', color: '#718096' }}>
+                        Kayıt yok
+                      </td>
+                    </tr>
+                  ) : (
+                    positionCollections
+                      .filter((c) => {
+                        const key = c.paymentKey ?? computePaymentKey(c.invoiceCode ?? '', c)
+                        return Array.isArray(paymentAllocations[key]) && (paymentAllocations[key]?.length ?? 0) > 0
+                      })
+                      .map((c) => {
+                        const key = c.paymentKey ?? computePaymentKey(c.invoiceCode ?? '', c)
+                        return (
+                          <tr key={key}>
+                            <td>{c.customer.registeredName}</td>
+                            <td>{c.invoiceCode ?? '-'}</td>
+                            <td>{allocationSummary(getPaymentAllocations(key, c, paymentAllocations))}</td>
+                          </tr>
+                        )
+                      })
+                  )}
+                </tbody>
+              </table>
+
+              <div className="mutabakat-section-title">Havale Tipli Faturalar</div>
+              <table className="mini-table">
+                <thead>
+                  <tr>
+                    <th>Bayi</th>
+                    <th>Fatura</th>
+                    <th>Tutar</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {positionInvoices.filter((inv) => allocationAmountForType(getInvoiceAllocations(inv, invoiceAllocations), 'HAVALE') > 0).length === 0 ? (
+                    <tr>
+                      <td colSpan={3} style={{ textAlign: 'center', color: '#718096' }}>
+                        Kayıt yok
+                      </td>
+                    </tr>
+                  ) : (
+                    positionInvoices
+                      .filter((inv) => allocationAmountForType(getInvoiceAllocations(inv, invoiceAllocations), 'HAVALE') > 0)
+                      .map((inv) => (
+                        <tr key={inv.code}>
+                          <td>{inv.customer.registeredName}</td>
+                          <td>{inv.code}</td>
+                          <td>{formatMoney(allocationAmountForType(getInvoiceAllocations(inv, invoiceAllocations), 'HAVALE'))}</td>
+                        </tr>
+                      ))
+                  )}
+                </tbody>
+              </table>
+
+              <div className="mutabakat-section-title">Vadeli Tahsilat Havaleleri</div>
+              <table className="mini-table">
+                <thead>
+                  <tr>
+                    <th>Bayi</th>
+                    <th>Fatura</th>
+                    <th>Tutar</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {positionCollections.filter((c) => {
+                    const key = c.paymentKey ?? computePaymentKey(c.invoiceCode ?? '', c)
+                    const allocs = getPaymentAllocations(key, c, paymentAllocations)
+                    return allocationAmountForType(allocs, 'VADETAHHAV') > 0
+                  }).length === 0 ? (
+                    <tr>
+                      <td colSpan={3} style={{ textAlign: 'center', color: '#718096' }}>
+                        Kayıt yok
+                      </td>
+                    </tr>
+                  ) : (
+                    positionCollections
+                      .filter((c) => {
+                        const key = c.paymentKey ?? computePaymentKey(c.invoiceCode ?? '', c)
+                        const allocs = getPaymentAllocations(key, c, paymentAllocations)
+                        return allocationAmountForType(allocs, 'VADETAHHAV') > 0
+                      })
+                      .map((c) => {
+                        const key = c.paymentKey ?? computePaymentKey(c.invoiceCode ?? '', c)
+                        const allocs = getPaymentAllocations(key, c, paymentAllocations)
+                        return (
+                          <tr key={key}>
+                            <td>{c.customer.registeredName}</td>
+                            <td>{c.invoiceCode ?? '-'}</td>
+                            <td>{formatMoney(allocationAmountForType(allocs, 'VADETAHHAV'))}</td>
+                          </tr>
+                        )
+                      })
+                  )}
+                </tbody>
+              </table>
             </div>
           </Modal>
         </>

@@ -140,3 +140,100 @@ export async function savePaymentAllocationsSql(args: {
   }
   return (await res.json()) as { ok: boolean }
 }
+
+export type MutabakatMode = 'NAKIT' | 'BANKA'
+
+export interface MutabakatAdjustment {
+  id: string
+  type: 'ACIK' | 'HATALI_TAHSILAT' | 'DIGER'
+  description?: string
+  amount: number
+}
+
+export interface MutabakatRecord {
+  sourceFileDate: string
+  depotCode: string
+  positionCode: string
+  mode: MutabakatMode
+  torbaTutari: number
+  enteredAmount: number
+  adjustmentAmount: number
+  diffAmount: number
+  cashJson?: unknown
+  bankName?: string
+  bankDepositAmount?: number
+  dekontNo?: string
+  adjustments?: MutabakatAdjustment[]
+  status: 'DRAFT' | 'COMPLETED'
+  updatedAt?: string
+  updatedBy?: string
+  completedAt?: string
+  completedBy?: string
+}
+
+export async function fetchMutabakat(args: {
+  date: string
+  depot: string
+  position: string
+}): Promise<{ ok: boolean; record: MutabakatRecord | null; message?: string }> {
+  const qs = new URLSearchParams()
+  qs.set('date', args.date)
+  qs.set('depot', args.depot)
+  qs.set('position', args.position)
+  const res = await fetch(`/api/mutabakat?${qs.toString()}`)
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, record: null, message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; record: MutabakatRecord | null }
+}
+
+export async function saveMutabakat(args: {
+  userName: string
+  record: {
+    sourceFileDate: string
+    depotCode: string
+    positionCode: string
+    mode: MutabakatMode
+    torbaTutari: number
+    enteredAmount: number
+    bankName?: string
+    bankDepositAmount?: number
+    dekontNo?: string
+    cashJson?: unknown
+    adjustments?: MutabakatAdjustment[]
+  }
+}): Promise<{ ok: boolean; record?: MutabakatRecord; message?: string }> {
+  const res = await fetch('/api/mutabakat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-user': args.userName },
+    body: JSON.stringify(args.record),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; record: MutabakatRecord }
+}
+
+export async function completeMutabakat(args: {
+  userName: string
+  sourceFileDate: string
+  depotCode: string
+  positionCode: string
+}): Promise<{ ok: boolean; record?: MutabakatRecord; message?: string }> {
+  const res = await fetch('/api/mutabakat/complete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-user': args.userName },
+    body: JSON.stringify({
+      sourceFileDate: args.sourceFileDate,
+      depotCode: args.depotCode,
+      positionCode: args.positionCode,
+    }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; record: MutabakatRecord }
+}
