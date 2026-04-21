@@ -1,0 +1,24 @@
+services:
+  api:
+    build:
+      context: ./server
+    environment:
+      SQL_SERVER: ${SQL_SERVER}
+      SQL_USER: ${SQL_USER}
+      SQL_PASSWORD: ${SQL_PASSWORD}
+      SQL_DATABASE: ${SQL_DATABASE}
+      SQL_PORT: ${SQL_PORT}
+      SQL_TRUST_SERVER_CERT: ${SQL_TRUST_SERVER_CERT}
+      PORT: 3001
+      ADMIN_SECRET: ${ADMIN_SECRET}
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
