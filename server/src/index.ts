@@ -182,6 +182,7 @@ BEGIN
     LegalNumber NVARCHAR(64) NULL,
     Status NVARCHAR(32) NULL,
     SalesType NVARCHAR(32) NOT NULL,
+    IsStub BIT NOT NULL CONSTRAINT DF_Invoices_IsStub DEFAULT (0),
     IssueDate DATETIME2(0) NULL,
     DueDate DATETIME2(0) NULL,
     CreditDays INT NULL,
@@ -212,6 +213,20 @@ IF COL_LENGTH('dbo.Invoices', 'GrossAmount') IS NULL
 BEGIN
   ALTER TABLE dbo.Invoices ADD GrossAmount DECIMAL(18,4) NULL;
 END
+
+IF COL_LENGTH('dbo.Invoices', 'IsStub') IS NULL
+BEGIN
+  ALTER TABLE dbo.Invoices ADD IsStub BIT NOT NULL CONSTRAINT DF_Invoices_IsStub DEFAULT (0);
+END
+
+UPDATE dbo.Invoices
+SET IsStub = 1
+WHERE IsStub = 0
+  AND SalesType = 'UNKNOWN'
+  AND NetAmount = 0
+  AND LegalNumber IS NULL
+  AND IssueDate IS NULL
+  AND DueDate IS NULL;
 
 IF OBJECT_ID('dbo.Payments', 'U') IS NULL
 BEGIN
@@ -364,6 +379,7 @@ WHEN MATCHED THEN UPDATE SET
   LegalNumber = s.LegalNumber,
   Status = s.Status,
   SalesType = s.SalesType,
+  IsStub = 0,
   IssueDate = s.IssueDate,
   DueDate = s.DueDate,
   CreditDays = s.CreditDays,
@@ -383,13 +399,13 @@ WHEN MATCHED THEN UPDATE SET
   SourceDepotCode = s.SourceDepotCode,
   UpdatedAt = SYSUTCDATETIME()
 WHEN NOT MATCHED THEN INSERT (
-  Code, LegalNumber, Status, SalesType, IssueDate, DueDate, CreditDays, NetAmount, OutstandingAmount, TaxAmount, TotalDiscount,
+  Code, LegalNumber, Status, SalesType, IsStub, IssueDate, DueDate, CreditDays, NetAmount, OutstandingAmount, TaxAmount, TotalDiscount,
   GrossAmount,
   CustomerCode, CustomerName, CustomerTaxNumber, CustomerLicenseNumber,
   PositionCode, PositionDescription,
   SourceFileName, SourceFileDate, SourceDepotCode
 ) VALUES (
-  s.Code, s.LegalNumber, s.Status, s.SalesType, s.IssueDate, s.DueDate, s.CreditDays, s.NetAmount, s.OutstandingAmount, s.TaxAmount, s.TotalDiscount,
+  s.Code, s.LegalNumber, s.Status, s.SalesType, 0, s.IssueDate, s.DueDate, s.CreditDays, s.NetAmount, s.OutstandingAmount, s.TaxAmount, s.TotalDiscount,
   s.GrossAmount,
   s.CustomerCode, s.CustomerName, s.CustomerTaxNumber, s.CustomerLicenseNumber,
   s.PositionCode, s.PositionDescription,
@@ -407,8 +423,11 @@ WHEN NOT MATCHED THEN INSERT (
       if (pAmount <= 0) continue
 
       const form = (raw.PAYMENTFORM ?? raw.PAYMENT_FORM) as { CODE?: unknown; DESCRIPTION?: unknown } | undefined
-      const formCode = toStringOrUndef(form?.CODE)
-      const formDesc = toStringOrUndef(form?.DESCRIPTION)
+      const rawFormCode = toStringOrUndef(form?.CODE)
+      const rawFormDesc = toStringOrUndef(form?.DESCRIPTION)
+      const isVadeli = !rawFormDesc || !rawFormDesc.trim()
+      const formCode = isVadeli ? 'VADELI' : rawFormCode
+      const formDesc = isVadeli ? 'Vadeli Ödeme' : rawFormDesc
 
       const paymentKey = computeInvoicePaymentKey(code, { code: pCode ?? undefined, issueDate: pIssueDate ?? undefined, amount: pAmount, formCode })
 
@@ -462,6 +481,7 @@ async function ensureInvoiceStub(pool: mssql.ConnectionPool, args: {
     .request()
     .input('Code', mssql.NVarChar(64), invoiceCode)
     .input('SalesType', mssql.NVarChar(32), 'UNKNOWN')
+    .input('IsStub', mssql.Bit, true)
     .input('NetAmount', mssql.Decimal(18, 4), 0)
     .input('CustomerCode', mssql.NVarChar(64), args.customerCode ?? null)
     .input('CustomerName', mssql.NVarChar(256), customerName)
@@ -477,12 +497,12 @@ async function ensureInvoiceStub(pool: mssql.ConnectionPool, args: {
 IF NOT EXISTS (SELECT 1 FROM dbo.Invoices WHERE Code = @Code)
 BEGIN
   INSERT INTO dbo.Invoices (
-    Code, SalesType, NetAmount,
+    Code, SalesType, IsStub, NetAmount,
     CustomerCode, CustomerName, CustomerTaxNumber, CustomerLicenseNumber,
     PositionCode, PositionDescription,
     SourceFileName, SourceFileDate, SourceDepotCode
   ) VALUES (
-    @Code, @SalesType, @NetAmount,
+    @Code, @SalesType, @IsStub, @NetAmount,
     @CustomerCode, @CustomerName, @CustomerTaxNumber, @CustomerLicenseNumber,
     @PositionCode, @PositionDescription,
     @SourceFileName, @SourceFileDate, @SourceDepotCode
@@ -525,11 +545,12 @@ async function insertCollection(pool: mssql.ConnectionPool, c: RawCollection, so
     .input('PaymentFormCode', mssql.NVarChar(32), formCode ?? null)
     .input('PaymentFormDescription', mssql.NVarChar(64), formDesc ?? null)
     .input('SourceFileName', mssql.NVarChar(260), source.fileName)
+    .input('PaymentSource', mssql.NVarChar(16), 'COLLECTION')
     .query(`
 IF NOT EXISTS (SELECT 1 FROM dbo.Payments WHERE PaymentKey = @PaymentKey)
 BEGIN
-  INSERT INTO dbo.Payments (PaymentKey, InvoiceCode, Code, IssueDate, Amount, PaymentFormCode, PaymentFormDescription, SourceFileName)
-  VALUES (@PaymentKey, @InvoiceCode, @Code, @IssueDate, @Amount, @PaymentFormCode, @PaymentFormDescription, @SourceFileName);
+  INSERT INTO dbo.Payments (PaymentKey, InvoiceCode, Code, IssueDate, Amount, PaymentFormCode, PaymentFormDescription, SourceFileName, PaymentSource)
+  VALUES (@PaymentKey, @InvoiceCode, @Code, @IssueDate, @Amount, @PaymentFormCode, @PaymentFormDescription, @SourceFileName, @PaymentSource);
 END
 `)
 }
@@ -777,6 +798,7 @@ SELECT
   COUNT(1) AS invoiceCount
 FROM dbo.Invoices
 WHERE PositionCode IS NOT NULL AND LTRIM(RTRIM(PositionCode)) <> ''
+  AND IsStub = 0
   AND (@SourceFileDate IS NULL OR SourceFileDate = @SourceFileDate)
   AND (@SourceDepotCode IS NULL OR SourceDepotCode = @SourceDepotCode)
 GROUP BY PositionCode
@@ -823,6 +845,7 @@ SELECT
   SourceFileName, SourceFileDate, SourceDepotCode
 FROM dbo.Invoices
 WHERE PositionCode = @PositionCode
+  AND IsStub = 0
   AND (@SourceFileDate IS NULL OR SourceFileDate = @SourceFileDate)
   AND (@SourceDepotCode IS NULL OR SourceDepotCode = @SourceDepotCode)
 ORDER BY Code
