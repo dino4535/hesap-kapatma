@@ -234,7 +234,15 @@ export default function App() {
       const key = `${f.fileDate ?? ''}|${f.depotCode ?? ''}`
       if (seen.has(key)) continue
       seen.add(key)
-      const parts = [f.fileDate ?? 'Tarih yok', f.depotCode ? `Depo: ${f.depotCode}` : null].filter(Boolean)
+      const depotLabel =
+        f.depotCode === 'DIST2K'
+          ? 'İzmir'
+          : f.depotCode === 'DIST28'
+            ? 'Salihli'
+            : f.depotCode === 'DIT2F'
+              ? 'Manisa'
+              : f.depotCode
+      const parts = [f.fileDate ? formatDateTr(f.fileDate) : 'Tarih yok', depotLabel ? `Depo: ${depotLabel}` : null].filter(Boolean)
       items.push({ key, label: parts.join(' • '), date: f.fileDate, depot: f.depotCode })
     }
     return items

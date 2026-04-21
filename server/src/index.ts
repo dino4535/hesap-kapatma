@@ -22,7 +22,7 @@ type SalesFileMeta = { fileName: string; fileDate?: string; depotCode?: string }
 
 function parseSalesFileName(fileName: string): SalesFileMeta {
   const base = fileName.replace(/\.json$/i, '')
-  const m = /^(\d{8})_DIST([A-Z0-9]+)_SALES$/i.exec(base)
+  const m = /^(\d{8})_([A-Z0-9]+)_SALES$/i.exec(base)
   if (!m) return { fileName }
   const y = m[1].slice(0, 4)
   const mo = m[1].slice(4, 6)
