@@ -488,6 +488,34 @@ export default function App() {
   const discountTotalAll = useMemo(() => positionInvoices.reduce((s, i) => s + (i.totalDiscount ?? 0), 0), [positionInvoices])
   const paymentTotal = useMemo(() => positionCollections.reduce((s, c) => s + (c.amount ?? 0), 0), [positionCollections])
 
+  const havaleInvoicesByBayi = useMemo(() => {
+    const totals = new Map<string, number>()
+    for (const inv of positionInvoices) {
+      const amount = allocationAmountForType(getInvoiceAllocations(inv, invoiceAllocations), 'HAVALE')
+      if (amount <= 0) continue
+      const name = (inv.customer.registeredName ?? '').trim() || '-'
+      totals.set(name, (totals.get(name) ?? 0) + amount)
+    }
+    return Array.from(totals.entries())
+      .map(([bayi, total]) => ({ bayi, total }))
+      .sort((a, b) => a.bayi.localeCompare(b.bayi, 'tr', { sensitivity: 'base' }))
+  }, [positionInvoices, invoiceAllocations])
+
+  const vadeliTahsilatHavaleleriByBayi = useMemo(() => {
+    const totals = new Map<string, number>()
+    for (const c of positionCollections) {
+      const key = c.paymentKey ?? computePaymentKey(c.invoiceCode ?? '', c)
+      const allocs = getPaymentAllocations(key, c, paymentAllocations)
+      const amount = allocationAmountForType(allocs, 'VADETAHHAV')
+      if (amount <= 0) continue
+      const name = (c.customer.registeredName ?? '').trim() || '-'
+      totals.set(name, (totals.get(name) ?? 0) + amount)
+    }
+    return Array.from(totals.entries())
+      .map(([bayi, total]) => ({ bayi, total }))
+      .sort((a, b) => a.bayi.localeCompare(b.bayi, 'tr', { sensitivity: 'base' }))
+  }, [positionCollections, paymentAllocations])
+
   const summaryTotals = useMemo(() => {
     if (!selectedPosition) return null
 
@@ -1538,27 +1566,23 @@ export default function App() {
                 <thead>
                   <tr>
                     <th>Bayi</th>
-                    <th>Fatura</th>
                     <th>Tutar</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {positionInvoices.filter((inv) => allocationAmountForType(getInvoiceAllocations(inv, invoiceAllocations), 'HAVALE') > 0).length === 0 ? (
+                  {havaleInvoicesByBayi.length === 0 ? (
                     <tr>
-                      <td colSpan={3} style={{ textAlign: 'center', color: '#718096' }}>
+                      <td colSpan={2} style={{ textAlign: 'center', color: '#718096' }}>
                         Kayıt yok
                       </td>
                     </tr>
                   ) : (
-                    positionInvoices
-                      .filter((inv) => allocationAmountForType(getInvoiceAllocations(inv, invoiceAllocations), 'HAVALE') > 0)
-                      .map((inv) => (
-                        <tr key={inv.code}>
-                          <td>{inv.customer.registeredName}</td>
-                          <td>{inv.code}</td>
-                          <td>{formatMoney(allocationAmountForType(getInvoiceAllocations(inv, invoiceAllocations), 'HAVALE'))}</td>
-                        </tr>
-                      ))
+                    havaleInvoicesByBayi.map((r) => (
+                      <tr key={r.bayi}>
+                        <td>{r.bayi}</td>
+                        <td>{formatMoney(r.total)}</td>
+                      </tr>
+                    ))
                   )}
                 </tbody>
               </table>
@@ -1568,39 +1592,23 @@ export default function App() {
                 <thead>
                   <tr>
                     <th>Bayi</th>
-                    <th>Fatura</th>
                     <th>Tutar</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {positionCollections.filter((c) => {
-                    const key = c.paymentKey ?? computePaymentKey(c.invoiceCode ?? '', c)
-                    const allocs = getPaymentAllocations(key, c, paymentAllocations)
-                    return allocationAmountForType(allocs, 'VADETAHHAV') > 0
-                  }).length === 0 ? (
+                  {vadeliTahsilatHavaleleriByBayi.length === 0 ? (
                     <tr>
-                      <td colSpan={3} style={{ textAlign: 'center', color: '#718096' }}>
+                      <td colSpan={2} style={{ textAlign: 'center', color: '#718096' }}>
                         Kayıt yok
                       </td>
                     </tr>
                   ) : (
-                    positionCollections
-                      .filter((c) => {
-                        const key = c.paymentKey ?? computePaymentKey(c.invoiceCode ?? '', c)
-                        const allocs = getPaymentAllocations(key, c, paymentAllocations)
-                        return allocationAmountForType(allocs, 'VADETAHHAV') > 0
-                      })
-                      .map((c) => {
-                        const key = c.paymentKey ?? computePaymentKey(c.invoiceCode ?? '', c)
-                        const allocs = getPaymentAllocations(key, c, paymentAllocations)
-                        return (
-                          <tr key={key}>
-                            <td>{c.customer.registeredName}</td>
-                            <td>{c.invoiceCode ?? '-'}</td>
-                            <td>{formatMoney(allocationAmountForType(allocs, 'VADETAHHAV'))}</td>
-                          </tr>
-                        )
-                      })
+                    vadeliTahsilatHavaleleriByBayi.map((r) => (
+                      <tr key={r.bayi}>
+                        <td>{r.bayi}</td>
+                        <td>{formatMoney(r.total)}</td>
+                      </tr>
+                    ))
                   )}
                 </tbody>
               </table>
