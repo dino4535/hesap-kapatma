@@ -28,6 +28,21 @@ export interface Payment {
   paymentFormDescription?: string
 }
 
+export interface InvoiceDetailProduct {
+  sequence?: number
+  code?: string
+  description?: string
+}
+
+export interface InvoiceDetail {
+  product: InvoiceDetailProduct
+  quantity?: number
+  netAmount?: number
+  grossAmount?: number
+  price?: number
+  availability?: number
+}
+
 export interface Collection extends Payment {
   invoiceCode?: string
   customer: InvoiceCustomer
@@ -37,6 +52,8 @@ export interface Collection extends Payment {
 
 export interface Invoice {
   code: string
+  isEdos?: boolean
+  returnGoods?: unknown
   legalNumber?: string
   status?: string
   salesType: SalesType
@@ -51,6 +68,7 @@ export interface Invoice {
   customer: InvoiceCustomer
   position: InvoicePosition
   payments: Payment[]
+  details?: InvoiceDetail[]
   source?: SalesFileMeta
 }
 

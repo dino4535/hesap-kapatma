@@ -34,9 +34,10 @@ function parseSalesFileName(fileName: string): SalesFileMeta {
   }
 }
 
-type RawSalesFile = { INVOICES?: unknown; COLLECTIONS?: unknown }
+type RawSalesFile = { INVOICES?: unknown; COLLECTIONS?: unknown; Id?: unknown; RowCount?: unknown; ModDate?: unknown }
 type RawInvoice = {
   CODE?: unknown
+  ISEDOS?: unknown
   LEGALNUMBER?: unknown
   STATUS?: unknown
   SALESTYPE?: unknown
@@ -59,6 +60,8 @@ type RawInvoice = {
     DESCRIPTION?: unknown
   }
   PAYMENTS?: unknown
+  DETAILS?: unknown
+  RETURNGOODS?: unknown
 }
 
 type RawInvoicePayment = {
@@ -73,6 +76,21 @@ type RawInvoicePayment = {
     CODE?: unknown
     DESCRIPTION?: unknown
   }
+}
+
+type RawInvoiceDetailProduct = {
+  SEQUENCE?: unknown
+  CODE?: unknown
+  DESCRIPTION?: unknown
+}
+
+type RawInvoiceDetail = {
+  PRODUCT?: RawInvoiceDetailProduct
+  QUANTITY?: unknown
+  NETAMOUNT?: unknown
+  GROSSAMOUNT?: unknown
+  PRICE?: unknown
+  AVAILABILITY?: unknown
 }
 
 type RawCollection = {
@@ -175,10 +193,27 @@ BEGIN
   );
 END
 
+IF COL_LENGTH('dbo.ImportFiles', 'JsonId') IS NULL
+BEGIN
+  ALTER TABLE dbo.ImportFiles ADD JsonId NVARCHAR(64) NULL;
+END
+
+IF COL_LENGTH('dbo.ImportFiles', 'JsonRowCount') IS NULL
+BEGIN
+  ALTER TABLE dbo.ImportFiles ADD JsonRowCount INT NULL;
+END
+
+IF COL_LENGTH('dbo.ImportFiles', 'JsonModDate') IS NULL
+BEGIN
+  ALTER TABLE dbo.ImportFiles ADD JsonModDate DATETIME2(0) NULL;
+END
+
 IF OBJECT_ID('dbo.Invoices', 'U') IS NULL
 BEGIN
   CREATE TABLE dbo.Invoices (
     Code NVARCHAR(64) NOT NULL PRIMARY KEY,
+    IsEdos BIT NULL,
+    ReturnGoodsJson NVARCHAR(MAX) NULL,
     LegalNumber NVARCHAR(64) NULL,
     Status NVARCHAR(32) NULL,
     SalesType NVARCHAR(32) NOT NULL,
@@ -202,6 +237,16 @@ BEGIN
     SourceDepotCode NVARCHAR(32) NULL,
     UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_Invoices_UpdatedAt DEFAULT (SYSUTCDATETIME())
   );
+END
+
+IF COL_LENGTH('dbo.Invoices', 'IsEdos') IS NULL
+BEGIN
+  ALTER TABLE dbo.Invoices ADD IsEdos BIT NULL;
+END
+
+IF COL_LENGTH('dbo.Invoices', 'ReturnGoodsJson') IS NULL
+BEGIN
+  ALTER TABLE dbo.Invoices ADD ReturnGoodsJson NVARCHAR(MAX) NULL;
 END
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Invoices_SourceFileDate_Depot_Position' AND object_id = OBJECT_ID('dbo.Invoices'))
@@ -284,6 +329,24 @@ BEGIN
   );
 END
 
+IF OBJECT_ID('dbo.InvoiceDetails', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.InvoiceDetails (
+    InvoiceCode NVARCHAR(64) NOT NULL,
+    LineNo INT NOT NULL,
+    ProductSequence INT NULL,
+    ProductCode NVARCHAR(64) NULL,
+    ProductDescription NVARCHAR(256) NULL,
+    Quantity DECIMAL(18,4) NULL,
+    NetAmount DECIMAL(18,4) NULL,
+    GrossAmount DECIMAL(18,4) NULL,
+    Price DECIMAL(18,4) NULL,
+    Availability INT NULL,
+    CONSTRAINT PK_InvoiceDetails PRIMARY KEY (InvoiceCode, LineNo),
+    CONSTRAINT FK_InvoiceDetails_Invoices FOREIGN KEY (InvoiceCode) REFERENCES dbo.Invoices(Code)
+  );
+END
+
 IF OBJECT_ID('dbo.Mutabakat', 'U') IS NULL
 BEGIN
   CREATE TABLE dbo.Mutabakat (
@@ -353,6 +416,49 @@ async function createUser(pool: mssql.ConnectionPool, userName: string, password
     .query('INSERT INTO dbo.Users (UserName, PasswordSalt, PasswordHash) VALUES (@UserName, @PasswordSalt, @PasswordHash)')
 }
 
+async function replaceInvoiceDetails(pool: mssql.ConnectionPool, invoiceCode: string, details: unknown) {
+  if (!Array.isArray(details)) return
+
+  await pool.request().input('InvoiceCode', mssql.NVarChar(64), invoiceCode).query('DELETE FROM dbo.InvoiceDetails WHERE InvoiceCode = @InvoiceCode')
+
+  if (details.length === 0) return
+
+  const table = new mssql.Table('dbo.InvoiceDetails')
+  table.create = false
+  table.columns.add('InvoiceCode', mssql.NVarChar(64), { nullable: false })
+  table.columns.add('LineNo', mssql.Int, { nullable: false })
+  table.columns.add('ProductSequence', mssql.Int, { nullable: true })
+  table.columns.add('ProductCode', mssql.NVarChar(64), { nullable: true })
+  table.columns.add('ProductDescription', mssql.NVarChar(256), { nullable: true })
+  table.columns.add('Quantity', mssql.Decimal(18, 4), { nullable: true })
+  table.columns.add('NetAmount', mssql.Decimal(18, 4), { nullable: true })
+  table.columns.add('GrossAmount', mssql.Decimal(18, 4), { nullable: true })
+  table.columns.add('Price', mssql.Decimal(18, 4), { nullable: true })
+  table.columns.add('Availability', mssql.Int, { nullable: true })
+
+  let lineNo = 1
+  for (const d of details as RawInvoiceDetail[]) {
+    if (!d || typeof d !== 'object') continue
+    const product = (d.PRODUCT ?? {}) as RawInvoiceDetailProduct
+    table.rows.add(
+      invoiceCode,
+      lineNo,
+      (toNumberOrUndef(product.SEQUENCE) ?? null) as number | null,
+      (toStringOrUndef(product.CODE) ?? null) as string | null,
+      (toStringOrUndef(product.DESCRIPTION) ?? null) as string | null,
+      (toNumberFlexible(d.QUANTITY) ?? null) as number | null,
+      (toNumberFlexible(d.NETAMOUNT) ?? null) as number | null,
+      (toNumberFlexible(d.GROSSAMOUNT) ?? null) as number | null,
+      (toNumberFlexible(d.PRICE) ?? null) as number | null,
+      (toNumberOrUndef(d.AVAILABILITY) ?? null) as number | null,
+    )
+    lineNo += 1
+  }
+
+  if (table.rows.length === 0) return
+  await pool.request().bulk(table)
+}
+
 async function upsertInvoice(pool: mssql.ConnectionPool, inv: RawInvoice, source: { fileName: string; fileDate?: string; depotCode?: string }) {
   const code = toStringOrUndef(inv.CODE) ?? ''
   if (!code) return { paymentCount: 0 }
@@ -364,9 +470,23 @@ async function upsertInvoice(pool: mssql.ConnectionPool, inv: RawInvoice, source
   const issueDate = toStringOrUndef(inv.ISSUEDATE)
   const dueDate = toStringOrUndef(inv.DUEDATE)
 
+  const isEdosRaw = toNumberOrUndef(inv.ISEDOS)
+  const isEdos = typeof isEdosRaw === 'number' ? isEdosRaw !== 0 : null
+
+  let returnGoodsJson: string | null = null
+  if (inv.RETURNGOODS !== undefined && inv.RETURNGOODS !== null) {
+    try {
+      returnGoodsJson = JSON.stringify(inv.RETURNGOODS)
+    } catch {
+      returnGoodsJson = null
+    }
+  }
+
   await pool
     .request()
     .input('Code', mssql.NVarChar(64), code)
+    .input('IsEdos', mssql.Bit, isEdos)
+    .input('ReturnGoodsJson', mssql.NVarChar(mssql.MAX), returnGoodsJson)
     .input('LegalNumber', mssql.NVarChar(64), toStringOrUndef(inv.LEGALNUMBER))
     .input('Status', mssql.NVarChar(32), toStringOrUndef(inv.STATUS))
     .input('SalesType', mssql.NVarChar(32), salesType)
@@ -391,6 +511,8 @@ async function upsertInvoice(pool: mssql.ConnectionPool, inv: RawInvoice, source
 MERGE dbo.Invoices WITH (HOLDLOCK) AS t
 USING (SELECT
   @Code AS Code,
+  @IsEdos AS IsEdos,
+  @ReturnGoodsJson AS ReturnGoodsJson,
   @LegalNumber AS LegalNumber,
   @Status AS Status,
   @SalesType AS SalesType,
@@ -414,6 +536,8 @@ USING (SELECT
 ) AS s
 ON t.Code = s.Code
 WHEN MATCHED THEN UPDATE SET
+  IsEdos = s.IsEdos,
+  ReturnGoodsJson = s.ReturnGoodsJson,
   LegalNumber = s.LegalNumber,
   Status = s.Status,
   SalesType = s.SalesType,
@@ -437,19 +561,21 @@ WHEN MATCHED THEN UPDATE SET
   SourceDepotCode = s.SourceDepotCode,
   UpdatedAt = SYSUTCDATETIME()
 WHEN NOT MATCHED THEN INSERT (
-  Code, LegalNumber, Status, SalesType, IsStub, IssueDate, DueDate, CreditDays, NetAmount, OutstandingAmount, TaxAmount, TotalDiscount,
+  Code, IsEdos, ReturnGoodsJson, LegalNumber, Status, SalesType, IsStub, IssueDate, DueDate, CreditDays, NetAmount, OutstandingAmount, TaxAmount, TotalDiscount,
   GrossAmount,
   CustomerCode, CustomerName, CustomerTaxNumber, CustomerLicenseNumber,
   PositionCode, PositionDescription,
   SourceFileName, SourceFileDate, SourceDepotCode
 ) VALUES (
-  s.Code, s.LegalNumber, s.Status, s.SalesType, 0, s.IssueDate, s.DueDate, s.CreditDays, s.NetAmount, s.OutstandingAmount, s.TaxAmount, s.TotalDiscount,
+  s.Code, s.IsEdos, s.ReturnGoodsJson, s.LegalNumber, s.Status, s.SalesType, 0, s.IssueDate, s.DueDate, s.CreditDays, s.NetAmount, s.OutstandingAmount, s.TaxAmount, s.TotalDiscount,
   s.GrossAmount,
   s.CustomerCode, s.CustomerName, s.CustomerTaxNumber, s.CustomerLicenseNumber,
   s.PositionCode, s.PositionDescription,
   s.SourceFileName, s.SourceFileDate, s.SourceDepotCode
 );
 `)
+
+  await replaceInvoiceDetails(pool, code, inv.DETAILS)
 
   let paymentCount = 0
   if (Array.isArray(inv.PAYMENTS)) {
@@ -652,6 +778,10 @@ WHERE SourceFileDate = @SourceFileDate
     paymentCount += 1
   }
 
+  const jsonId = toStringOrUndef(parsed.Id) ?? null
+  const jsonRowCount = toNumberOrUndef(parsed.RowCount) ?? null
+  const jsonModDate = safeDate(toStringOrUndef(parsed.ModDate) ?? undefined)
+
   await pool
     .request()
     .input('FileName', mssql.NVarChar(260), meta.fileName)
@@ -659,12 +789,32 @@ WHERE SourceFileDate = @SourceFileDate
     .input('DepotCode', mssql.NVarChar(32), meta.depotCode ?? null)
     .input('InvoiceCount', mssql.Int, invoiceCount)
     .input('PaymentCount', mssql.Int, paymentCount)
+    .input('JsonId', mssql.NVarChar(64), jsonId)
+    .input('JsonRowCount', mssql.Int, jsonRowCount)
+    .input('JsonModDate', mssql.DateTime2(0), jsonModDate)
     .query(`
-IF NOT EXISTS (SELECT 1 FROM dbo.ImportFiles WHERE FileName = @FileName)
-BEGIN
-  INSERT INTO dbo.ImportFiles (FileName, FileDate, DepotCode, InvoiceCount, PaymentCount)
-  VALUES (@FileName, @FileDate, @DepotCode, @InvoiceCount, @PaymentCount);
-END
+MERGE dbo.ImportFiles WITH (HOLDLOCK) AS t
+USING (SELECT
+  @FileName AS FileName,
+  @FileDate AS FileDate,
+  @DepotCode AS DepotCode,
+  @InvoiceCount AS InvoiceCount,
+  @PaymentCount AS PaymentCount,
+  @JsonId AS JsonId,
+  @JsonRowCount AS JsonRowCount,
+  @JsonModDate AS JsonModDate
+) AS s
+ON t.FileName = s.FileName
+WHEN MATCHED THEN UPDATE SET
+  FileDate = s.FileDate,
+  DepotCode = s.DepotCode,
+  InvoiceCount = s.InvoiceCount,
+  PaymentCount = s.PaymentCount,
+  JsonId = s.JsonId,
+  JsonRowCount = s.JsonRowCount,
+  JsonModDate = s.JsonModDate
+WHEN NOT MATCHED THEN INSERT (FileName, FileDate, DepotCode, InvoiceCount, PaymentCount, JsonId, JsonRowCount, JsonModDate)
+VALUES (s.FileName, s.FileDate, s.DepotCode, s.InvoiceCount, s.PaymentCount, s.JsonId, s.JsonRowCount, s.JsonModDate);
 `)
 
   return {
@@ -1028,7 +1178,7 @@ app.get('/api/positions/:code', async (req, res) => {
       .query(
         `
 SELECT
-  Code, LegalNumber, Status, SalesType, IssueDate, DueDate, CreditDays, NetAmount, GrossAmount, OutstandingAmount, TaxAmount, TotalDiscount,
+  Code, IsEdos, ReturnGoodsJson, LegalNumber, Status, SalesType, IssueDate, DueDate, CreditDays, NetAmount, GrossAmount, OutstandingAmount, TaxAmount, TotalDiscount,
   CustomerCode, CustomerName, CustomerTaxNumber, CustomerLicenseNumber,
   PositionCode, PositionDescription,
   SourceFileName, SourceFileDate, SourceDepotCode
@@ -1038,6 +1188,34 @@ WHERE PositionCode = @PositionCode
   AND (@SourceFileDate IS NULL OR SourceFileDate = @SourceFileDate)
   AND (@SourceDepotCode IS NULL OR SourceDepotCode = @SourceDepotCode)
 ORDER BY Code
+`,
+      )
+
+    const detailRes = await pool
+      .request()
+      .input('PositionCode', mssql.NVarChar(64), positionCode)
+      .input('SourceFileDate', mssql.Date, sourceFileDate)
+      .input('SourceDepotCode', mssql.NVarChar(32), sourceDepotCode)
+      .query(
+        `
+SELECT
+  d.InvoiceCode,
+  d.LineNo,
+  d.ProductSequence,
+  d.ProductCode,
+  d.ProductDescription,
+  d.Quantity,
+  d.NetAmount,
+  d.GrossAmount,
+  d.Price,
+  d.Availability
+FROM dbo.InvoiceDetails d
+JOIN dbo.Invoices i ON i.Code = d.InvoiceCode
+WHERE i.PositionCode = @PositionCode
+  AND i.IsStub = 0
+  AND (@SourceFileDate IS NULL OR i.SourceFileDate = @SourceFileDate)
+  AND (@SourceDepotCode IS NULL OR i.SourceDepotCode = @SourceDepotCode)
+ORDER BY d.InvoiceCode, d.LineNo
 `,
       )
 
@@ -1134,6 +1312,16 @@ WHERE i.PositionCode = @PositionCode
 
     const invoices = (invRes.recordset ?? []).map((row) => ({
       code: String(row.Code),
+      isEdos: row.IsEdos != null ? Boolean(row.IsEdos) : undefined,
+      returnGoods: (() => {
+        const raw = row.ReturnGoodsJson
+        if (!raw) return undefined
+        try {
+          return JSON.parse(String(raw))
+        } catch {
+          return undefined
+        }
+      })(),
       legalNumber: row.LegalNumber ?? undefined,
       status: row.Status ?? undefined,
       salesType: String(row.SalesType ?? ''),
@@ -1161,6 +1349,14 @@ WHERE i.PositionCode = @PositionCode
         amount: number
         paymentFormCode?: string
         paymentFormDescription?: string
+      }>,
+      details: [] as Array<{
+        product: { sequence?: number; code?: string; description?: string }
+        quantity?: number
+        netAmount?: number
+        grossAmount?: number
+        price?: number
+        availability?: number
       }>,
       source: row.SourceFileName
         ? {
@@ -1218,6 +1414,37 @@ WHERE i.PositionCode = @PositionCode
 
     for (const inv of invoices) {
       inv.payments = paymentsByInvoiceCode.get(inv.code) ?? []
+    }
+
+    const detailsByInvoiceCode = new Map<string, Array<{
+      product: { sequence?: number; code?: string; description?: string }
+      quantity?: number
+      netAmount?: number
+      grossAmount?: number
+      price?: number
+      availability?: number
+    }>>()
+    for (const row of detailRes.recordset ?? []) {
+      const invoiceCode = String(row.InvoiceCode ?? '').trim()
+      if (!invoiceCode) continue
+      const arr = detailsByInvoiceCode.get(invoiceCode) ?? []
+      arr.push({
+        product: {
+          sequence: typeof row.ProductSequence === 'number' ? row.ProductSequence : row.ProductSequence != null ? Number(row.ProductSequence) : undefined,
+          code: row.ProductCode ?? undefined,
+          description: row.ProductDescription ?? undefined,
+        },
+        quantity: row.Quantity != null ? Number(row.Quantity) : undefined,
+        netAmount: row.NetAmount != null ? Number(row.NetAmount) : undefined,
+        grossAmount: row.GrossAmount != null ? Number(row.GrossAmount) : undefined,
+        price: row.Price != null ? Number(row.Price) : undefined,
+        availability: row.Availability != null ? Number(row.Availability) : undefined,
+      })
+      detailsByInvoiceCode.set(invoiceCode, arr)
+    }
+
+    for (const inv of invoices) {
+      inv.details = detailsByInvoiceCode.get(inv.code) ?? []
     }
 
     const invoiceAllocations: Record<string, unknown> = {}
