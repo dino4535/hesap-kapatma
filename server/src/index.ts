@@ -34,6 +34,11 @@ function parseSalesFileName(fileName: string): SalesFileMeta {
   }
 }
 
+function normalizeDepotCode(value: unknown) {
+  const s = typeof value === 'string' ? value.trim().toUpperCase() : ''
+  return s || null
+}
+
 type RawSalesFile = { INVOICES?: unknown; COLLECTIONS?: unknown; Id?: unknown; RowCount?: unknown; ModDate?: unknown }
 type RawInvoice = {
   CODE?: unknown
@@ -193,10 +198,22 @@ BEGIN
     FileName NVARCHAR(260) NOT NULL UNIQUE,
     FileDate DATE NULL,
     DepotCode NVARCHAR(32) NULL,
+    DepotCodeParsed NVARCHAR(32) NULL,
+    DepotCodeSelected NVARCHAR(32) NULL,
     ImportedAt DATETIME2(0) NOT NULL CONSTRAINT DF_ImportFiles_ImportedAt DEFAULT (SYSUTCDATETIME()),
     InvoiceCount INT NOT NULL,
     PaymentCount INT NOT NULL
   );
+END
+
+IF COL_LENGTH('dbo.ImportFiles', 'DepotCodeParsed') IS NULL
+BEGIN
+  ALTER TABLE dbo.ImportFiles ADD DepotCodeParsed NVARCHAR(32) NULL;
+END
+
+IF COL_LENGTH('dbo.ImportFiles', 'DepotCodeSelected') IS NULL
+BEGIN
+  ALTER TABLE dbo.ImportFiles ADD DepotCodeSelected NVARCHAR(32) NULL;
 END
 
 IF COL_LENGTH('dbo.ImportFiles', 'JsonId') IS NULL
@@ -775,8 +792,17 @@ END
 `)
 }
 
-async function importFile(pool: mssql.ConnectionPool, fileName: string, content: string) {
-  const meta = parseSalesFileName(fileName)
+async function importFile(pool: mssql.ConnectionPool, fileName: string, content: string, selectedDepotCode: string | null) {
+  const parsedMeta = parseSalesFileName(fileName)
+  const parsedDepotCode = normalizeDepotCode(parsedMeta.depotCode)
+  const depotCodeSelected = normalizeDepotCode(selectedDepotCode)
+  if (!depotCodeSelected) {
+    throw new Error(`${fileName}: Depo seçimi zorunlu`)
+  }
+  if (parsedDepotCode && depotCodeSelected !== parsedDepotCode) {
+    throw new Error(`${fileName}: Depo uyuşmuyor (dosya: ${parsedDepotCode}, seçilen: ${depotCodeSelected})`)
+  }
+  const meta: SalesFileMeta = { ...parsedMeta, depotCode: depotCodeSelected }
 
   const existing = await pool
     .request()
@@ -845,6 +871,8 @@ WHERE SourceFileDate = @SourceFileDate
     .input('FileName', mssql.NVarChar(260), meta.fileName)
     .input('FileDate', mssql.Date, meta.fileDate ? new Date(meta.fileDate) : null)
     .input('DepotCode', mssql.NVarChar(32), meta.depotCode ?? null)
+    .input('DepotCodeParsed', mssql.NVarChar(32), parsedDepotCode)
+    .input('DepotCodeSelected', mssql.NVarChar(32), depotCodeSelected)
     .input('InvoiceCount', mssql.Int, invoiceCount)
     .input('PaymentCount', mssql.Int, paymentCount)
     .input('JsonId', mssql.NVarChar(64), jsonId)
@@ -856,6 +884,8 @@ USING (SELECT
   @FileName AS FileName,
   @FileDate AS FileDate,
   @DepotCode AS DepotCode,
+  @DepotCodeParsed AS DepotCodeParsed,
+  @DepotCodeSelected AS DepotCodeSelected,
   @InvoiceCount AS InvoiceCount,
   @PaymentCount AS PaymentCount,
   @JsonId AS JsonId,
@@ -866,13 +896,15 @@ ON t.FileName = s.FileName
 WHEN MATCHED THEN UPDATE SET
   FileDate = s.FileDate,
   DepotCode = s.DepotCode,
+  DepotCodeParsed = s.DepotCodeParsed,
+  DepotCodeSelected = s.DepotCodeSelected,
   InvoiceCount = s.InvoiceCount,
   PaymentCount = s.PaymentCount,
   JsonId = s.JsonId,
   JsonRowCount = s.JsonRowCount,
   JsonModDate = s.JsonModDate
-WHEN NOT MATCHED THEN INSERT (FileName, FileDate, DepotCode, InvoiceCount, PaymentCount, JsonId, JsonRowCount, JsonModDate)
-VALUES (s.FileName, s.FileDate, s.DepotCode, s.InvoiceCount, s.PaymentCount, s.JsonId, s.JsonRowCount, s.JsonModDate);
+WHEN NOT MATCHED THEN INSERT (FileName, FileDate, DepotCode, DepotCodeParsed, DepotCodeSelected, InvoiceCount, PaymentCount, JsonId, JsonRowCount, JsonModDate)
+VALUES (s.FileName, s.FileDate, s.DepotCode, s.DepotCodeParsed, s.DepotCodeSelected, s.InvoiceCount, s.PaymentCount, s.JsonId, s.JsonRowCount, s.JsonModDate);
 `)
 
   return {
@@ -1097,6 +1129,220 @@ app.post('/api/admin/cleanup', async (req, res) => {
   }
 })
 
+async function isAdminAuthorized(req: express.Request, pool: mssql.ConnectionPool) {
+  const secret = String(req.header('x-admin-secret') ?? '')
+  if (env.adminSecret && secret === env.adminSecret) return true
+  const actor = String(req.header('x-user') ?? '').trim()
+  if (!actor) return false
+  return await requireAdminUser(pool, actor)
+}
+
+app.delete('/api/admin/data', async (req, res) => {
+  try {
+    const parsedDate = parseQueryDate(req.query.date)
+    if (!parsedDate.ok) {
+      res.status(400).send(parsedDate.error)
+      return
+    }
+    const depot = typeof req.query.depot === 'string' ? req.query.depot.trim() : ''
+    if (!parsedDate.date || !depot) {
+      res.status(400).send('date ve depot zorunlu')
+      return
+    }
+
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const ok = await isAdminAuthorized(req, pool)
+    if (!ok) {
+      res.status(403).send('Yetkisiz')
+      return
+    }
+
+    const r = await pool
+      .request()
+      .input('SourceFileDate', mssql.Date, parsedDate.date)
+      .input('DepotCode', mssql.NVarChar(32), depot)
+      .query(
+        `
+BEGIN TRAN;
+
+DECLARE @Inv TABLE (Code NVARCHAR(64) PRIMARY KEY);
+INSERT INTO @Inv (Code)
+SELECT Code
+FROM dbo.Invoices
+WHERE SourceFileDate = @SourceFileDate
+  AND SourceDepotCode = @DepotCode;
+
+DECLARE @Pay TABLE (PaymentKey NVARCHAR(300) PRIMARY KEY);
+INSERT INTO @Pay (PaymentKey)
+SELECT p.PaymentKey
+FROM dbo.Payments p
+JOIN @Inv i ON i.Code = p.InvoiceCode;
+
+DECLARE @cPaymentAlloc INT = 0;
+DECLARE @cInvoiceAlloc INT = 0;
+DECLARE @cInvoiceDetails INT = 0;
+DECLARE @cPayments INT = 0;
+DECLARE @cInvoices INT = 0;
+DECLARE @cEdits INT = 0;
+DECLARE @cMutabakat INT = 0;
+DECLARE @cImportFiles INT = 0;
+
+DELETE pa FROM dbo.PaymentAllocations pa JOIN @Pay k ON k.PaymentKey = pa.PaymentKey;
+SET @cPaymentAlloc = @@ROWCOUNT;
+
+DELETE ia FROM dbo.InvoiceAllocations ia JOIN @Inv i ON i.Code = ia.InvoiceCode;
+SET @cInvoiceAlloc = @@ROWCOUNT;
+
+DELETE d FROM dbo.InvoiceDetails d JOIN @Inv i ON i.Code = d.InvoiceCode;
+SET @cInvoiceDetails = @@ROWCOUNT;
+
+DELETE p FROM dbo.Payments p JOIN @Inv i ON i.Code = p.InvoiceCode;
+SET @cPayments = @@ROWCOUNT;
+
+DELETE i FROM dbo.Invoices i JOIN @Inv x ON x.Code = i.Code;
+SET @cInvoices = @@ROWCOUNT;
+
+DELETE e
+FROM dbo.AllocationEdits e
+WHERE (e.EntityType = 'invoice' AND EXISTS (SELECT 1 FROM @Inv i WHERE i.Code = e.EntityKey))
+   OR (e.EntityType = 'payment' AND EXISTS (SELECT 1 FROM @Pay p WHERE p.PaymentKey = e.EntityKey));
+SET @cEdits = @@ROWCOUNT;
+
+DELETE FROM dbo.Mutabakat
+WHERE SourceFileDate = @SourceFileDate
+  AND DepotCode = @DepotCode;
+SET @cMutabakat = @@ROWCOUNT;
+
+DELETE FROM dbo.ImportFiles
+WHERE FileDate = @SourceFileDate
+  AND DepotCode = @DepotCode;
+SET @cImportFiles = @@ROWCOUNT;
+
+COMMIT;
+
+SELECT
+  @cInvoices AS invoicesDeleted,
+  @cPayments AS paymentsDeleted,
+  @cInvoiceDetails AS invoiceDetailsDeleted,
+  @cInvoiceAlloc AS invoiceAllocationsDeleted,
+  @cPaymentAlloc AS paymentAllocationsDeleted,
+  @cEdits AS allocationEditsDeleted,
+  @cMutabakat AS mutabakatDeleted,
+  @cImportFiles AS importFilesDeleted;
+`,
+      )
+
+    res.json({ ok: true, deleted: r.recordset?.[0] ?? {} })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
+app.delete('/api/admin/import-file', async (req, res) => {
+  try {
+    const fileName = typeof req.query.fileName === 'string' ? req.query.fileName.trim() : ''
+    if (!fileName) {
+      res.status(400).send('fileName zorunlu')
+      return
+    }
+
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const ok = await isAdminAuthorized(req, pool)
+    if (!ok) {
+      res.status(403).send('Yetkisiz')
+      return
+    }
+
+    const r = await pool
+      .request()
+      .input('FileName', mssql.NVarChar(260), fileName)
+      .query(
+        `
+BEGIN TRAN;
+
+DECLARE @Inv TABLE (Code NVARCHAR(64) PRIMARY KEY);
+INSERT INTO @Inv (Code)
+SELECT Code
+FROM dbo.Invoices
+WHERE SourceFileName = @FileName;
+
+DECLARE @Dataset TABLE (SourceFileDate DATE NOT NULL, SourceDepotCode NVARCHAR(32) NOT NULL, PRIMARY KEY (SourceFileDate, SourceDepotCode));
+INSERT INTO @Dataset (SourceFileDate, SourceDepotCode)
+SELECT DISTINCT SourceFileDate, SourceDepotCode
+FROM dbo.Invoices
+WHERE SourceFileName = @FileName
+  AND SourceFileDate IS NOT NULL
+  AND SourceDepotCode IS NOT NULL;
+
+DECLARE @Pay TABLE (PaymentKey NVARCHAR(300) PRIMARY KEY);
+INSERT INTO @Pay (PaymentKey)
+SELECT DISTINCT p.PaymentKey
+FROM dbo.Payments p
+LEFT JOIN @Inv i ON i.Code = p.InvoiceCode
+WHERE p.SourceFileName = @FileName OR i.Code IS NOT NULL;
+
+DECLARE @cPaymentAlloc INT = 0;
+DECLARE @cInvoiceAlloc INT = 0;
+DECLARE @cInvoiceDetails INT = 0;
+DECLARE @cPayments INT = 0;
+DECLARE @cInvoices INT = 0;
+DECLARE @cEdits INT = 0;
+DECLARE @cMutabakat INT = 0;
+DECLARE @cImportFiles INT = 0;
+
+DELETE pa FROM dbo.PaymentAllocations pa JOIN @Pay k ON k.PaymentKey = pa.PaymentKey;
+SET @cPaymentAlloc = @@ROWCOUNT;
+
+DELETE ia FROM dbo.InvoiceAllocations ia JOIN @Inv i ON i.Code = ia.InvoiceCode;
+SET @cInvoiceAlloc = @@ROWCOUNT;
+
+DELETE d FROM dbo.InvoiceDetails d JOIN @Inv i ON i.Code = d.InvoiceCode;
+SET @cInvoiceDetails = @@ROWCOUNT;
+
+DELETE p FROM dbo.Payments p WHERE EXISTS (SELECT 1 FROM @Pay k WHERE k.PaymentKey = p.PaymentKey);
+SET @cPayments = @@ROWCOUNT;
+
+DELETE i FROM dbo.Invoices i JOIN @Inv x ON x.Code = i.Code;
+SET @cInvoices = @@ROWCOUNT;
+
+DELETE e
+FROM dbo.AllocationEdits e
+WHERE (e.EntityType = 'invoice' AND EXISTS (SELECT 1 FROM @Inv i WHERE i.Code = e.EntityKey))
+   OR (e.EntityType = 'payment' AND EXISTS (SELECT 1 FROM @Pay p WHERE p.PaymentKey = e.EntityKey));
+SET @cEdits = @@ROWCOUNT;
+
+DELETE m
+FROM dbo.Mutabakat m
+JOIN @Dataset d ON d.SourceFileDate = m.SourceFileDate AND d.SourceDepotCode = m.DepotCode;
+SET @cMutabakat = @@ROWCOUNT;
+
+DELETE FROM dbo.ImportFiles WHERE FileName = @FileName;
+SET @cImportFiles = @@ROWCOUNT;
+
+COMMIT;
+
+SELECT
+  @cInvoices AS invoicesDeleted,
+  @cPayments AS paymentsDeleted,
+  @cInvoiceDetails AS invoiceDetailsDeleted,
+  @cInvoiceAlloc AS invoiceAllocationsDeleted,
+  @cPaymentAlloc AS paymentAllocationsDeleted,
+  @cEdits AS allocationEditsDeleted,
+  @cMutabakat AS mutabakatDeleted,
+  @cImportFiles AS importFilesDeleted;
+`,
+      )
+
+    res.json({ ok: true, deleted: r.recordset?.[0] ?? {} })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
 app.get('/api/position-representatives', async (req, res) => {
   try {
     const userName = String(req.header('x-user') ?? '').trim()
@@ -1256,14 +1502,35 @@ app.post('/api/import', upload.array('files'), async (req, res) => {
       return
     }
 
+    const depotMapRaw = typeof (req as any).body?.depotMap === 'string' ? String((req as any).body.depotMap) : ''
+    let depotMap: Record<string, string> = {}
+    if (depotMapRaw.trim()) {
+      try {
+        const parsed = JSON.parse(depotMapRaw) as Record<string, unknown>
+        depotMap = Object.fromEntries(
+          Object.entries(parsed ?? {}).map(([k, v]) => [k, typeof v === 'string' ? v : String(v ?? '')]),
+        )
+      } catch {
+        res.status(400).send('Geçersiz depotMap')
+        return
+      }
+    }
+
     const pool = await getPool()
     await ensureSchema(pool)
 
     const results = []
     for (const f of files) {
       const content = f.buffer.toString('utf8')
-      const r = await importFile(pool, f.originalname, content)
-      results.push(r)
+      const selectedDepot = normalizeDepotCode(depotMap[f.originalname] ?? null)
+      try {
+        const r = await importFile(pool, f.originalname, content, selectedDepot)
+        results.push(r)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Import sırasında hata oluştu'
+        res.status(400).send(msg)
+        return
+      }
     }
 
     res.json({ ok: true, files: results })

@@ -2,6 +2,8 @@ import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import {
   completeMutabakat,
   createUserAsAdmin,
+  deleteDataByDateDepot,
+  deleteDataByImportFile,
   fetchImportFiles,
   fetchMutabakat,
   fetchPositionData,
@@ -223,6 +225,8 @@ export default function App() {
   const [status, setStatus] = useState<{ type: StatusType; message: string } | null>(null)
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [fileInputKey, setFileInputKey] = useState(0)
+  const [uploadDepotMap, setUploadDepotMap] = useState<Record<string, string>>({})
+  const [uploadBulkDepot, setUploadBulkDepot] = useState('')
   const [page, setPage] = useState<'main' | 'mutabakat' | 'position-representative' | 'user-admin'>('main')
   const [selectedPosition, setSelectedPosition] = useState<string | null>(null)
   const [detailSearch, setDetailSearch] = useState('')
@@ -268,6 +272,9 @@ export default function App() {
   const [newUserPassword, setNewUserPassword] = useState('')
   const [newUserIsAdmin, setNewUserIsAdmin] = useState(false)
   const [adminStatus, setAdminStatus] = useState<{ type: StatusType; message: string } | null>(null)
+  const [adminDeleteDate, setAdminDeleteDate] = useState('')
+  const [adminDeleteDepot, setAdminDeleteDepot] = useState('')
+  const [adminDeleteFileName, setAdminDeleteFileName] = useState('')
 
   useEffect(() => {
     if (!currentUser) return
@@ -286,6 +293,20 @@ export default function App() {
         setImportFiles([])
       })
   }, [currentUser, selectedDate, selectedDepot])
+
+  useEffect(() => {
+    if (!currentUser?.isAdmin) return
+    if (page !== 'user-admin') return
+    if (importFiles.length === 0) return
+    if (!adminDeleteDate) {
+      const first = importFiles.find((f) => (f.fileDate ?? '').trim()) ?? importFiles[0]
+      setAdminDeleteDate((first.fileDate ?? '').trim())
+    }
+    if (!adminDeleteFileName) {
+      const firstName = (importFiles[0]?.fileName ?? '').trim()
+      if (firstName) setAdminDeleteFileName(firstName)
+    }
+  }, [currentUser?.isAdmin, page, importFiles, adminDeleteDate, adminDeleteFileName])
 
   useEffect(() => {
     if (!currentUser || !currentUser.isAdmin) return
@@ -351,6 +372,56 @@ export default function App() {
     depots.sort((a, b) => depotLabel(a).localeCompare(depotLabel(b)))
     return depots
   }, [importFiles, selectedDate])
+
+  const allDepotOptions = useMemo(() => {
+    const seen = new Set<string>()
+    const depots: string[] = []
+    for (const f of importFiles) {
+      const depot = (f.depotCode ?? '').trim()
+      if (!depot || seen.has(depot)) continue
+      seen.add(depot)
+      depots.push(depot)
+    }
+    depots.sort((a, b) => depotLabel(a).localeCompare(depotLabel(b)))
+    return depots
+  }, [importFiles])
+
+  const adminDeleteDepotOptions = useMemo(() => {
+    const d = adminDeleteDate.trim()
+    if (!d) return []
+    const seen = new Set<string>()
+    const depots: string[] = []
+    for (const f of importFiles) {
+      if ((f.fileDate ?? '').trim() !== d) continue
+      const depot = (f.depotCode ?? '').trim()
+      if (!depot || seen.has(depot)) continue
+      seen.add(depot)
+      depots.push(depot)
+    }
+    depots.sort((a, b) => depotLabel(a).localeCompare(depotLabel(b)))
+    return depots
+  }, [importFiles, adminDeleteDate])
+
+  const adminImportFileOptions = useMemo(() => {
+    const list = [...importFiles].filter((f) => (f.fileName ?? '').trim())
+    list.sort((a, b) => String(b.importedAt ?? '').localeCompare(String(a.importedAt ?? '')))
+    return list
+  }, [importFiles])
+
+  useEffect(() => {
+    const d = adminDeleteDate.trim()
+    if (!d) {
+      if (adminDeleteDepot) setAdminDeleteDepot('')
+      return
+    }
+    if (adminDeleteDepotOptions.length === 0) {
+      if (adminDeleteDepot) setAdminDeleteDepot('')
+      return
+    }
+    if (!adminDeleteDepot || !adminDeleteDepotOptions.includes(adminDeleteDepot)) {
+      setAdminDeleteDepot(adminDeleteDepotOptions[0])
+    }
+  }, [adminDeleteDate, adminDeleteDepotOptions, adminDeleteDepot])
 
   useEffect(() => {
     if (!selectedDate.trim()) {
@@ -477,6 +548,21 @@ export default function App() {
     setStatus(null)
   }
 
+  useEffect(() => {
+    if (selectedFiles.length === 0) {
+      setUploadDepotMap({})
+      setUploadBulkDepot('')
+      return
+    }
+    setUploadDepotMap((prev) => {
+      const next: Record<string, string> = {}
+      for (const f of selectedFiles) {
+        next[f.name] = (prev[f.name] ?? '').trim()
+      }
+      return next
+    })
+  }, [selectedFiles])
+
   const onUpload = async () => {
     if (!currentUser) return
     if (selectedFiles.length === 0) {
@@ -484,9 +570,17 @@ export default function App() {
       return
     }
 
+    const missing = selectedFiles
+      .map((f) => f.name)
+      .filter((name) => !(uploadDepotMap[name] ?? '').trim())
+    if (missing.length > 0) {
+      setStatus({ type: 'error', message: `Depo seçimi zorunlu: ${missing.join(', ')}` })
+      return
+    }
+
     setStatus({ type: 'info', message: `Dosyalar işleniyor: ${selectedFiles.length} adet` })
     try {
-      const result = await importSalesFiles(selectedFiles)
+      const result = await importSalesFiles(selectedFiles, uploadDepotMap)
       if (!result.ok) throw new Error(result.message || 'Import başarısız')
       const imported = result.files.filter((f) => !f.skipped)
       const skippedFileCount = result.files.length - imported.length
@@ -516,6 +610,8 @@ export default function App() {
     }
 
     setSelectedFiles([])
+    setUploadDepotMap({})
+    setUploadBulkDepot('')
     setFileInputKey((k) => k + 1)
   }
 
@@ -1539,6 +1635,106 @@ export default function App() {
                   </table>
                 </div>
               </div>
+
+              <div className="table-section">
+                <div className="table-header">
+                  <span className="table-title">Veri Silme</span>
+                  <div className="actions"></div>
+                </div>
+                <div className="upload-section">
+                  <div className="upload-box" style={{ gap: 10, alignItems: 'end', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 180 }}>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Tarih</label>
+                      <select value={adminDeleteDate} onChange={(e) => setAdminDeleteDate(e.target.value)}>
+                        <option value="">Seçiniz</option>
+                        {dateOptions.map((d) => (
+                          <option key={d} value={d}>
+                            {formatDateTr(d)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 180 }}>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Depo</label>
+                      <select value={adminDeleteDepot} disabled={!adminDeleteDate.trim() || adminDeleteDepotOptions.length === 0} onChange={(e) => setAdminDeleteDepot(e.target.value)}>
+                        <option value="">Seçiniz</option>
+                        {adminDeleteDepotOptions.map((d) => (
+                          <option key={d} value={d}>
+                            {depotLabel(d)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      className="btn btn-secondary"
+                      type="button"
+                      onClick={async () => {
+                        if (!adminDeleteDate.trim() || !adminDeleteDepot.trim()) {
+                          setAdminStatus({ type: 'error', message: 'Tarih ve depo zorunlu' })
+                          return
+                        }
+                        const ok = window.confirm(`${formatDateTr(adminDeleteDate)} • ${depotLabel(adminDeleteDepot)} için tüm veriler silinsin mi?`)
+                        if (!ok) return
+                        setAdminStatus({ type: 'info', message: 'Siliniyor...' })
+                        const r = await deleteDataByDateDepot({
+                          userName: currentUser.userName,
+                          date: adminDeleteDate.trim(),
+                          depot: adminDeleteDepot.trim(),
+                        })
+                        if (!r.ok) {
+                          setAdminStatus({ type: 'error', message: r.message || 'Silinemedi' })
+                          return
+                        }
+                        const list = await fetchImportFiles()
+                        if (list.ok) setImportFiles(list.files)
+                        setSelectedPosition(null)
+                        setAdminStatus({ type: 'success', message: 'Silindi' })
+                      }}
+                    >
+                      Tarih + Depo Sil
+                    </button>
+                  </div>
+
+                  <div className="upload-box" style={{ gap: 10, alignItems: 'end', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 420 }}>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Yükleme (Dosya)</label>
+                      <select value={adminDeleteFileName} onChange={(e) => setAdminDeleteFileName(e.target.value)}>
+                        <option value="">Seçiniz</option>
+                        {adminImportFileOptions.map((f) => (
+                          <option key={f.fileName} value={f.fileName}>
+                            {(f.fileName ?? '').trim()} • {(f.importedAt ? formatDateTimeTr(f.importedAt) : '-')} • {(f.fileDate ? formatDateTr(f.fileDate) : '-')} • {(f.depotCode ? depotLabel(f.depotCode) : '-')}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      className="btn btn-secondary"
+                      type="button"
+                      onClick={async () => {
+                        const name = adminDeleteFileName.trim()
+                        if (!name) {
+                          setAdminStatus({ type: 'error', message: 'Dosya seçimi zorunlu' })
+                          return
+                        }
+                        const ok = window.confirm(`${name} için tüm veriler silinsin mi?`)
+                        if (!ok) return
+                        setAdminStatus({ type: 'info', message: 'Siliniyor...' })
+                        const r = await deleteDataByImportFile({ userName: currentUser.userName, fileName: name })
+                        if (!r.ok) {
+                          setAdminStatus({ type: 'error', message: r.message || 'Silinemedi' })
+                          return
+                        }
+                        const list = await fetchImportFiles()
+                        if (list.ok) setImportFiles(list.files)
+                        setSelectedPosition(null)
+                        setAdminStatus({ type: 'success', message: 'Silindi' })
+                      }}
+                    >
+                      Yüklemeye Göre Sil
+                    </button>
+                  </div>
+                </div>
+              </div>
             </>
           )}
         </>
@@ -2148,6 +2344,57 @@ export default function App() {
                 JSON Yükle (SQL)
               </button>
             </div>
+            {selectedFiles.length > 0 ? (
+              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 240 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Tüm dosyalar için depo</label>
+                    <input
+                      list="depot-list"
+                      value={uploadBulkDepot}
+                      onChange={(e) => setUploadBulkDepot(e.target.value)}
+                      placeholder="depo kodu"
+                    />
+                  </div>
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    onClick={() => {
+                      const value = uploadBulkDepot.trim()
+                      if (!value) return
+                      setUploadDepotMap(Object.fromEntries(selectedFiles.map((f) => [f.name, value])))
+                    }}
+                  >
+                    Tümüne Uygula
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {selectedFiles.map((f) => (
+                    <div key={f.name} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <div style={{ flex: 1, minWidth: 240, color: '#2d3748' }}>{f.name}</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 180 }}>
+                        <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Depo</label>
+                        <input
+                          list="depot-list"
+                          value={uploadDepotMap[f.name] ?? ''}
+                          onChange={(e) => setUploadDepotMap((prev) => ({ ...prev, [f.name]: e.target.value }))}
+                          placeholder="depo kodu"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <datalist id="depot-list">
+                  {allDepotOptions.map((d) => (
+                    <option key={d} value={d}>
+                      {depotLabel(d)}
+                    </option>
+                  ))}
+                </datalist>
+              </div>
+            ) : null}
             <div className={`upload-status ${status?.type ?? ''}`}>{status?.message ?? ''}</div>
           </div>
 

@@ -23,9 +23,10 @@ export interface ImportFileRow {
   paymentCount: number
 }
 
-export async function importSalesFiles(files: File[]): Promise<ImportResult> {
+export async function importSalesFiles(files: File[], depotMap: Record<string, string>): Promise<ImportResult> {
   const form = new FormData()
   for (const f of files) form.append('files', f, f.name)
+  form.append('depotMap', JSON.stringify(depotMap ?? {}))
 
   const res = await fetch('/api/import', { method: 'POST', body: form })
   if (!res.ok) {
@@ -327,4 +328,40 @@ export async function createUserAsAdmin(args: {
     return { ok: false, message: text || `HTTP ${res.status}` }
   }
   return (await res.json()) as { ok: boolean }
+}
+
+export async function deleteDataByDateDepot(args: {
+  userName: string
+  date: string
+  depot: string
+}): Promise<{ ok: boolean; deleted?: Record<string, unknown>; message?: string }> {
+  const qs = new URLSearchParams()
+  qs.set('date', args.date)
+  qs.set('depot', args.depot)
+  const res = await fetch(`/api/admin/data?${qs.toString()}`, {
+    method: 'DELETE',
+    headers: { 'x-user': args.userName },
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; deleted?: Record<string, unknown> }
+}
+
+export async function deleteDataByImportFile(args: {
+  userName: string
+  fileName: string
+}): Promise<{ ok: boolean; deleted?: Record<string, unknown>; message?: string }> {
+  const qs = new URLSearchParams()
+  qs.set('fileName', args.fileName)
+  const res = await fetch(`/api/admin/import-file?${qs.toString()}`, {
+    method: 'DELETE',
+    headers: { 'x-user': args.userName },
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; deleted?: Record<string, unknown> }
 }
