@@ -1,0 +1,27 @@
+{
+  "name": "hesap-kapatma-server",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "multer": "^2.0.2",
+    "mssql": "^11.0.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/mssql": "^9.1.7",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.5",
+    "typescript": "~6.0.2"
+  }
+}
