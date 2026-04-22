@@ -204,7 +204,8 @@ export default function App() {
   const [detailSearch, setDetailSearch] = useState('')
 
   const [importFiles, setImportFiles] = useState<ImportFileRow[]>([])
-  const [selectedDatasetKey, setSelectedDatasetKey] = useState<string>('')
+  const [selectedDate, setSelectedDate] = useState<string>('')
+  const [selectedDepot, setSelectedDepot] = useState<string>('')
 
   const [positions, setPositions] = useState<PositionRow[]>([])
   const [positionsLoading, setPositionsLoading] = useState(false)
@@ -241,39 +242,72 @@ export default function App() {
       .then((r) => {
         if (!r.ok) throw new Error(r.message || 'Import listesi alınamadı')
         setImportFiles(r.files)
-        if (r.files.length > 0 && !selectedDatasetKey) {
-          const first = r.files[0]
-          const key = `${first.fileDate ?? ''}|${first.depotCode ?? ''}`
-          setSelectedDatasetKey(key)
+        if (r.files.length > 0 && (!selectedDate || !selectedDepot)) {
+          const first = r.files.find((f) => (f.fileDate ?? '').trim() && (f.depotCode ?? '').trim()) ?? r.files[0]
+          setSelectedDate((first.fileDate ?? '').trim())
+          setSelectedDepot((first.depotCode ?? '').trim())
         }
       })
       .catch((e) => {
         setStatus({ type: 'error', message: e instanceof Error ? e.message : 'Import listesi alınamadı' })
         setImportFiles([])
       })
-  }, [currentUser, selectedDatasetKey])
+  }, [currentUser, selectedDate, selectedDepot])
 
   const selectedDataset = useMemo(() => {
-    if (selectedDatasetKey === 'all') return { date: null as string | null, depot: null as string | null }
-    const [date, depot] = selectedDatasetKey.split('|')
-    return { date: date || null, depot: depot || null }
-  }, [selectedDatasetKey])
+    return { date: selectedDate || null, depot: selectedDepot || null }
+  }, [selectedDate, selectedDepot])
 
-  const datasetOptions = useMemo(() => {
+  const dateOptions = useMemo(() => {
     const seen = new Set<string>()
-    const items: Array<{ key: string; label: string; date?: string; depot?: string }> = []
+    const dates: string[] = []
     for (const f of importFiles) {
-      const key = `${f.fileDate ?? ''}|${f.depotCode ?? ''}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      const parts = [f.fileDate ? formatDateTr(f.fileDate) : 'Tarih yok', depotLabel(f.depotCode) ? `Depo: ${depotLabel(f.depotCode)}` : null].filter(Boolean)
-      items.push({ key, label: parts.join(' • '), date: f.fileDate, depot: f.depotCode })
+      const d = (f.fileDate ?? '').trim()
+      if (!d || seen.has(d)) continue
+      seen.add(d)
+      dates.push(d)
     }
-    return items
+    dates.sort((a, b) => b.localeCompare(a))
+    return dates
   }, [importFiles])
+
+  const depotOptions = useMemo(() => {
+    const d = selectedDate.trim()
+    if (!d) return []
+    const seen = new Set<string>()
+    const depots: string[] = []
+    for (const f of importFiles) {
+      if ((f.fileDate ?? '').trim() !== d) continue
+      const depot = (f.depotCode ?? '').trim()
+      if (!depot || seen.has(depot)) continue
+      seen.add(depot)
+      depots.push(depot)
+    }
+    depots.sort((a, b) => depotLabel(a).localeCompare(depotLabel(b)))
+    return depots
+  }, [importFiles, selectedDate])
+
+  useEffect(() => {
+    if (!selectedDate.trim()) {
+      if (selectedDepot) setSelectedDepot('')
+      return
+    }
+    if (depotOptions.length === 0) {
+      if (selectedDepot) setSelectedDepot('')
+      return
+    }
+    if (!selectedDepot || !depotOptions.includes(selectedDepot)) {
+      setSelectedDepot(depotOptions[0])
+    }
+  }, [selectedDate, depotOptions, selectedDepot])
 
   useEffect(() => {
     if (!currentUser) return
+    if (!selectedDataset.date || !selectedDataset.depot) {
+      setPositions([])
+      setPositionsLoading(false)
+      return
+    }
     setPositionsLoading(true)
     fetchPositions({ date: selectedDataset.date, depot: selectedDataset.depot })
       .then((r) => {
@@ -375,7 +409,8 @@ export default function App() {
         setImportFiles(list.files)
         const firstImported = imported[0]
         if (firstImported?.fileDate) {
-          setSelectedDatasetKey(`${firstImported.fileDate ?? ''}|${firstImported.depotCode ?? ''}`)
+          setSelectedDate((firstImported.fileDate ?? '').trim())
+          setSelectedDepot((firstImported.depotCode ?? '').trim())
         }
       }
     } catch (e) {
@@ -713,20 +748,40 @@ export default function App() {
 
           <div className="filters">
             <div className="filter-group">
-              <label>Tarih / Depo</label>
+              <label>Tarih</label>
               <select
-                value={selectedDatasetKey}
+                value={selectedDate}
                 onChange={(e) => {
-                  setSelectedDatasetKey(e.target.value)
+                  setSelectedDate(e.target.value)
                   setSelectedPosition(null)
                   setTypeFilter(null)
                   setPositionTab('faturalar')
                 }}
               >
-                <option value="all">Tümü</option>
-                {datasetOptions.map((d) => (
-                  <option key={d.key} value={d.key}>
-                    {d.label}
+                <option value="">Seçiniz</option>
+                {dateOptions.map((d) => (
+                  <option key={d} value={d}>
+                    {formatDateTr(d)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="filter-group">
+              <label>Depo</label>
+              <select
+                value={selectedDepot}
+                disabled={!selectedDate.trim() || depotOptions.length === 0}
+                onChange={(e) => {
+                  setSelectedDepot(e.target.value)
+                  setSelectedPosition(null)
+                  setTypeFilter(null)
+                  setPositionTab('faturalar')
+                }}
+              >
+                <option value="">Seçiniz</option>
+                {depotOptions.map((d) => (
+                  <option key={d} value={d}>
+                    {depotLabel(d)}
                   </option>
                 ))}
               </select>
@@ -752,6 +807,10 @@ export default function App() {
           <div className="position-list">
             {positionsLoading ? (
               <div className="empty">Pozisyonlar yükleniyor...</div>
+            ) : !selectedDataset.date ? (
+              <div className="empty">Önce tarih seçin.</div>
+            ) : !selectedDataset.depot ? (
+              <div className="empty">Önce depo seçin.</div>
             ) : positions.length === 0 ? (
               <div className="empty">Önce JSON yükleyin.</div>
             ) : (
