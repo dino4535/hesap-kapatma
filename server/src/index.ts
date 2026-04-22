@@ -977,16 +977,21 @@ app.get('/api/positions', async (req, res) => {
       .input('SourceDepotCode', mssql.NVarChar(32), sourceDepotCode)
       .query(`
 SELECT
-  PositionCode AS code,
-  MAX(PositionDescription) AS description,
-  COUNT(1) AS invoiceCount
-FROM dbo.Invoices
-WHERE PositionCode IS NOT NULL AND LTRIM(RTRIM(PositionCode)) <> ''
-  AND IsStub = 0
-  AND (@SourceFileDate IS NULL OR SourceFileDate = @SourceFileDate)
-  AND (@SourceDepotCode IS NULL OR SourceDepotCode = @SourceDepotCode)
-GROUP BY PositionCode
-ORDER BY PositionCode
+  i.PositionCode AS code,
+  MAX(i.PositionDescription) AS description,
+  COUNT(1) AS invoiceCount,
+  MAX(m.Status) AS mutabakatStatus
+FROM dbo.Invoices i
+LEFT JOIN dbo.Mutabakat m
+  ON m.PositionCode = i.PositionCode
+  AND @SourceFileDate IS NOT NULL AND m.SourceFileDate = @SourceFileDate
+  AND @SourceDepotCode IS NOT NULL AND m.DepotCode = @SourceDepotCode
+WHERE i.PositionCode IS NOT NULL AND LTRIM(RTRIM(i.PositionCode)) <> ''
+  AND i.IsStub = 0
+  AND (@SourceFileDate IS NULL OR i.SourceFileDate = @SourceFileDate)
+  AND (@SourceDepotCode IS NULL OR i.SourceDepotCode = @SourceDepotCode)
+GROUP BY i.PositionCode
+ORDER BY i.PositionCode
 `)
     res.json({ ok: true, positions: r.recordset ?? [] })
   } catch (e) {

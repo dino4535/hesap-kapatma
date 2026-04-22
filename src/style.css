@@ -144,6 +144,15 @@ input:focus {
   border: 2px solid #3182ce;
 }
 
+.card.completed {
+  border: 2px solid #38a169;
+  background: #f0fff4;
+}
+
+.card.completed .card-code {
+  color: #276749;
+}
+
 .card-header {
   display: flex;
   justify-content: space-between;

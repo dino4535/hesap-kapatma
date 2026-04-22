@@ -48,6 +48,7 @@ export interface PositionRow {
   code: string
   description?: string
   invoiceCount: number
+  mutabakatStatus?: 'DRAFT' | 'COMPLETED' | null
 }
 
 export async function fetchPositions(args?: {

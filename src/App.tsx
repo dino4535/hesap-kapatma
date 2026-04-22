@@ -712,6 +712,9 @@ export default function App() {
       return
     }
     setMutabakatRecord(r.record)
+    setPositions((prev) =>
+      prev.map((p) => (p.code === r.record!.positionCode ? { ...p, mutabakatStatus: 'COMPLETED' } : p)),
+    )
     setStatus({ type: 'success', message: 'Mutabakat tamamlandı' })
   }
 
@@ -1016,7 +1019,7 @@ export default function App() {
               positions.map((p) => (
                 <div
                   key={p.code}
-                  className="card"
+                  className={`card ${p.mutabakatStatus === 'COMPLETED' ? 'completed' : ''}`}
                   onClick={() => {
                     setSelectedPosition(p.code)
                     setTypeFilter(null)
