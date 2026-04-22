@@ -810,19 +810,42 @@ export default function App() {
     const modeLabel = rec.mode === 'BANKA' ? 'Bankaya Yatan' : 'Nakit'
     const money = (n: number | null | undefined) => formatMoney(Number(n) || 0)
 
+    const limitByOther = (rows: { bayi: string; total: number }[], maxRows: number) => {
+      if (rows.length <= maxRows) return { rows, other: null as null | { bayi: string; total: number } }
+      const keep = Math.max(1, maxRows - 1)
+      const head = rows.slice(0, keep)
+      const rest = rows.slice(keep)
+      const restTotal = rest.reduce((s, r) => s + (Number(r.total) || 0), 0)
+      return {
+        rows: head,
+        other: { bayi: `Diğer (${rest.length} bayi)`, total: restTotal },
+      }
+    }
+
+    const limitedHavale = limitByOther(havaleInvoicesByBayi, 14)
+    const limitedVadeli = limitByOther(vadeliTahsilatHavaleleriByBayi, 14)
+
     const havaleRowsHtml =
       havaleInvoicesByBayi.length === 0
         ? `<tr><td colspan="2" class="empty">Kayıt yok</td></tr>`
-        : havaleInvoicesByBayi
+        : `${limitedHavale.rows
             .map((r) => `<tr><td>${escapeHtml(r.bayi)}</td><td class="num">${escapeHtml(money(r.total))}</td></tr>`)
-            .join('')
+            .join('')}${
+            limitedHavale.other
+              ? `<tr><td>${escapeHtml(limitedHavale.other.bayi)}</td><td class="num">${escapeHtml(money(limitedHavale.other.total))}</td></tr>`
+              : ''
+          }`
 
     const vadeliRowsHtml =
       vadeliTahsilatHavaleleriByBayi.length === 0
         ? `<tr><td colspan="2" class="empty">Kayıt yok</td></tr>`
-        : vadeliTahsilatHavaleleriByBayi
+        : `${limitedVadeli.rows
             .map((r) => `<tr><td>${escapeHtml(r.bayi)}</td><td class="num">${escapeHtml(money(r.total))}</td></tr>`)
-            .join('')
+            .join('')}${
+            limitedVadeli.other
+              ? `<tr><td>${escapeHtml(limitedVadeli.other.bayi)}</td><td class="num">${escapeHtml(money(limitedVadeli.other.total))}</td></tr>`
+              : ''
+          }`
 
     const adjustmentRowsHtml =
       adjustments.length === 0
@@ -880,36 +903,36 @@ export default function App() {
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Mutabakat Çıktısı</title>
   <style>
-    @page { size: A4; margin: 8mm; }
+    @page { size: A4; margin: 6mm; }
     html, body { padding: 0; margin: 0; }
-    body { font-family: Arial, Helvetica, sans-serif; color: #1a202c; font-size: 11px; }
+    body { font-family: Arial, Helvetica, sans-serif; color: #1a202c; font-size: 10px; line-height: 1.15; }
     .page { width: 210mm; margin: 0 auto; padding: 0; box-sizing: border-box; }
-    .sheet { padding: 8mm; box-sizing: border-box; }
-    .header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 8px; }
-    .title { font-size: 14px; font-weight: 700; }
-    .sub { color: #4a5568; font-size: 10px; margin-top: 3px; }
-    .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; font-size: 10px; }
+    .sheet { padding: 6mm; box-sizing: border-box; transform-origin: top left; }
+    .header { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; margin-bottom: 6px; }
+    .title { font-size: 12px; font-weight: 700; }
+    .sub { color: #4a5568; font-size: 9px; margin-top: 2px; }
+    .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 10px; font-size: 9px; }
     .meta .k { color: #718096; }
     .meta .v { font-weight: 700; }
     .badge { display: inline-block; padding: 3px 8px; border-radius: 999px; background: #c6f6d5; color: #22543d; font-size: 10px; font-weight: 700; }
     .print-actions { max-width: 210mm; margin: 10px auto 0; padding: 0 12mm; box-sizing: border-box; display: flex; gap: 10px; align-items: center; }
     .print-btn { border: 1px solid #2d3748; background: #2d3748; color: #fff; padding: 8px 10px; border-radius: 8px; font-size: 12px; cursor: pointer; }
     .print-note { color: #718096; font-size: 12px; }
-    .section { margin-top: 10px; }
-    .section-title { font-size: 11px; font-weight: 700; margin-bottom: 5px; }
-    .kv { display: grid; grid-template-columns: 120px 1fr; gap: 4px 10px; font-size: 10px; }
+    .section { margin-top: 7px; }
+    .section-title { font-size: 10px; font-weight: 700; margin-bottom: 4px; }
+    .kv { display: grid; grid-template-columns: 100px 1fr; gap: 3px 8px; font-size: 9px; }
     .kv .k { color: #718096; }
     .kv .v { font-weight: 700; }
-    table { width: 100%; border-collapse: collapse; font-size: 10px; }
-    th, td { border: 1px solid #e2e8f0; padding: 4px 6px; vertical-align: top; }
+    table { width: 100%; border-collapse: collapse; font-size: 9px; }
+    th, td { border: 1px solid #e2e8f0; padding: 3px 5px; vertical-align: top; }
     th { background: #f7fafc; text-align: left; }
     td.num, th.num { text-align: right; white-space: nowrap; }
     tfoot td { font-weight: 700; background: #f7fafc; }
     .empty { text-align: center; color: #718096; }
-    .signatures { margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .sig { border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; min-height: 70px; }
-    .sig-title { font-size: 10px; font-weight: 700; margin-bottom: 5px; }
-    .sig-line { margin-top: 34px; border-top: 1px solid #2d3748; padding-top: 5px; font-size: 10px; color: #4a5568; }
+    .signatures { margin-top: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .sig { border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px; min-height: 52px; }
+    .sig-title { font-size: 9px; font-weight: 700; margin-bottom: 4px; }
+    .sig-line { margin-top: 24px; border-top: 1px solid #2d3748; padding-top: 4px; font-size: 9px; color: #4a5568; }
     @media (max-width: 520px) {
       .page { padding: 12px; }
       .header { flex-direction: column; }
@@ -1000,16 +1023,17 @@ export default function App() {
 
   <script>
     function fitToOnePage() {
-      var page = document.querySelector('.page');
-      if (!page) return 1;
-      page.style.zoom = '1';
-      var w = page.scrollWidth || page.getBoundingClientRect().width;
-      var h = page.scrollHeight || page.getBoundingClientRect().height;
+      var sheet = document.querySelector('.sheet');
+      if (!sheet) return 1;
+      sheet.style.transform = 'scale(1)';
+      var rect = sheet.getBoundingClientRect();
+      var w = rect.width;
+      var h = rect.height;
       var targetW = 794;
       var targetH = 1122;
       var scale = Math.min(1, targetW / w, targetH / h);
-      scale = Math.max(0.6, scale);
-      page.style.zoom = String(scale);
+      scale = Math.max(0.45, scale);
+      sheet.style.transform = 'scale(' + scale + ')';
       return scale;
     }
     function manualPrint() {
