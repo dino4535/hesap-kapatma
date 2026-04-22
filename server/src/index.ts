@@ -41,11 +41,7 @@ function normalizeDepotCode(value: unknown) {
   const upper = raw.toUpperCase()
   const upperTr = raw.toLocaleUpperCase('tr-TR')
 
-  const normalized = (v: string) =>
-    v
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toUpperCase()
+  const normalized = (v: string) => v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
 
   const n = normalized(raw)
   if (upper === 'DIST2F' || upperTr === 'DIST2F') return 'DIST2F'
@@ -57,6 +53,130 @@ function normalizeDepotCode(value: unknown) {
   if (upper === 'IZMIR' || upperTr === 'İZMİR' || n === 'IZMIR') return 'DIST2K'
 
   return upperTr || upper || null
+}
+
+type FlatRecord = Record<string, string | null>
+
+function shortHash(input: string) {
+  return crypto.createHash('sha1').update(input).digest('hex').slice(0, 10)
+}
+
+function toSqlIdentifier(name: string) {
+  const cleaned = name
+    .replace(/[^A-Za-z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  const upper = cleaned.toUpperCase()
+  const base = upper && /^[A-Z_]/.test(upper) ? upper : `F_${upper || shortHash(name)}`
+  if (base.length <= 128) return base
+  const prefix = base.slice(0, 110)
+  return `${prefix}_${shortHash(base)}`
+}
+
+function flattenJson(value: unknown, prefix: string, out: FlatRecord, depth = 0) {
+  if (depth > 8) {
+    try {
+      out[toSqlIdentifier(prefix)] = JSON.stringify(value)
+    } catch {
+      out[toSqlIdentifier(prefix)] = null
+    }
+    return
+  }
+
+  if (value === null || value === undefined) {
+    out[toSqlIdentifier(prefix)] = null
+    return
+  }
+
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    out[toSqlIdentifier(prefix)] = String(value)
+    return
+  }
+
+  if (Array.isArray(value)) {
+    try {
+      out[toSqlIdentifier(prefix)] = JSON.stringify(value)
+    } catch {
+      out[toSqlIdentifier(prefix)] = null
+    }
+    return
+  }
+
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>
+    const keys = Object.keys(obj)
+    if (keys.length === 0) {
+      out[toSqlIdentifier(prefix)] = null
+      return
+    }
+    for (const k of keys) {
+      const nextPrefix = `${prefix}_${k}`
+      flattenJson(obj[k], nextPrefix, out, depth + 1)
+    }
+    return
+  }
+
+  out[toSqlIdentifier(prefix)] = String(value)
+}
+
+const ensuredDynamicColumns = new Map<string, Set<string>>()
+
+async function ensureDynamicColumns(pool: mssql.ConnectionPool, tableName: string, columns: string[]) {
+  const tableKey = tableName.toUpperCase()
+  const cache = ensuredDynamicColumns.get(tableKey) ?? new Set<string>()
+  ensuredDynamicColumns.set(tableKey, cache)
+
+  const wanted = Array.from(new Set(columns)).filter((c) => !cache.has(c))
+  if (wanted.length === 0) return
+
+  const list = wanted.map((c) => `'${c.replaceAll("'", "''")}'`).join(',')
+  const r = await pool.request().query(`
+SELECT c.name
+FROM sys.columns c
+WHERE c.object_id = OBJECT_ID('${tableName}')
+  AND c.name IN (${list});
+`)
+  const existing = new Set<string>((r.recordset ?? []).map((row: any) => String(row.name).toUpperCase()))
+
+  const missing = wanted.filter((c) => !existing.has(c.toUpperCase()))
+  if (missing.length === 0) {
+    for (const c of wanted) cache.add(c)
+    return
+  }
+
+  const parts = missing.map((c) => `ALTER TABLE ${tableName} ADD [${c}] NVARCHAR(MAX) NULL;`)
+  await pool.request().batch(parts.join('\n'))
+  for (const c of wanted) cache.add(c)
+}
+
+async function upsertFlatRow(pool: mssql.ConnectionPool, tableName: string, key: Record<string, string>, values: FlatRecord) {
+  const entries = Object.entries(values).filter(([k]) => !k.startsWith('__'))
+  const columns = entries.map(([k]) => k)
+  await ensureDynamicColumns(pool, tableName, columns)
+
+  const allCols = [...Object.keys(key), ...columns]
+  const selectCols = allCols.map((c) => `@${c} AS [${c}]`).join(',\n  ')
+  const updateCols = columns.map((c) => `  [${c}] = s.[${c}]`).join(',\n')
+  const insertCols = allCols.map((c) => `[${c}]`).join(', ')
+  const insertVals = allCols.map((c) => `s.[${c}]`).join(', ')
+  const onClause = Object.keys(key).map((k) => `t.[${k}] = s.[${k}]`).join(' AND ')
+
+  const req = pool.request()
+  for (const [k, v] of Object.entries(key)) req.input(k, mssql.NVarChar(mssql.MAX), v)
+  for (const [k, v] of entries) req.input(k, mssql.NVarChar(mssql.MAX), v)
+
+  await req.query(`
+MERGE ${tableName} WITH (HOLDLOCK) AS t
+USING (SELECT
+  ${selectCols}
+) AS s
+ON ${onClause}
+WHEN MATCHED THEN UPDATE SET
+${updateCols},
+  UpdatedAt = SYSUTCDATETIME()
+WHEN NOT MATCHED THEN INSERT (${insertCols}, UpdatedAt)
+VALUES (${insertVals}, SYSUTCDATETIME());
+`)
 }
 
 type RawSalesFile = { INVOICES?: unknown; COLLECTIONS?: unknown; Id?: unknown; RowCount?: unknown; ModDate?: unknown }
@@ -429,6 +549,39 @@ BEGIN
   ALTER TABLE dbo.InvoiceDetails ADD RawJson NVARCHAR(MAX) NULL;
 END
 
+IF OBJECT_ID('dbo.InvoiceJsonFlat', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.InvoiceJsonFlat (
+    InvoiceCode NVARCHAR(64) NOT NULL PRIMARY KEY,
+    SourceFileName NVARCHAR(260) NULL,
+    SourceFileDate DATE NULL,
+    SourceDepotCode NVARCHAR(32) NULL,
+    UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_InvoiceJsonFlat_UpdatedAt DEFAULT (SYSUTCDATETIME())
+  );
+END
+
+IF OBJECT_ID('dbo.PaymentJsonFlat', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.PaymentJsonFlat (
+    PaymentKey NVARCHAR(300) NOT NULL PRIMARY KEY,
+    InvoiceCode NVARCHAR(64) NOT NULL,
+    PaymentSource NVARCHAR(16) NOT NULL,
+    SourceFileName NVARCHAR(260) NULL,
+    UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_PaymentJsonFlat_UpdatedAt DEFAULT (SYSUTCDATETIME())
+  );
+END
+
+IF OBJECT_ID('dbo.InvoiceDetailJsonFlat', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.InvoiceDetailJsonFlat (
+    InvoiceCode NVARCHAR(64) NOT NULL,
+    LineNumber INT NOT NULL,
+    SourceFileName NVARCHAR(260) NULL,
+    UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_InvoiceDetailJsonFlat_UpdatedAt DEFAULT (SYSUTCDATETIME()),
+    CONSTRAINT PK_InvoiceDetailJsonFlat PRIMARY KEY (InvoiceCode, LineNumber)
+  );
+END
+
 IF OBJECT_ID('dbo.InvoiceDetails', 'U') IS NOT NULL
    AND COL_LENGTH('dbo.InvoiceDetails', 'LineNo') IS NOT NULL
    AND COL_LENGTH('dbo.InvoiceDetails', 'LineNumber') IS NULL
@@ -527,8 +680,54 @@ async function createUser(pool: mssql.ConnectionPool, userName: string, password
     .query('INSERT INTO dbo.Users (UserName, PasswordSalt, PasswordHash, IsAdmin) VALUES (@UserName, @PasswordSalt, @PasswordHash, @IsAdmin)')
 }
 
-async function replaceInvoiceDetails(pool: mssql.ConnectionPool, invoiceCode: string, details: unknown) {
+async function replaceInvoiceDetailJsonFlat(pool: mssql.ConnectionPool, invoiceCode: string, details: unknown, sourceFileName: string) {
   if (!Array.isArray(details)) return
+
+  await pool.request().input('InvoiceCode', mssql.NVarChar(64), invoiceCode).query('DELETE FROM dbo.InvoiceDetailJsonFlat WHERE InvoiceCode = @InvoiceCode')
+
+  if (details.length === 0) return
+
+  type Row = { lineNumber: number; values: FlatRecord }
+  const rows: Row[] = []
+  const columnSet = new Set<string>(['InvoiceCode', 'LineNumber', 'SourceFileName'])
+
+  let lineNumber = 1
+  for (const d of details as RawInvoiceDetail[]) {
+    if (!d || typeof d !== 'object') continue
+    const values: FlatRecord = { SourceFileName: sourceFileName }
+    flattenJson(d, 'J', values)
+    rows.push({ lineNumber, values })
+    for (const k of Object.keys(values)) columnSet.add(k)
+    lineNumber += 1
+  }
+
+  if (rows.length === 0) return
+
+  const dynamicCols = Array.from(columnSet)
+  await ensureDynamicColumns(pool, 'dbo.InvoiceDetailJsonFlat', dynamicCols)
+
+  const extraCols = dynamicCols.filter((c) => c !== 'InvoiceCode' && c !== 'LineNumber')
+
+  const table = new mssql.Table('dbo.InvoiceDetailJsonFlat')
+  table.create = false
+  table.columns.add('InvoiceCode', mssql.NVarChar(64), { nullable: false })
+  table.columns.add('LineNumber', mssql.Int, { nullable: false })
+  for (const c of extraCols) {
+    table.columns.add(c, mssql.NVarChar(mssql.MAX), { nullable: true })
+  }
+
+  for (const r of rows) {
+    const values = extraCols.map((c) => r.values[c] ?? null)
+    table.rows.add(invoiceCode, r.lineNumber, ...values)
+  }
+
+  await pool.request().bulk(table)
+}
+
+async function replaceInvoiceDetails(pool: mssql.ConnectionPool, invoiceCode: string, details: unknown, sourceFileName: string) {
+  if (!Array.isArray(details)) return
+
+  await replaceInvoiceDetailJsonFlat(pool, invoiceCode, details, sourceFileName)
 
   await pool.request().input('InvoiceCode', mssql.NVarChar(64), invoiceCode).query('DELETE FROM dbo.InvoiceDetails WHERE InvoiceCode = @InvoiceCode')
 
@@ -704,7 +903,15 @@ WHEN NOT MATCHED THEN INSERT (
 );
 `)
 
-  await replaceInvoiceDetails(pool, code, inv.DETAILS)
+  const invFlat: FlatRecord = {
+    SourceFileName: source.fileName,
+    SourceFileDate: source.fileDate ?? null,
+    SourceDepotCode: source.depotCode ?? null,
+  }
+  flattenJson(inv, 'J', invFlat)
+  await upsertFlatRow(pool, 'dbo.InvoiceJsonFlat', { InvoiceCode: code }, invFlat)
+
+  await replaceInvoiceDetails(pool, code, inv.DETAILS, source.fileName)
 
   let paymentCount = 0
   if (Array.isArray(inv.PAYMENTS)) {
@@ -756,6 +963,14 @@ SELECT @Inserted AS Inserted;
 
       const inserted = Boolean((insertRes.recordset?.[0] as { Inserted?: unknown } | undefined)?.Inserted)
       if (inserted) paymentCount += 1
+
+      const payFlat: FlatRecord = {
+        InvoiceCode: code,
+        PaymentSource: 'INVOICE',
+        SourceFileName: source.fileName,
+      }
+      flattenJson(raw, 'J', payFlat)
+      await upsertFlatRow(pool, 'dbo.PaymentJsonFlat', { PaymentKey: paymentKey }, payFlat)
     }
   }
 
@@ -862,6 +1077,14 @@ BEGIN
   VALUES (@PaymentKey, @InvoiceCode, @Code, @IssueDate, @Amount, @PaymentFormCode, @PaymentFormDescription, @SourceFileName, @PaymentSource, @RawJson);
 END
 `)
+
+  const payFlat: FlatRecord = {
+    InvoiceCode: invoiceCode,
+    PaymentSource: 'COLLECTION',
+    SourceFileName: source.fileName,
+  }
+  flattenJson(c, 'J', payFlat)
+  await upsertFlatRow(pool, 'dbo.PaymentJsonFlat', { PaymentKey: paymentKey }, payFlat)
 }
 
 async function importFile(pool: mssql.ConnectionPool, fileName: string, content: string, selectedDepotCode: string | null) {
