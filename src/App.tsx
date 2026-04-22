@@ -658,18 +658,29 @@ export default function App() {
       mutabakatRecord.depotCode === selectedDataset.depot &&
       mutabakatRecord.positionCode === selectedPosition
     ) {
-      setMutabakatMode(mutabakatRecord.mode)
+      const hasCash = mutabakatRecord.cashJson != null
+      const hasBank =
+        (Number(mutabakatRecord.bankDepositAmount) || 0) > 0 ||
+        !!(mutabakatRecord.bankName ?? '').trim() ||
+        !!(mutabakatRecord.dekontNo ?? '').trim()
+
+      setMutabakatMode(hasCash && hasBank ? 'KARMA' : hasBank ? 'BANKA' : 'NAKIT')
+
       const cash = (mutabakatRecord.cashJson ?? {}) as { banknoteCounts?: Record<string, unknown> }
       const bn = cash.banknoteCounts ?? {}
-      setBanknoteCounts({
-        200: Number(bn['200'] ?? 0),
-        100: Number(bn['100'] ?? 0),
-        50: Number(bn['50'] ?? 0),
-        20: Number(bn['20'] ?? 0),
-        10: Number(bn['10'] ?? 0),
-        5: Number(bn['5'] ?? 0),
-        1: Number(bn['1'] ?? 0),
-      })
+      if (hasCash) {
+        setBanknoteCounts({
+          200: Number(bn['200'] ?? 0),
+          100: Number(bn['100'] ?? 0),
+          50: Number(bn['50'] ?? 0),
+          20: Number(bn['20'] ?? 0),
+          10: Number(bn['10'] ?? 0),
+          5: Number(bn['5'] ?? 0),
+          1: Number(bn['1'] ?? 0),
+        })
+      } else {
+        setBanknoteCounts({ 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 1: 0 })
+      }
       setBankName(mutabakatRecord.bankName ?? '')
       setYatanTutar(mutabakatRecord.bankDepositAmount ?? 0)
       setManimDekontNo(mutabakatRecord.dekontNo ?? '')
@@ -688,7 +699,9 @@ export default function App() {
   const torbaTutari = summaryTotals?.torbaTutari ?? 0
   const cashTotal = BANKNOTES.reduce((s, d) => s + d * (banknoteCounts[d] ?? 0), 0)
   const adjustmentTotal = mutabakatAdjustments.reduce((s, a) => s + (Number(a.amount) || 0), 0)
-  const enteredTotal = mutabakatMode === 'NAKIT' ? cashTotal : Number(yatanTutar) || 0
+  const cashEnabled = mutabakatMode === 'NAKIT' || mutabakatMode === 'KARMA'
+  const bankEnabled = mutabakatMode === 'BANKA' || mutabakatMode === 'KARMA'
+  const enteredTotal = (cashEnabled ? cashTotal : 0) + (bankEnabled ? Number(yatanTutar) || 0 : 0)
   const mutabakatFark = enteredTotal + adjustmentTotal - torbaTutari
 
   const mutabakatSaved =
@@ -712,7 +725,7 @@ export default function App() {
       setStatus({ type: 'error', message: 'Bu pozisyon için mutabakat tamamlanmış. Değişiklik yapılamaz.' })
       return
     }
-    if (mutabakatMode === 'BANKA') {
+    if (bankEnabled) {
       if (!bankName) {
         setStatus({ type: 'error', message: 'Lütfen banka seçin' })
         return
@@ -721,6 +734,10 @@ export default function App() {
         setStatus({ type: 'error', message: 'Lütfen yatan tutarı girin' })
         return
       }
+    }
+    if (enteredTotal <= 0) {
+      setStatus({ type: 'error', message: 'Girilen toplam 0 olamaz' })
+      return
     }
 
     setStatus({ type: 'info', message: 'Mutabakat kaydediliyor...' })
@@ -739,10 +756,10 @@ export default function App() {
         mode: mutabakatMode,
         torbaTutari,
         enteredAmount: enteredTotal,
-        cashJson: mutabakatMode === 'NAKIT' ? { banknoteCounts } : undefined,
-        bankName: mutabakatMode === 'BANKA' ? bankName : undefined,
-        bankDepositAmount: mutabakatMode === 'BANKA' ? enteredTotal : undefined,
-        dekontNo: mutabakatMode === 'BANKA' ? manimDekontNo : undefined,
+        cashJson: cashEnabled ? { banknoteCounts } : undefined,
+        bankName: bankEnabled ? bankName : undefined,
+        bankDepositAmount: bankEnabled ? (Number(yatanTutar) || 0) : undefined,
+        dekontNo: bankEnabled ? manimDekontNo : undefined,
         adjustments: cleanAdjustments,
       },
     })
@@ -807,7 +824,9 @@ export default function App() {
     const metaDepot = depotLabel(rec.depotCode) || rec.depotCode || '-'
     const metaPosition = rec.positionCode || '-'
 
-    const modeLabel = rec.mode === 'BANKA' ? 'Bankaya Yatan' : 'Nakit'
+    const hasCash = rec.cashJson != null
+    const hasBank = (Number(rec.bankDepositAmount) || 0) > 0 || !!(rec.bankName ?? '').trim() || !!(rec.dekontNo ?? '').trim()
+    const modeLabel = hasCash && hasBank ? 'Karma' : hasBank ? 'Bankaya Yatan' : 'Nakit'
     const money = (n: number | null | undefined) => formatMoney(Number(n) || 0)
 
     const limitByOther = (rows: { bayi: string; total: number }[], maxRows: number) => {
@@ -860,7 +879,7 @@ export default function App() {
             .join('')
 
     const cashRowsHtml =
-      rec.mode !== 'NAKIT'
+      !hasCash
         ? ''
         : cashRows.length === 0
           ? `<tr><td colspan="3" class="empty">Kayıt yok</td></tr>`
@@ -869,7 +888,7 @@ export default function App() {
               .join('')
 
     const bankInfoHtml =
-      rec.mode !== 'BANKA'
+      !hasBank
         ? ''
         : `
 <div class="section">
@@ -883,7 +902,7 @@ export default function App() {
 `
 
     const cashInfoHtml =
-      rec.mode !== 'NAKIT'
+      !hasCash
         ? ''
         : `
 <div class="section">
@@ -1627,19 +1646,29 @@ export default function App() {
               <div className="mutabakat-choice">
                 <label className="mutabakat-radio">
                   <input
-                    type="radio"
-                    name="mutabakatMode"
-                    checked={mutabakatMode === 'NAKIT'}
-                    onChange={() => setMutabakatMode('NAKIT')}
+                    type="checkbox"
+                    checked={cashEnabled}
+                    disabled={mutabakatSaved?.status === 'COMPLETED'}
+                    onChange={(e) => {
+                      const nextCash = e.target.checked
+                      const nextBank = bankEnabled
+                      if (!nextCash && !nextBank) return
+                      setMutabakatMode(nextCash && nextBank ? 'KARMA' : nextCash ? 'NAKIT' : 'BANKA')
+                    }}
                   />
                   <span>Nakit</span>
                 </label>
                 <label className="mutabakat-radio">
                   <input
-                    type="radio"
-                    name="mutabakatMode"
-                    checked={mutabakatMode === 'BANKA'}
-                    onChange={() => setMutabakatMode('BANKA')}
+                    type="checkbox"
+                    checked={bankEnabled}
+                    disabled={mutabakatSaved?.status === 'COMPLETED'}
+                    onChange={(e) => {
+                      const nextBank = e.target.checked
+                      const nextCash = cashEnabled
+                      if (!nextCash && !nextBank) return
+                      setMutabakatMode(nextCash && nextBank ? 'KARMA' : nextCash ? 'NAKIT' : 'BANKA')
+                    }}
                   />
                   <span>Bankaya Yatan</span>
                 </label>
@@ -1665,7 +1694,7 @@ export default function App() {
                 </div>
               </div>
 
-              {mutabakatMode === 'NAKIT' ? (
+              {cashEnabled ? (
                 <>
                   <div className="mutabakat-section-title">Banknot Döküm Listesi</div>
                   <table className="mini-table">
@@ -1688,6 +1717,7 @@ export default function App() {
                                 type="number"
                                 min={0}
                                 value={count || ''}
+                                disabled={mutabakatSaved?.status === 'COMPLETED'}
                                 onChange={(e) => {
                                   const next = Math.max(0, Number(e.target.value || 0))
                                   setBanknoteCounts((prev) => ({ ...prev, [d]: next }))
@@ -1700,20 +1730,16 @@ export default function App() {
                       })}
                     </tbody>
                   </table>
-
-                  <div className="mutabakat-totals">
-                    <div>Girilen Toplam: {formatMoney(enteredTotal)}</div>
-                    <div>Düzeltme: {formatMoney(adjustmentTotal)}</div>
-                    <div>Fark: {formatMoney(mutabakatFark)}</div>
-                  </div>
                 </>
-              ) : (
+              ) : null}
+
+              {bankEnabled ? (
                 <>
                   <div className="mutabakat-section-title">Bankaya Yatan</div>
                   <div className="mutabakat-form">
                     <div className="mutabakat-field">
                       <label>Banka</label>
-                      <select value={bankName} onChange={(e) => setBankName(e.target.value)}>
+                      <select value={bankName} onChange={(e) => setBankName(e.target.value)} disabled={mutabakatSaved?.status === 'COMPLETED'}>
                         <option value="">Seçiniz</option>
                         {BANKS.map((b) => (
                           <option key={b} value={b}>
@@ -1724,20 +1750,26 @@ export default function App() {
                     </div>
                     <div className="mutabakat-field">
                       <label>Yatan Tutar</label>
-                      <input type="number" value={yatanTutar || ''} onChange={(e) => setYatanTutar(Number(e.target.value || 0))} />
+                      <input
+                        type="number"
+                        value={yatanTutar || ''}
+                        disabled={mutabakatSaved?.status === 'COMPLETED'}
+                        onChange={(e) => setYatanTutar(Number(e.target.value || 0))}
+                      />
                     </div>
                     <div className="mutabakat-field">
                       <label>Manim Dekont No</label>
-                      <input value={manimDekontNo} onChange={(e) => setManimDekontNo(e.target.value)} />
+                      <input value={manimDekontNo} disabled={mutabakatSaved?.status === 'COMPLETED'} onChange={(e) => setManimDekontNo(e.target.value)} />
                     </div>
                   </div>
-                  <div className="mutabakat-totals">
-                    <div>Girilen Tutar: {formatMoney(enteredTotal)}</div>
-                    <div>Düzeltme: {formatMoney(adjustmentTotal)}</div>
-                    <div>Fark: {formatMoney(mutabakatFark)}</div>
-                  </div>
                 </>
-              )}
+              ) : null}
+
+              <div className="mutabakat-totals">
+                <div>Girilen Toplam: {formatMoney(enteredTotal)}</div>
+                <div>Düzeltme: {formatMoney(adjustmentTotal)}</div>
+                <div>Fark: {formatMoney(mutabakatFark)}</div>
+              </div>
 
               <div className="mutabakat-section-title">Düzeltme Kayıtları</div>
               <div className="mutabakat-actions">

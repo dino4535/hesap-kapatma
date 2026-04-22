@@ -1398,7 +1398,7 @@ app.post('/api/mutabakat', async (req, res) => {
     const depotCode = String(req.body?.depotCode ?? '').trim()
     const positionCode = String(req.body?.positionCode ?? '').trim()
     const mode = String(req.body?.mode ?? '').trim().toUpperCase()
-    if (!depotCode || !positionCode || (mode !== 'NAKIT' && mode !== 'BANKA')) {
+    if (!depotCode || !positionCode || (mode !== 'NAKIT' && mode !== 'BANKA' && mode !== 'KARMA')) {
       res.status(400).send('Eksik alan')
       return
     }

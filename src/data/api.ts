@@ -142,7 +142,7 @@ export async function savePaymentAllocationsSql(args: {
   return (await res.json()) as { ok: boolean }
 }
 
-export type MutabakatMode = 'NAKIT' | 'BANKA'
+export type MutabakatMode = 'NAKIT' | 'BANKA' | 'KARMA'
 
 export interface MutabakatAdjustment {
   id: string
