@@ -387,6 +387,92 @@ td {
   border-bottom-color: #3182ce;
 }
 
+.nav-tabs {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.nav-tab {
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: white;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: #4a5568;
+  transition:
+    background 0.2s,
+    border-color 0.2s,
+    color 0.2s;
+}
+
+.nav-tab:hover {
+  border-color: #3182ce;
+  color: #3182ce;
+}
+
+.nav-tab.active {
+  background: #3182ce;
+  border-color: #3182ce;
+  color: white;
+}
+
+.nav-tab.active:hover {
+  background: #2c5282;
+  border-color: #2c5282;
+  color: white;
+}
+
+.flow-steps {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 0 20px;
+  margin-top: 14px;
+}
+
+.flow-step {
+  padding: 10px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f7fafc;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: #4a5568;
+  transition:
+    background 0.2s,
+    border-color 0.2s,
+    color 0.2s;
+}
+
+.flow-step:hover {
+  border-color: #3182ce;
+  color: #3182ce;
+}
+
+.flow-step.active {
+  background: #3182ce;
+  border-color: #3182ce;
+  color: white;
+}
+
+.flow-step.active:hover {
+  background: #2c5282;
+  border-color: #2c5282;
+  color: white;
+}
+
+.flow-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px 20px;
+}
+
 .topbar {
   display: flex;
   justify-content: space-between;
