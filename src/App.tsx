@@ -1150,20 +1150,29 @@ export default function App() {
 
   if (!currentUser) return <LoginPage onLogin={onLogin} />
 
+  const pageTitle =
+    page === 'mutabakat'
+      ? 'Mutabakat'
+      : page === 'position-representative'
+        ? 'Pozisyon - Temsilci'
+        : selectedPosition
+          ? `Pozisyon: ${selectedPosition}`
+          : 'Pozisyon Hesabı'
+
+  const pageMeta = [selectedDataset.date ? formatDateTr(selectedDataset.date) : '', selectedDataset.depot ? depotLabel(selectedDataset.depot) : ''].filter(Boolean).join(' • ')
+
   return (
     <div className="app-shell">
-      <div className="app-container">
-      <div className="topbar">
-        <div className="topbar-left">
-          <div className="app-title">Hesap Kapatma</div>
-          <div className="app-subtitle">
-            {currentUser}
-            {selectedDataset.date ? ` • ${selectedDataset.date}` : ''}
-            {selectedDataset.depot ? ` • ${selectedDataset.depot}` : ''}
+      <div className="layout">
+        <aside className="sidebar">
+          <div className="sidebar-header">
+            <div className="sidebar-brand">Hesap Kapatma</div>
+            <div className="sidebar-user">{currentUser}</div>
           </div>
-          <div className="nav-tabs">
+
+          <nav className="sidebar-nav">
             <button
-              className={`nav-tab ${page === 'main' ? 'active' : ''}`}
+              className={`nav-item ${page === 'main' ? 'active' : ''}`}
               type="button"
               onClick={() => {
                 setPage('main')
@@ -1172,7 +1181,7 @@ export default function App() {
               Pozisyon Hesabı
             </button>
             <button
-              className={`nav-tab ${page === 'mutabakat' ? 'active' : ''}`}
+              className={`nav-item ${page === 'mutabakat' ? 'active' : ''}`}
               type="button"
               onClick={() => {
                 setPage('mutabakat')
@@ -1182,7 +1191,7 @@ export default function App() {
               Mutabakat
             </button>
             <button
-              className={`nav-tab ${page === 'position-representative' ? 'active' : ''}`}
+              className={`nav-item ${page === 'position-representative' ? 'active' : ''}`}
               type="button"
               onClick={() => {
                 setSelectedPosition(null)
@@ -1192,37 +1201,49 @@ export default function App() {
                 setPage('position-representative')
               }}
             >
-              Pozisyon-Temsilci
+              Pozisyon - Temsilci
+            </button>
+          </nav>
+
+          <div className="sidebar-footer">
+            {pageMeta ? <div className="sidebar-meta">{pageMeta}</div> : null}
+            <button className="btn btn-secondary" type="button" onClick={onLogout}>
+              Çıkış
             </button>
           </div>
-        </div>
-        <div className="topbar-right">
-          {selectedPosition ? (
-            <button
-              className="btn btn-secondary"
-              type="button"
-              onClick={() => {
-                if (page === 'mutabakat') {
-                  setPage('main')
-                  setTypeFilter(null)
-                  setDetailSearch('')
-                  return
-                }
-                setSelectedPosition(null)
-                setTypeFilter(null)
-                setPositionTab('faturalar')
-              }}
-            >
-              {page === 'mutabakat' ? 'Pozisyon Detayı' : 'Pozisyonlara Dön'}
-            </button>
-          ) : null}
-          <button className="btn btn-secondary" type="button" onClick={onLogout}>
-            Çıkış
-          </button>
-        </div>
-      </div>
+        </aside>
 
-      {page === 'position-representative' ? (
+        <main className="main">
+          <div className="main-header">
+            <div className="main-header-left">
+              <div className="main-title">{pageTitle}</div>
+              <div className="main-subtitle">{page === 'position-representative' ? 'Pozisyona göre temsilci tanımlama' : page === 'mutabakat' ? 'Mutabakat akışı' : ''}</div>
+            </div>
+            <div className="main-header-right">
+              {selectedPosition ? (
+                <button
+                  className="btn btn-secondary"
+                  type="button"
+                  onClick={() => {
+                    if (page === 'mutabakat') {
+                      setPage('main')
+                      setTypeFilter(null)
+                      setDetailSearch('')
+                      return
+                    }
+                    setSelectedPosition(null)
+                    setTypeFilter(null)
+                    setPositionTab('faturalar')
+                  }}
+                >
+                  {page === 'mutabakat' ? 'Pozisyon Detayı' : 'Pozisyonlara Dön'}
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="app-container">
+            {page === 'position-representative' ? (
         <>
           <div className="header">
             <h1>Pozisyon - Temsilci Eşleme</h1>
@@ -2215,6 +2236,8 @@ export default function App() {
           />
         ) : null}
       </Modal>
+          </div>
+        </main>
       </div>
     </div>
   )

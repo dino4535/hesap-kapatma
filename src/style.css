@@ -15,6 +15,151 @@ body {
   min-height: 100vh;
 }
 
+.layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 260px;
+  padding: 16px 14px;
+  border-right: 1px solid rgba(226, 232, 240, 0.9);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(10px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+.sidebar-header {
+  padding: 6px 8px 4px;
+}
+
+.sidebar-brand {
+  font-weight: 800;
+  color: #1a365d;
+  letter-spacing: 0.2px;
+}
+
+.sidebar-user {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #718096;
+  font-weight: 600;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nav-item {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #2d3748;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.nav-item:hover {
+  background: #f7fafc;
+  border-color: #e2e8f0;
+}
+
+.nav-item.active {
+  background: #ebf8ff;
+  border-color: rgba(49, 130, 206, 0.35);
+  color: #1a365d;
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  padding: 10px 8px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sidebar-meta {
+  font-size: 12px;
+  color: #718096;
+  font-weight: 600;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+}
+
+.main-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.85);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.main-title {
+  font-weight: 800;
+  color: #1a365d;
+  font-size: 16px;
+}
+
+.main-subtitle {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #718096;
+  font-weight: 600;
+}
+
+.main-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+@media (max-width: 980px) {
+  .layout {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    height: auto;
+    position: sticky;
+    top: 0;
+    border-right: none;
+    border-bottom: 1px solid rgba(226, 232, 240, 0.9);
+  }
+
+  .sidebar-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .nav-item {
+    width: auto;
+  }
+}
+
 .app-container {
   max-width: none;
   width: 100%;
