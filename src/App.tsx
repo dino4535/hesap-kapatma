@@ -880,35 +880,36 @@ export default function App() {
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Mutabakat Çıktısı</title>
   <style>
-    @page { size: A4; margin: 12mm; }
+    @page { size: A4; margin: 8mm; }
     html, body { padding: 0; margin: 0; }
-    body { font-family: Arial, Helvetica, sans-serif; color: #1a202c; }
-    .page { max-width: 210mm; margin: 0 auto; padding: 12mm; box-sizing: border-box; }
-    .header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 12px; }
-    .title { font-size: 18px; font-weight: 700; }
-    .sub { color: #4a5568; font-size: 12px; margin-top: 4px; }
-    .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; font-size: 12px; }
+    body { font-family: Arial, Helvetica, sans-serif; color: #1a202c; font-size: 11px; }
+    .page { width: 210mm; margin: 0 auto; padding: 0; box-sizing: border-box; }
+    .sheet { padding: 8mm; box-sizing: border-box; }
+    .header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 8px; }
+    .title { font-size: 14px; font-weight: 700; }
+    .sub { color: #4a5568; font-size: 10px; margin-top: 3px; }
+    .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; font-size: 10px; }
     .meta .k { color: #718096; }
     .meta .v { font-weight: 700; }
-    .badge { display: inline-block; padding: 4px 8px; border-radius: 999px; background: #c6f6d5; color: #22543d; font-size: 12px; font-weight: 700; }
+    .badge { display: inline-block; padding: 3px 8px; border-radius: 999px; background: #c6f6d5; color: #22543d; font-size: 10px; font-weight: 700; }
     .print-actions { max-width: 210mm; margin: 10px auto 0; padding: 0 12mm; box-sizing: border-box; display: flex; gap: 10px; align-items: center; }
     .print-btn { border: 1px solid #2d3748; background: #2d3748; color: #fff; padding: 8px 10px; border-radius: 8px; font-size: 12px; cursor: pointer; }
     .print-note { color: #718096; font-size: 12px; }
-    .section { margin-top: 14px; }
-    .section-title { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
-    .kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; font-size: 12px; }
+    .section { margin-top: 10px; }
+    .section-title { font-size: 11px; font-weight: 700; margin-bottom: 5px; }
+    .kv { display: grid; grid-template-columns: 120px 1fr; gap: 4px 10px; font-size: 10px; }
     .kv .k { color: #718096; }
     .kv .v { font-weight: 700; }
-    table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    th, td { border: 1px solid #e2e8f0; padding: 6px 8px; vertical-align: top; }
+    table { width: 100%; border-collapse: collapse; font-size: 10px; }
+    th, td { border: 1px solid #e2e8f0; padding: 4px 6px; vertical-align: top; }
     th { background: #f7fafc; text-align: left; }
     td.num, th.num { text-align: right; white-space: nowrap; }
     tfoot td { font-weight: 700; background: #f7fafc; }
     .empty { text-align: center; color: #718096; }
-    .signatures { margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    .sig { border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; min-height: 90px; }
-    .sig-title { font-size: 12px; font-weight: 700; margin-bottom: 6px; }
-    .sig-line { margin-top: 44px; border-top: 1px solid #2d3748; padding-top: 6px; font-size: 12px; color: #4a5568; }
+    .signatures { margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .sig { border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; min-height: 70px; }
+    .sig-title { font-size: 10px; font-weight: 700; margin-bottom: 5px; }
+    .sig-line { margin-top: 34px; border-top: 1px solid #2d3748; padding-top: 5px; font-size: 10px; color: #4a5568; }
     @media (max-width: 520px) {
       .page { padding: 12px; }
       .header { flex-direction: column; }
@@ -930,6 +931,7 @@ export default function App() {
     <div class="print-note">Otomatik pencere gelmezse bu butona basın.</div>
   </div>
   <div class="page">
+    <div class="sheet">
     <div class="header">
       <div>
         <div class="title">Mutabakat Çıktısı</div>
@@ -993,10 +995,25 @@ export default function App() {
         <div class="sig-line">${escapeHtml(completedBy)}</div>
       </div>
     </div>
+    </div>
   </div>
 
   <script>
+    function fitToOnePage() {
+      var page = document.querySelector('.page');
+      if (!page) return 1;
+      page.style.zoom = '1';
+      var w = page.scrollWidth || page.getBoundingClientRect().width;
+      var h = page.scrollHeight || page.getBoundingClientRect().height;
+      var targetW = 794;
+      var targetH = 1122;
+      var scale = Math.min(1, targetW / w, targetH / h);
+      scale = Math.max(0.6, scale);
+      page.style.zoom = String(scale);
+      return scale;
+    }
     function manualPrint() {
+      fitToOnePage();
       try { window.focus(); } catch (e) {}
       try { window.print(); } catch (e) {}
     }
