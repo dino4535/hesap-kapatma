@@ -943,6 +943,96 @@ app.post('/api/users', async (req, res) => {
   }
 })
 
+async function cleanupDatabase(pool: mssql.ConnectionPool) {
+  const deletedCounts: Record<string, number> = {}
+
+  const deleteInOrder = [
+    'dbo.InvoiceDetails',
+    'dbo.Payments',
+    'dbo.InvoiceAllocations',
+    'dbo.PaymentAllocations',
+    'dbo.AllocationEdits',
+    'dbo.Mutabakat',
+    'dbo.PositionRepresentativeMap',
+    'dbo.ImportFiles',
+    'dbo.Invoices',
+  ]
+
+  for (const fullName of deleteInOrder) {
+    const r = await pool.request().query(`DECLARE @c INT; DELETE FROM ${fullName}; SET @c = @@ROWCOUNT; SELECT @c AS c;`)
+    const c = Number((r.recordset?.[0] as { c?: unknown } | undefined)?.c ?? 0)
+    deletedCounts[fullName] = c
+  }
+
+  const keepTables = new Set([
+    'Users',
+    'ImportFiles',
+    'Invoices',
+    'Payments',
+    'InvoiceAllocations',
+    'PaymentAllocations',
+    'AllocationEdits',
+    'InvoiceDetails',
+    'Mutabakat',
+    'PositionRepresentativeMap',
+  ])
+
+  const toDropRes = await pool.request().query(`
+SELECT t.name AS TableName
+FROM sys.tables t
+JOIN sys.schemas s ON s.schema_id = t.schema_id
+WHERE s.name = 'dbo'
+  AND t.name NOT IN (${Array.from(keepTables)
+    .map((x) => `'${x.replaceAll("'", "''")}'`)
+    .join(', ')});
+`)
+
+  const dropTables = (toDropRes.recordset ?? [])
+    .map((x) => String((x as { TableName?: unknown }).TableName ?? '').trim())
+    .filter((x) => !!x)
+
+  for (const tableName of dropTables) {
+    const safe = tableName.replaceAll(']', ']]')
+    await pool.request().batch(`
+DECLARE @t SYSNAME = N'${safe}';
+DECLARE @sql NVARCHAR(MAX) = N'';
+SELECT @sql = @sql + N'ALTER TABLE [dbo].[' + OBJECT_NAME(fk.parent_object_id) + N'] DROP CONSTRAINT [' + fk.name + N'];' + CHAR(10)
+FROM sys.foreign_keys fk
+WHERE fk.parent_object_id = OBJECT_ID(N'[dbo].[' + @t + N']')
+   OR fk.referenced_object_id = OBJECT_ID(N'[dbo].[' + @t + N']');
+IF (@sql <> N'') EXEC sp_executesql @sql;
+EXEC(N'DROP TABLE [dbo].[' + @t + N']');
+`)
+  }
+
+  return { deletedCounts, droppedTables: dropTables }
+}
+
+app.post('/api/admin/cleanup', async (req, res) => {
+  try {
+    const secret = String(req.header('x-admin-secret') ?? '')
+    if (!env.adminSecret || secret !== env.adminSecret) {
+      res.status(403).send('Yetkisiz')
+      return
+    }
+
+    const confirm = String(req.query.confirm ?? '').trim().toUpperCase()
+    if (confirm !== 'YES') {
+      res.status(400).send('Onay gerekli: ?confirm=YES')
+      return
+    }
+
+    const pool = await getPool()
+    await ensureSchema(pool)
+
+    const r = await cleanupDatabase(pool)
+    res.json({ ok: true, ...r })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
 app.get('/api/position-representatives', async (req, res) => {
   try {
     const userName = String(req.header('x-user') ?? '').trim()
