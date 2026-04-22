@@ -891,6 +891,9 @@ export default function App() {
     .meta .k { color: #718096; }
     .meta .v { font-weight: 700; }
     .badge { display: inline-block; padding: 4px 8px; border-radius: 999px; background: #c6f6d5; color: #22543d; font-size: 12px; font-weight: 700; }
+    .print-actions { max-width: 210mm; margin: 10px auto 0; padding: 0 12mm; box-sizing: border-box; display: flex; gap: 10px; align-items: center; }
+    .print-btn { border: 1px solid #2d3748; background: #2d3748; color: #fff; padding: 8px 10px; border-radius: 8px; font-size: 12px; cursor: pointer; }
+    .print-note { color: #718096; font-size: 12px; }
     .section { margin-top: 14px; }
     .section-title { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
     .kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; font-size: 12px; }
@@ -914,6 +917,7 @@ export default function App() {
       .signatures { grid-template-columns: 1fr; }
     }
     @media print {
+      .print-actions { display: none; }
       .page { padding: 0; }
       .sig { break-inside: avoid; }
       table { break-inside: avoid; }
@@ -921,6 +925,10 @@ export default function App() {
   </style>
 </head>
 <body>
+  <div class="print-actions">
+    <button class="print-btn" type="button" onclick="manualPrint()">Yazdır / PDF</button>
+    <div class="print-note">Otomatik pencere gelmezse bu butona basın.</div>
+  </div>
   <div class="page">
     <div class="header">
       <div>
@@ -988,19 +996,25 @@ export default function App() {
   </div>
 
   <script>
-    setTimeout(function () { window.focus(); window.print(); }, 300);
+    function manualPrint() {
+      try { window.focus(); } catch (e) {}
+      try { window.print(); } catch (e) {}
+    }
+    window.addEventListener('load', function () {
+      setTimeout(function () { manualPrint(); }, 500);
+    });
   </script>
 </body>
 </html>`
 
-    const w = window.open('', '_blank', 'noopener,noreferrer')
+    const blob = new Blob([html], { type: 'text/html' })
+    const url = URL.createObjectURL(blob)
+    const w = window.open(url, '_blank')
     if (!w) {
       setStatus({ type: 'error', message: 'Popup engellendi. Lütfen popup izni verin.' })
       return
     }
-    w.document.open()
-    w.document.write(html)
-    w.document.close()
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
   }
 
   const updateInvoiceAllocations = (invoiceCode: string, next: Allocation[]) => {
