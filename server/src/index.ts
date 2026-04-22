@@ -416,6 +416,26 @@ END
 `)
 }
 
+async function ensureImportFilesJsonColumns(pool: mssql.ConnectionPool) {
+  const r = await pool.request().query(`
+SELECT
+  COL_LENGTH('dbo.ImportFiles', 'JsonId') AS JsonIdLen,
+  COL_LENGTH('dbo.ImportFiles', 'JsonRowCount') AS JsonRowCountLen,
+  COL_LENGTH('dbo.ImportFiles', 'JsonModDate') AS JsonModDateLen
+`)
+  const row = (r.recordset?.[0] ?? {}) as { JsonIdLen?: unknown; JsonRowCountLen?: unknown; JsonModDateLen?: unknown }
+  const needsJsonId = row.JsonIdLen == null
+  const needsRowCount = row.JsonRowCountLen == null
+  const needsModDate = row.JsonModDateLen == null
+  if (!needsJsonId && !needsRowCount && !needsModDate) return
+
+  const parts: string[] = []
+  if (needsJsonId) parts.push("ALTER TABLE dbo.ImportFiles ADD JsonId NVARCHAR(64) NULL;")
+  if (needsRowCount) parts.push('ALTER TABLE dbo.ImportFiles ADD JsonRowCount INT NULL;')
+  if (needsModDate) parts.push('ALTER TABLE dbo.ImportFiles ADD JsonModDate DATETIME2(0) NULL;')
+  await pool.request().batch(parts.join('\n'))
+}
+
 function hashPassword(password: string, salt: Buffer) {
   return crypto.pbkdf2Sync(password, salt, 120_000, 32, 'sha256')
 }
@@ -811,6 +831,8 @@ WHERE SourceFileDate = @SourceFileDate
   const jsonId = toStringOrUndef(parsed.Id) ?? null
   const jsonRowCount = toNumberOrUndef(parsed.RowCount) ?? null
   const jsonModDate = safeDate(toStringOrUndef(parsed.ModDate) ?? undefined)
+
+  await ensureImportFilesJsonColumns(pool)
 
   await pool
     .request()
