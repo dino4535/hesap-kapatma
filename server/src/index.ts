@@ -35,8 +35,28 @@ function parseSalesFileName(fileName: string): SalesFileMeta {
 }
 
 function normalizeDepotCode(value: unknown) {
-  const s = typeof value === 'string' ? value.trim().toUpperCase() : ''
-  return s || null
+  const raw = typeof value === 'string' ? value.trim() : ''
+  if (!raw) return null
+
+  const upper = raw.toUpperCase()
+  const upperTr = raw.toLocaleUpperCase('tr-TR')
+
+  const normalized = (v: string) =>
+    v
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+
+  const n = normalized(raw)
+  if (upper === 'DIST2F' || upperTr === 'DIST2F') return 'DIST2F'
+  if (upper === 'DIST28' || upperTr === 'DIST28') return 'DIST28'
+  if (upper === 'DIST2K' || upperTr === 'DIST2K') return 'DIST2K'
+
+  if (upper === 'MANISA' || upperTr === 'MANİSA' || n === 'MANISA') return 'DIST2F'
+  if (upper === 'SALIHLI' || upperTr === 'SALİHLİ' || n === 'SALIHLI') return 'DIST28'
+  if (upper === 'IZMIR' || upperTr === 'İZMİR' || n === 'IZMIR') return 'DIST2K'
+
+  return upperTr || upper || null
 }
 
 type RawSalesFile = { INVOICES?: unknown; COLLECTIONS?: unknown; Id?: unknown; RowCount?: unknown; ModDate?: unknown }
@@ -258,6 +278,7 @@ BEGIN
     Code NVARCHAR(64) NOT NULL PRIMARY KEY,
     IsEdos BIT NULL,
     ReturnGoodsJson NVARCHAR(MAX) NULL,
+    RawJson NVARCHAR(MAX) NULL,
     LegalNumber NVARCHAR(64) NULL,
     Status NVARCHAR(32) NULL,
     SalesType NVARCHAR(32) NOT NULL,
@@ -281,6 +302,11 @@ BEGIN
     SourceDepotCode NVARCHAR(32) NULL,
     UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_Invoices_UpdatedAt DEFAULT (SYSUTCDATETIME())
   );
+END
+
+IF COL_LENGTH('dbo.Invoices', 'RawJson') IS NULL
+BEGIN
+  ALTER TABLE dbo.Invoices ADD RawJson NVARCHAR(MAX) NULL;
 END
 
 IF COL_LENGTH('dbo.Invoices', 'IsEdos') IS NULL
@@ -330,8 +356,14 @@ BEGIN
     PaymentFormCode NVARCHAR(32) NULL,
     PaymentFormDescription NVARCHAR(64) NULL,
     SourceFileName NVARCHAR(260) NULL,
+    RawJson NVARCHAR(MAX) NULL,
     CONSTRAINT FK_Payments_Invoices FOREIGN KEY (InvoiceCode) REFERENCES dbo.Invoices(Code)
   );
+END
+
+IF COL_LENGTH('dbo.Payments', 'RawJson') IS NULL
+BEGIN
+  ALTER TABLE dbo.Payments ADD RawJson NVARCHAR(MAX) NULL;
 END
 
 IF COL_LENGTH('dbo.Payments', 'PaymentSource') IS NULL
@@ -386,9 +418,15 @@ BEGIN
     GrossAmount DECIMAL(18,4) NULL,
     Price DECIMAL(18,4) NULL,
     Availability INT NULL,
+    RawJson NVARCHAR(MAX) NULL,
     CONSTRAINT PK_InvoiceDetails PRIMARY KEY (InvoiceCode, LineNumber),
     CONSTRAINT FK_InvoiceDetails_Invoices FOREIGN KEY (InvoiceCode) REFERENCES dbo.Invoices(Code)
   );
+END
+
+IF COL_LENGTH('dbo.InvoiceDetails', 'RawJson') IS NULL
+BEGIN
+  ALTER TABLE dbo.InvoiceDetails ADD RawJson NVARCHAR(MAX) NULL;
 END
 
 IF OBJECT_ID('dbo.InvoiceDetails', 'U') IS NOT NULL
@@ -508,11 +546,18 @@ async function replaceInvoiceDetails(pool: mssql.ConnectionPool, invoiceCode: st
   table.columns.add('GrossAmount', mssql.Decimal(18, 4), { nullable: true })
   table.columns.add('Price', mssql.Decimal(18, 4), { nullable: true })
   table.columns.add('Availability', mssql.Int, { nullable: true })
+  table.columns.add('RawJson', mssql.NVarChar(mssql.MAX), { nullable: true })
 
   let lineNumber = 1
   for (const d of details as RawInvoiceDetail[]) {
     if (!d || typeof d !== 'object') continue
     const product = (d.PRODUCT ?? {}) as RawInvoiceDetailProduct
+    let rawJson: string | null = null
+    try {
+      rawJson = JSON.stringify(d)
+    } catch {
+      rawJson = null
+    }
     table.rows.add(
       invoiceCode,
       lineNumber,
@@ -524,6 +569,7 @@ async function replaceInvoiceDetails(pool: mssql.ConnectionPool, invoiceCode: st
       (toNumberFlexible(d.GROSSAMOUNT) ?? null) as number | null,
       (toNumberFlexible(d.PRICE) ?? null) as number | null,
       (toNumberOrUndef(d.AVAILABILITY) ?? null) as number | null,
+      rawJson,
     )
     lineNumber += 1
   }
@@ -555,11 +601,19 @@ async function upsertInvoice(pool: mssql.ConnectionPool, inv: RawInvoice, source
     }
   }
 
+  let rawJson: string | null = null
+  try {
+    rawJson = JSON.stringify(inv)
+  } catch {
+    rawJson = null
+  }
+
   await pool
     .request()
     .input('Code', mssql.NVarChar(64), code)
     .input('IsEdos', mssql.Bit, isEdos)
     .input('ReturnGoodsJson', mssql.NVarChar(mssql.MAX), returnGoodsJson)
+    .input('RawJson', mssql.NVarChar(mssql.MAX), rawJson)
     .input('LegalNumber', mssql.NVarChar(64), toStringOrUndef(inv.LEGALNUMBER))
     .input('Status', mssql.NVarChar(32), toStringOrUndef(inv.STATUS))
     .input('SalesType', mssql.NVarChar(32), salesType)
@@ -586,6 +640,7 @@ USING (SELECT
   @Code AS Code,
   @IsEdos AS IsEdos,
   @ReturnGoodsJson AS ReturnGoodsJson,
+  @RawJson AS RawJson,
   @LegalNumber AS LegalNumber,
   @Status AS Status,
   @SalesType AS SalesType,
@@ -611,6 +666,7 @@ ON t.Code = s.Code
 WHEN MATCHED THEN UPDATE SET
   IsEdos = s.IsEdos,
   ReturnGoodsJson = s.ReturnGoodsJson,
+  RawJson = s.RawJson,
   LegalNumber = s.LegalNumber,
   Status = s.Status,
   SalesType = s.SalesType,
@@ -634,13 +690,13 @@ WHEN MATCHED THEN UPDATE SET
   SourceDepotCode = s.SourceDepotCode,
   UpdatedAt = SYSUTCDATETIME()
 WHEN NOT MATCHED THEN INSERT (
-  Code, IsEdos, ReturnGoodsJson, LegalNumber, Status, SalesType, IsStub, IssueDate, DueDate, CreditDays, NetAmount, OutstandingAmount, TaxAmount, TotalDiscount,
+  Code, IsEdos, ReturnGoodsJson, RawJson, LegalNumber, Status, SalesType, IsStub, IssueDate, DueDate, CreditDays, NetAmount, OutstandingAmount, TaxAmount, TotalDiscount,
   GrossAmount,
   CustomerCode, CustomerName, CustomerTaxNumber, CustomerLicenseNumber,
   PositionCode, PositionDescription,
   SourceFileName, SourceFileDate, SourceDepotCode
 ) VALUES (
-  s.Code, s.IsEdos, s.ReturnGoodsJson, s.LegalNumber, s.Status, s.SalesType, 0, s.IssueDate, s.DueDate, s.CreditDays, s.NetAmount, s.OutstandingAmount, s.TaxAmount, s.TotalDiscount,
+  s.Code, s.IsEdos, s.ReturnGoodsJson, s.RawJson, s.LegalNumber, s.Status, s.SalesType, 0, s.IssueDate, s.DueDate, s.CreditDays, s.NetAmount, s.OutstandingAmount, s.TaxAmount, s.TotalDiscount,
   s.GrossAmount,
   s.CustomerCode, s.CustomerName, s.CustomerTaxNumber, s.CustomerLicenseNumber,
   s.PositionCode, s.PositionDescription,
@@ -668,6 +724,13 @@ WHEN NOT MATCHED THEN INSERT (
 
       const paymentKey = computeInvoicePaymentKey(code, { code: pCode ?? undefined, issueDate: pIssueDate ?? undefined, amount: pAmount, formCode })
 
+      let payRawJson: string | null = null
+      try {
+        payRawJson = JSON.stringify(raw)
+      } catch {
+        payRawJson = null
+      }
+
       const insertRes = await pool
         .request()
         .input('PaymentKey', mssql.NVarChar(300), paymentKey)
@@ -679,12 +742,13 @@ WHEN NOT MATCHED THEN INSERT (
         .input('PaymentFormDescription', mssql.NVarChar(64), formDesc ?? null)
         .input('SourceFileName', mssql.NVarChar(260), source.fileName)
         .input('PaymentSource', mssql.NVarChar(16), 'INVOICE')
+        .input('RawJson', mssql.NVarChar(mssql.MAX), payRawJson)
         .query(`
 DECLARE @Inserted BIT = 0;
 IF NOT EXISTS (SELECT 1 FROM dbo.Payments WHERE PaymentKey = @PaymentKey)
 BEGIN
-  INSERT INTO dbo.Payments (PaymentKey, InvoiceCode, Code, IssueDate, Amount, PaymentFormCode, PaymentFormDescription, SourceFileName, PaymentSource)
-  VALUES (@PaymentKey, @InvoiceCode, @Code, @IssueDate, @Amount, @PaymentFormCode, @PaymentFormDescription, @SourceFileName, @PaymentSource);
+  INSERT INTO dbo.Payments (PaymentKey, InvoiceCode, Code, IssueDate, Amount, PaymentFormCode, PaymentFormDescription, SourceFileName, PaymentSource, RawJson)
+  VALUES (@PaymentKey, @InvoiceCode, @Code, @IssueDate, @Amount, @PaymentFormCode, @PaymentFormDescription, @SourceFileName, @PaymentSource, @RawJson);
   SET @Inserted = 1;
 END
 SELECT @Inserted AS Inserted;
@@ -772,6 +836,13 @@ async function insertCollection(pool: mssql.ConnectionPool, c: RawCollection, so
 
   const paymentKey = computePaymentKey(invoiceCode, { code, issueDate, amount, formCode })
 
+  let rawJson: string | null = null
+  try {
+    rawJson = JSON.stringify(c)
+  } catch {
+    rawJson = null
+  }
+
   await pool
     .request()
     .input('PaymentKey', mssql.NVarChar(300), paymentKey)
@@ -783,11 +854,12 @@ async function insertCollection(pool: mssql.ConnectionPool, c: RawCollection, so
     .input('PaymentFormDescription', mssql.NVarChar(64), formDesc ?? null)
     .input('SourceFileName', mssql.NVarChar(260), source.fileName)
     .input('PaymentSource', mssql.NVarChar(16), 'COLLECTION')
+    .input('RawJson', mssql.NVarChar(mssql.MAX), rawJson)
     .query(`
 IF NOT EXISTS (SELECT 1 FROM dbo.Payments WHERE PaymentKey = @PaymentKey)
 BEGIN
-  INSERT INTO dbo.Payments (PaymentKey, InvoiceCode, Code, IssueDate, Amount, PaymentFormCode, PaymentFormDescription, SourceFileName, PaymentSource)
-  VALUES (@PaymentKey, @InvoiceCode, @Code, @IssueDate, @Amount, @PaymentFormCode, @PaymentFormDescription, @SourceFileName, @PaymentSource);
+  INSERT INTO dbo.Payments (PaymentKey, InvoiceCode, Code, IssueDate, Amount, PaymentFormCode, PaymentFormDescription, SourceFileName, PaymentSource, RawJson)
+  VALUES (@PaymentKey, @InvoiceCode, @Code, @IssueDate, @Amount, @PaymentFormCode, @PaymentFormDescription, @SourceFileName, @PaymentSource, @RawJson);
 END
 `)
 }

@@ -65,7 +65,7 @@ function depotLabel(depotCode?: string) {
   if (!depotCode) return ''
   if (depotCode === 'DIST2K') return 'İzmir'
   if (depotCode === 'DIST28') return 'Salihli'
-  if (depotCode === 'DIT2F') return 'Manisa'
+  if (depotCode === 'DIST2F') return 'Manisa'
   return depotCode
 }
 
