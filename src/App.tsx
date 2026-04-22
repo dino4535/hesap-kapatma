@@ -38,6 +38,22 @@ function allocationSummary(allocs: Allocation[]) {
     .join(' / ')
 }
 
+function escapeHtml(value: string) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+}
+
+function formatDateTimeTr(value?: string) {
+  if (!value) return '-'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return value
+  return d.toLocaleString('tr-TR')
+}
+
 type SqlCollectionRow = Collection & { paymentKey?: string }
 
 function depotLabel(depotCode?: string) {
@@ -221,6 +237,7 @@ export default function App() {
   const [repPositionCode, setRepPositionCode] = useState('')
   const [repName, setRepName] = useState('')
   const [repPositions, setRepPositions] = useState<PositionRow[]>([])
+  const [allRepMappings, setAllRepMappings] = useState<PositionRepresentativeRow[]>([])
 
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [collections, setCollections] = useState<SqlCollectionRow[]>([])
@@ -265,6 +282,21 @@ export default function App() {
         setImportFiles([])
       })
   }, [currentUser, selectedDate, selectedDepot])
+
+  useEffect(() => {
+    if (!currentUser) {
+      setAllRepMappings([])
+      return
+    }
+    fetchPositionRepresentatives({ userName: currentUser })
+      .then((r) => {
+        if (!r.ok) throw new Error(r.message || 'Temsilci eşleme listesi alınamadı')
+        setAllRepMappings(r.mappings)
+      })
+      .catch(() => {
+        setAllRepMappings([])
+      })
+  }, [currentUser])
 
   const selectedDataset = useMemo(() => {
     return { date: selectedDate || null, depot: selectedDepot || null }
@@ -404,6 +436,12 @@ export default function App() {
     if (!q) return repMappings
     return repMappings.filter((m) => `${m.positionCode} ${m.representativeName}`.toLowerCase().includes(q))
   }, [repMappings, repSearch])
+
+  const selectedRepresentativeName = useMemo(() => {
+    if (!selectedPosition) return ''
+    const row = allRepMappings.find((m) => m.positionCode === selectedPosition)
+    return (row?.representativeName ?? '').trim()
+  }, [allRepMappings, selectedPosition])
 
   const onLogin = (userId: string) => {
     saveSessionUser(userId)
@@ -744,6 +782,225 @@ export default function App() {
       prev.map((p) => (p.code === r.record!.positionCode ? { ...p, mutabakatStatus: 'COMPLETED' } : p)),
     )
     setStatus({ type: 'success', message: 'Mutabakat tamamlandı' })
+  }
+
+  const printMutabakatPdf = () => {
+    if (!mutabakatSaved || mutabakatSaved.status !== 'COMPLETED') {
+      setStatus({ type: 'error', message: 'PDF için önce mutabakat tamamlanmalı' })
+      return
+    }
+
+    const rec = mutabakatSaved
+    const completedAt = formatDateTimeTr(rec.completedAt || rec.updatedAt)
+    const completedBy = (rec.completedBy || rec.updatedBy || currentUser || '').trim() || '-'
+    const repName = selectedRepresentativeName.trim() || '-'
+
+    const cashCounts = (rec.cashJson ?? {}) as { banknoteCounts?: Record<string, unknown> }
+    const bn = cashCounts.banknoteCounts ?? {}
+    const cashRows = BANKNOTES.map((d) => ({ denom: d, count: Number(bn[String(d)] ?? 0) || 0 })).filter((r) => r.count > 0)
+    const cashTotal = cashRows.reduce((s, r) => s + r.denom * r.count, 0)
+
+    const adjustments = rec.adjustments ?? []
+    const adjustTotal = adjustments.reduce((s, a) => s + (Number(a.amount) || 0), 0)
+
+    const metaDate = rec.sourceFileDate ? formatDateTr(rec.sourceFileDate) : '-'
+    const metaDepot = depotLabel(rec.depotCode) || rec.depotCode || '-'
+    const metaPosition = rec.positionCode || '-'
+
+    const modeLabel = rec.mode === 'BANKA' ? 'Bankaya Yatan' : 'Nakit'
+    const money = (n: number | null | undefined) => formatMoney(Number(n) || 0)
+
+    const havaleRowsHtml =
+      havaleInvoicesByBayi.length === 0
+        ? `<tr><td colspan="2" class="empty">Kayıt yok</td></tr>`
+        : havaleInvoicesByBayi
+            .map((r) => `<tr><td>${escapeHtml(r.bayi)}</td><td class="num">${escapeHtml(money(r.total))}</td></tr>`)
+            .join('')
+
+    const vadeliRowsHtml =
+      vadeliTahsilatHavaleleriByBayi.length === 0
+        ? `<tr><td colspan="2" class="empty">Kayıt yok</td></tr>`
+        : vadeliTahsilatHavaleleriByBayi
+            .map((r) => `<tr><td>${escapeHtml(r.bayi)}</td><td class="num">${escapeHtml(money(r.total))}</td></tr>`)
+            .join('')
+
+    const adjustmentRowsHtml =
+      adjustments.length === 0
+        ? `<tr><td colspan="3" class="empty">Kayıt yok</td></tr>`
+        : adjustments
+            .map(
+              (a) =>
+                `<tr><td>${escapeHtml(a.type)}</td><td>${escapeHtml((a.description ?? '').trim())}</td><td class="num">${escapeHtml(
+                  money(Number(a.amount) || 0),
+                )}</td></tr>`,
+            )
+            .join('')
+
+    const cashRowsHtml =
+      rec.mode !== 'NAKIT'
+        ? ''
+        : cashRows.length === 0
+          ? `<tr><td colspan="3" class="empty">Kayıt yok</td></tr>`
+          : cashRows
+              .map((r) => `<tr><td class="num">${r.denom}</td><td class="num">${r.count}</td><td class="num">${escapeHtml(money(r.denom * r.count))}</td></tr>`)
+              .join('')
+
+    const bankInfoHtml =
+      rec.mode !== 'BANKA'
+        ? ''
+        : `
+<div class="section">
+  <div class="section-title">Bankaya Yatan Bilgileri</div>
+  <div class="kv">
+    <div class="k">Banka</div><div class="v">${escapeHtml((rec.bankName ?? '').trim() || '-')}</div>
+    <div class="k">Yatan Tutar</div><div class="v">${escapeHtml(money(rec.bankDepositAmount ?? 0))}</div>
+    <div class="k">Manim Dekont No</div><div class="v">${escapeHtml((rec.dekontNo ?? '').trim() || '-')}</div>
+  </div>
+</div>
+`
+
+    const cashInfoHtml =
+      rec.mode !== 'NAKIT'
+        ? ''
+        : `
+<div class="section">
+  <div class="section-title">Nakit Banknot Dökümü</div>
+  <table>
+    <thead><tr><th class="num">Banknot</th><th class="num">Adet</th><th class="num">Tutar</th></tr></thead>
+    <tbody>${cashRowsHtml}</tbody>
+    <tfoot><tr><td colspan="2" class="num">Toplam</td><td class="num">${escapeHtml(money(cashTotal))}</td></tr></tfoot>
+  </table>
+</div>
+`
+
+    const html = `<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mutabakat Çıktısı</title>
+  <style>
+    @page { size: A4; margin: 12mm; }
+    html, body { padding: 0; margin: 0; }
+    body { font-family: Arial, Helvetica, sans-serif; color: #1a202c; }
+    .page { max-width: 210mm; margin: 0 auto; padding: 12mm; box-sizing: border-box; }
+    .header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 12px; }
+    .title { font-size: 18px; font-weight: 700; }
+    .sub { color: #4a5568; font-size: 12px; margin-top: 4px; }
+    .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; font-size: 12px; }
+    .meta .k { color: #718096; }
+    .meta .v { font-weight: 700; }
+    .badge { display: inline-block; padding: 4px 8px; border-radius: 999px; background: #c6f6d5; color: #22543d; font-size: 12px; font-weight: 700; }
+    .section { margin-top: 14px; }
+    .section-title { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+    .kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; font-size: 12px; }
+    .kv .k { color: #718096; }
+    .kv .v { font-weight: 700; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { border: 1px solid #e2e8f0; padding: 6px 8px; vertical-align: top; }
+    th { background: #f7fafc; text-align: left; }
+    td.num, th.num { text-align: right; white-space: nowrap; }
+    tfoot td { font-weight: 700; background: #f7fafc; }
+    .empty { text-align: center; color: #718096; }
+    .signatures { margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .sig { border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; min-height: 90px; }
+    .sig-title { font-size: 12px; font-weight: 700; margin-bottom: 6px; }
+    .sig-line { margin-top: 44px; border-top: 1px solid #2d3748; padding-top: 6px; font-size: 12px; color: #4a5568; }
+    @media (max-width: 520px) {
+      .page { padding: 12px; }
+      .header { flex-direction: column; }
+      .meta { grid-template-columns: 1fr; }
+      .kv { grid-template-columns: 1fr; }
+      .signatures { grid-template-columns: 1fr; }
+    }
+    @media print {
+      .page { padding: 0; }
+      .sig { break-inside: avoid; }
+      table { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="header">
+      <div>
+        <div class="title">Mutabakat Çıktısı</div>
+        <div class="sub">Tarih/Saat: ${escapeHtml(completedAt)} | Hesap Kapatma: ${escapeHtml(completedBy)}</div>
+        <div class="sub">Temsilci: ${escapeHtml(repName)}</div>
+      </div>
+      <div class="badge">TAMAMLANDI</div>
+    </div>
+
+    <div class="meta">
+      <div class="k">Tarih</div><div class="v">${escapeHtml(metaDate)}</div>
+      <div class="k">Depo</div><div class="v">${escapeHtml(metaDepot)}</div>
+      <div class="k">Pozisyon</div><div class="v">${escapeHtml(metaPosition)}</div>
+      <div class="k">Mutabakat Tipi</div><div class="v">${escapeHtml(modeLabel)}</div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Özet</div>
+      <div class="kv">
+        <div class="k">Torba Tutarı</div><div class="v">${escapeHtml(money(rec.torbaTutari))}</div>
+        <div class="k">Girilen Tutar</div><div class="v">${escapeHtml(money(rec.enteredAmount))}</div>
+        <div class="k">Düzeltme Toplamı</div><div class="v">${escapeHtml(money(adjustTotal))}</div>
+        <div class="k">Fark</div><div class="v">${escapeHtml(money(rec.diffAmount))}</div>
+      </div>
+    </div>
+
+    ${bankInfoHtml}
+    ${cashInfoHtml}
+
+    <div class="section">
+      <div class="section-title">Temsilci Açık / Hatalı Tahsilat / Diğer</div>
+      <table>
+        <thead><tr><th>Tip</th><th>Açıklama</th><th class="num">Tutar</th></tr></thead>
+        <tbody>${adjustmentRowsHtml}</tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Havale Ödeme Tipli Faturalar (Bayi Bazında)</div>
+      <table>
+        <thead><tr><th>Bayi</th><th class="num">Toplam</th></tr></thead>
+        <tbody>${havaleRowsHtml}</tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Vadeli Tahsilat Havaleleri (Bayi Bazında)</div>
+      <table>
+        <thead><tr><th>Bayi</th><th class="num">Toplam</th></tr></thead>
+        <tbody>${vadeliRowsHtml}</tbody>
+      </table>
+    </div>
+
+    <div class="signatures">
+      <div class="sig">
+        <div class="sig-title">Temsilci İmza</div>
+        <div class="sig-line">${escapeHtml(repName)}</div>
+      </div>
+      <div class="sig">
+        <div class="sig-title">Hesap Kapatma İmza</div>
+        <div class="sig-line">${escapeHtml(completedBy)}</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    setTimeout(function () { window.focus(); window.print(); }, 300);
+  </script>
+</body>
+</html>`
+
+    const w = window.open('', '_blank', 'noopener,noreferrer')
+    if (!w) {
+      setStatus({ type: 'error', message: 'Popup engellendi. Lütfen popup izni verin.' })
+      return
+    }
+    w.document.open()
+    w.document.write(html)
+    w.document.close()
   }
 
   const updateInvoiceAllocations = (invoiceCode: string, next: Allocation[]) => {
@@ -1344,6 +1601,9 @@ export default function App() {
                   disabled={!mutabakatSaved || mutabakatSaved.status === 'COMPLETED' || Math.abs(mutabakatFark) >= 0.01}
                 >
                   Mutabakatı Tamamla
+                </button>
+                <button className="btn btn-secondary" type="button" onClick={printMutabakatPdf} disabled={!mutabakatSaved || mutabakatSaved.status !== 'COMPLETED'}>
+                  PDF Çıktı Al (A4)
                 </button>
                 <div className="mutabakat-status">
                   {mutabakatSaved ? (mutabakatSaved.status === 'COMPLETED' ? 'Durum: Tamamlandı' : 'Durum: Taslak') : 'Durum: Kayıt yok'}
