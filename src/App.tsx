@@ -250,20 +250,14 @@ export default function App() {
   const [editingPayment, setEditingPayment] = useState<{ collection: Collection; key: string } | null>(null)
   const [mutabakatRecord, setMutabakatRecord] = useState<MutabakatRecord | null>(null)
   const [mutabakatMode, setMutabakatMode] = useState<MutabakatMode>('NAKIT')
-  const [banknoteCounts, setBanknoteCounts] = useState<Record<Banknote, number>>({
-    200: 0,
-    100: 0,
-    50: 0,
-    20: 0,
-    10: 0,
-    5: 0,
-    1: 0,
-  })
-  const [bankName, setBankName] = useState<string>('')
+  const [banknoteCounts, setBanknoteCounts] = useState<Record<Banknote, number>>({ 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 1: 0 })
+  const [bankName, setBankName] = useState('')
   const [yatanTutar, setYatanTutar] = useState<number>(0)
-  const [manimDekontNo, setManimDekontNo] = useState<string>('')
+  const [manimDekontNo, setManimDekontNo] = useState('')
   const [mutabakatAdjustments, setMutabakatAdjustments] = useState<MutabakatAdjustment[]>([])
   const [mutabakatStep, setMutabakatStep] = useState<0 | 1 | 2>(0)
+  const [mutabakatCorrectionsTab, setMutabakatCorrectionsTab] = useState<'faturalar' | 'tahsilatlar'>('faturalar')
+  const [mutabakatCorrectionsSearch, setMutabakatCorrectionsSearch] = useState('')
 
   useEffect(() => {
     if (!currentUser) return
@@ -650,9 +644,39 @@ export default function App() {
     return rows
   }, [selectedPosition, positionCollections, typeFilter, paymentAllocations, detailSearch])
 
+  const mutabakatInvoicesForEdit = useMemo(() => {
+    if (!selectedPosition) return []
+    const q = mutabakatCorrectionsSearch.trim().toLowerCase()
+    if (!q) return positionInvoices
+    return positionInvoices.filter((inv) => {
+      const hay = [inv.customer.registeredName, inv.customer.taxNumber ?? '', inv.code, inv.legalNumber ?? '', inv.position.code].join(' ').toLowerCase()
+      return hay.includes(q)
+    })
+  }, [selectedPosition, positionInvoices, mutabakatCorrectionsSearch])
+
+  const mutabakatPaymentsForEdit = useMemo(() => {
+    if (!selectedPosition) return []
+    const q = mutabakatCorrectionsSearch.trim().toLowerCase()
+    const rows: Array<{ key: string; c: Collection; allocs: Allocation[] }> = []
+    for (const c of positionCollections) {
+      const key = c.paymentKey ?? computePaymentKey(c.invoiceCode ?? '', c)
+      const allocs = getPaymentAllocations(key, c, paymentAllocations)
+      if (q) {
+        const hay = [c.customer.registeredName, c.customer.taxNumber ?? '', c.invoiceCode ?? '', c.code ?? '', c.paymentFormDescription ?? '', c.paymentFormCode ?? '']
+          .join(' ')
+          .toLowerCase()
+        if (!hay.includes(q)) continue
+      }
+      rows.push({ key, c, allocs })
+    }
+    return rows
+  }, [selectedPosition, positionCollections, paymentAllocations, mutabakatCorrectionsSearch])
+
   const openMutabakat = () => {
     setPage('mutabakat')
     setMutabakatStep(0)
+    setMutabakatCorrectionsTab('faturalar')
+    setMutabakatCorrectionsSearch('')
     if (
       mutabakatRecord &&
       mutabakatRecord.sourceFileDate === selectedDataset.date &&
@@ -704,6 +728,24 @@ export default function App() {
   const bankEnabled = mutabakatMode === 'BANKA' || mutabakatMode === 'KARMA'
   const enteredTotal = (cashEnabled ? cashTotal : 0) + (bankEnabled ? Number(yatanTutar) || 0 : 0)
   const mutabakatFark = enteredTotal + adjustmentTotal - torbaTutari
+
+  const validatePaymentInputs = () => {
+    if (bankEnabled) {
+      if (!bankName) {
+        setStatus({ type: 'error', message: 'Lütfen banka seçin' })
+        return false
+      }
+      if ((Number(yatanTutar) || 0) <= 0) {
+        setStatus({ type: 'error', message: 'Lütfen yatan tutarı girin' })
+        return false
+      }
+    }
+    if (enteredTotal <= 0) {
+      setStatus({ type: 'error', message: 'Girilen toplam 0 olamaz' })
+      return false
+    }
+    return true
+  }
 
   const mutabakatSaved =
     mutabakatRecord &&
@@ -1334,18 +1376,197 @@ export default function App() {
             <div className="flow">
               <div className="flow-steps">
                 <button className={`flow-step ${mutabakatStep === 0 ? 'active' : ''}`} type="button" onClick={() => setMutabakatStep(0)}>
-                  1. Ödeme
+                  1. Düzeltmeler
                 </button>
                 <button className={`flow-step ${mutabakatStep === 1 ? 'active' : ''}`} type="button" onClick={() => setMutabakatStep(1)}>
-                  2. Düzeltmeler
+                  2. Ödeme
                 </button>
-                <button className={`flow-step ${mutabakatStep === 2 ? 'active' : ''}`} type="button" onClick={() => setMutabakatStep(2)}>
+                <button
+                  className={`flow-step ${mutabakatStep === 2 ? 'active' : ''}`}
+                  type="button"
+                  onClick={() => {
+                    if (mutabakatStep === 0) {
+                      setStatus({ type: 'info', message: 'Önce ödeme adımını tamamlayın' })
+                      setMutabakatStep(1)
+                      return
+                    }
+                    if (!validatePaymentInputs()) return
+                    setMutabakatStep(2)
+                  }}
+                >
                   3. Özet & İşlemler
                 </button>
               </div>
 
               <div className="flow-body">
                 {mutabakatStep === 0 ? (
+                  <div className="mutabakat">
+                    <div className="mutabakat-section-title">Düzeltme Kayıtları</div>
+                    <div className="mutabakat-actions">
+                      <button className="btn btn-secondary" type="button" onClick={addMutabakatAdjustment} disabled={mutabakatSaved?.status === 'COMPLETED'}>
+                        Kayıt Ekle
+                      </button>
+                      <div className="mutabakat-hint">{Math.abs(mutabakatFark) < 0.01 ? 'Fark 0. Mutabakatı tamamla aktif.' : ''}</div>
+                    </div>
+                    <table className="mini-table">
+                      <thead>
+                        <tr>
+                          <th>Tip</th>
+                          <th>Açıklama</th>
+                          <th>Tutar</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {mutabakatAdjustments.length === 0 ? (
+                          <tr>
+                            <td colSpan={4} style={{ textAlign: 'center', color: '#718096' }}>
+                              Kayıt yok
+                            </td>
+                          </tr>
+                        ) : (
+                          mutabakatAdjustments.map((a) => (
+                            <tr key={a.id}>
+                              <td>
+                                <select
+                                  value={a.type}
+                                  onChange={(e) => setMutabakatAdjustments((prev) => prev.map((x) => (x.id === a.id ? { ...x, type: e.target.value as MutabakatAdjustment['type'] } : x)))}
+                                  disabled={mutabakatSaved?.status === 'COMPLETED'}
+                                >
+                                  <option value="ACIK">Temsilci Açığı</option>
+                                  <option value="HATALI_TAHSILAT">Hatalı Tahsilat</option>
+                                  <option value="DIGER">Diğer</option>
+                                </select>
+                              </td>
+                              <td>
+                                <input
+                                  value={a.description ?? ''}
+                                  onChange={(e) => setMutabakatAdjustments((prev) => prev.map((x) => (x.id === a.id ? { ...x, description: e.target.value } : x)))}
+                                  disabled={mutabakatSaved?.status === 'COMPLETED'}
+                                />
+                              </td>
+                              <td>
+                                <input
+                                  type="number"
+                                  value={a.amount || ''}
+                                  onChange={(e) => setMutabakatAdjustments((prev) => prev.map((x) => (x.id === a.id ? { ...x, amount: Number(e.target.value || 0) } : x)))}
+                                  disabled={mutabakatSaved?.status === 'COMPLETED'}
+                                />
+                              </td>
+                              <td>
+                                <button
+                                  className="btn btn-secondary"
+                                  type="button"
+                                  onClick={() => setMutabakatAdjustments((prev) => prev.filter((x) => x.id !== a.id))}
+                                  disabled={mutabakatSaved?.status === 'COMPLETED'}
+                                >
+                                  Sil
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+
+                    <div className="mutabakat-section-title">Fatura ve Tahsilatlar</div>
+                    <div className="tabs">
+                      <button className={`tab ${mutabakatCorrectionsTab === 'faturalar' ? 'active' : ''}`} type="button" onClick={() => setMutabakatCorrectionsTab('faturalar')}>
+                        Tüm Faturalar
+                      </button>
+                      <button className={`tab ${mutabakatCorrectionsTab === 'tahsilatlar' ? 'active' : ''}`} type="button" onClick={() => setMutabakatCorrectionsTab('tahsilatlar')}>
+                        Tüm Tahsilatlar
+                      </button>
+                    </div>
+
+                    <div className="table-search">
+                      <input value={mutabakatCorrectionsSearch} onChange={(e) => setMutabakatCorrectionsSearch(e.target.value)} placeholder="Ara (müşteri, vergi no, fatura no...)" />
+                      <button className="btn btn-secondary" type="button" onClick={() => setMutabakatCorrectionsSearch('')} disabled={!mutabakatCorrectionsSearch.trim()}>
+                        Temizle
+                      </button>
+                    </div>
+
+                    {mutabakatCorrectionsTab === 'faturalar' ? (
+                      <table className="mini-table">
+                        <thead>
+                          <tr>
+                            <th>Müşteri</th>
+                            <th>Vergi No</th>
+                            <th>Fatura</th>
+                            <th>Tutar</th>
+                            <th>Ödeme Tipi</th>
+                            <th></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {mutabakatInvoicesForEdit.length === 0 ? (
+                            <tr>
+                              <td colSpan={6} style={{ textAlign: 'center', color: '#718096' }}>
+                                Kayıt yok
+                              </td>
+                            </tr>
+                          ) : (
+                            mutabakatInvoicesForEdit.map((inv) => {
+                              const total = invoiceTotalAmount(inv)
+                              const allocs = getInvoiceAllocations(inv, invoiceAllocations)
+                              return (
+                                <tr key={inv.code}>
+                                  <td>{inv.customer.registeredName}</td>
+                                  <td>{inv.customer.taxNumber ?? '-'}</td>
+                                  <td>{inv.code}</td>
+                                  <td>{formatMoney(total)}</td>
+                                  <td>{allocationSummary(allocs)}</td>
+                                  <td>
+                                    <button className="btn btn-secondary" type="button" onClick={() => setEditingInvoice(inv)}>
+                                      Düzenle
+                                    </button>
+                                  </td>
+                                </tr>
+                              )
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <table className="mini-table">
+                        <thead>
+                          <tr>
+                            <th>Müşteri</th>
+                            <th>Vergi No</th>
+                            <th>Fatura</th>
+                            <th>Tutar</th>
+                            <th>Ödeme Tipi</th>
+                            <th></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {mutabakatPaymentsForEdit.length === 0 ? (
+                            <tr>
+                              <td colSpan={6} style={{ textAlign: 'center', color: '#718096' }}>
+                                Kayıt yok
+                              </td>
+                            </tr>
+                          ) : (
+                            mutabakatPaymentsForEdit.map((r) => (
+                              <tr key={r.key}>
+                                <td>{r.c.customer.registeredName}</td>
+                                <td>{r.c.customer.taxNumber ?? '-'}</td>
+                                <td>{r.c.invoiceCode ?? '-'}</td>
+                                <td>{formatMoney(r.c.amount ?? 0)}</td>
+                                <td>{allocationSummary(r.allocs)}</td>
+                                <td>
+                                  <button className="btn btn-secondary" type="button" onClick={() => setEditingPayment({ collection: r.c, key: r.key })}>
+                                    Düzenle
+                                  </button>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                ) : mutabakatStep === 1 ? (
                   <div className="mutabakat">
                     <div className="mutabakat-meta">
                       <div className="mutabakat-meta-row">
@@ -1473,76 +1694,6 @@ export default function App() {
                       <div>Düzeltme: {formatMoney(adjustmentTotal)}</div>
                       <div>Fark: {formatMoney(mutabakatFark)}</div>
                     </div>
-                  </div>
-                ) : mutabakatStep === 1 ? (
-                  <div className="mutabakat">
-                    <div className="mutabakat-section-title">Düzeltme Kayıtları</div>
-                    <div className="mutabakat-actions">
-                      <button className="btn btn-secondary" type="button" onClick={addMutabakatAdjustment} disabled={mutabakatSaved?.status === 'COMPLETED'}>
-                        Kayıt Ekle
-                      </button>
-                      <div className="mutabakat-hint">{Math.abs(mutabakatFark) < 0.01 ? 'Fark 0. Mutabakatı tamamla aktif.' : ''}</div>
-                    </div>
-                    <table className="mini-table">
-                      <thead>
-                        <tr>
-                          <th>Tip</th>
-                          <th>Açıklama</th>
-                          <th>Tutar</th>
-                          <th></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {mutabakatAdjustments.length === 0 ? (
-                          <tr>
-                            <td colSpan={4} style={{ textAlign: 'center', color: '#718096' }}>
-                              Kayıt yok
-                            </td>
-                          </tr>
-                        ) : (
-                          mutabakatAdjustments.map((a) => (
-                            <tr key={a.id}>
-                              <td>
-                                <select
-                                  value={a.type}
-                                  onChange={(e) => setMutabakatAdjustments((prev) => prev.map((x) => (x.id === a.id ? { ...x, type: e.target.value as MutabakatAdjustment['type'] } : x)))}
-                                  disabled={mutabakatSaved?.status === 'COMPLETED'}
-                                >
-                                  <option value="ACIK">Temsilci Açığı</option>
-                                  <option value="HATALI_TAHSILAT">Hatalı Tahsilat</option>
-                                  <option value="DIGER">Diğer</option>
-                                </select>
-                              </td>
-                              <td>
-                                <input
-                                  value={a.description ?? ''}
-                                  onChange={(e) => setMutabakatAdjustments((prev) => prev.map((x) => (x.id === a.id ? { ...x, description: e.target.value } : x)))}
-                                  disabled={mutabakatSaved?.status === 'COMPLETED'}
-                                />
-                              </td>
-                              <td>
-                                <input
-                                  type="number"
-                                  value={a.amount || ''}
-                                  onChange={(e) => setMutabakatAdjustments((prev) => prev.map((x) => (x.id === a.id ? { ...x, amount: Number(e.target.value || 0) } : x)))}
-                                  disabled={mutabakatSaved?.status === 'COMPLETED'}
-                                />
-                              </td>
-                              <td>
-                                <button
-                                  className="btn btn-secondary"
-                                  type="button"
-                                  onClick={() => setMutabakatAdjustments((prev) => prev.filter((x) => x.id !== a.id))}
-                                  disabled={mutabakatSaved?.status === 'COMPLETED'}
-                                >
-                                  Sil
-                                </button>
-                              </td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
                   </div>
                 ) : (
                   <div className="mutabakat">
@@ -1737,22 +1888,7 @@ export default function App() {
                   className="btn btn-primary"
                   type="button"
                   onClick={() => {
-                    if (mutabakatStep === 0) {
-                      if (bankEnabled) {
-                        if (!bankName) {
-                          setStatus({ type: 'error', message: 'Lütfen banka seçin' })
-                          return
-                        }
-                        if ((Number(yatanTutar) || 0) <= 0) {
-                          setStatus({ type: 'error', message: 'Lütfen yatan tutarı girin' })
-                          return
-                        }
-                      }
-                      if (enteredTotal <= 0) {
-                        setStatus({ type: 'error', message: 'Girilen toplam 0 olamaz' })
-                        return
-                      }
-                    }
+                    if (mutabakatStep === 1 && !validatePaymentInputs()) return
                     setMutabakatStep((s) => (s === 2 ? 2 : ((s + 1) as 0 | 1 | 2)))
                   }}
                   disabled={mutabakatStep === 2}
@@ -2055,38 +2191,30 @@ export default function App() {
             </div>
           </div>
 
-          <Modal
-            title={editingInvoice ? `Fatura Tip Dağılımı - ${editingInvoice.code}` : ''}
-            open={!!editingInvoice}
-            onClose={() => setEditingInvoice(null)}
-          >
-            {editingInvoice ? (
-              <AllocationEditor
-                title="Fatura"
-                total={invoiceTotalAmount(editingInvoice)}
-                allocations={getInvoiceAllocations(editingInvoice, invoiceAllocations)}
-                onChange={(next) => updateInvoiceAllocations(editingInvoice.code, next)}
-              />
-            ) : null}
-          </Modal>
-
-          <Modal
-            title={editingPayment ? `Tahsilat Tip Dağılımı - ${editingPayment.collection.invoiceCode ?? ''}` : ''}
-            open={!!editingPayment}
-            onClose={() => setEditingPayment(null)}
-          >
-            {editingPayment ? (
-              <AllocationEditor
-                title="Tahsilat"
-                total={editingPayment.collection.amount ?? 0}
-                allocations={getPaymentAllocations(editingPayment.key, editingPayment.collection, paymentAllocations)}
-                onChange={(next) => updatePaymentAllocations(editingPayment.key, next)}
-              />
-            ) : null}
-          </Modal>
-
         </>
       )}
+
+      <Modal title={editingInvoice ? `Fatura Tip Dağılımı - ${editingInvoice.code}` : ''} open={!!editingInvoice} onClose={() => setEditingInvoice(null)}>
+        {editingInvoice ? (
+          <AllocationEditor
+            title="Fatura"
+            total={invoiceTotalAmount(editingInvoice)}
+            allocations={getInvoiceAllocations(editingInvoice, invoiceAllocations)}
+            onChange={(next) => updateInvoiceAllocations(editingInvoice.code, next)}
+          />
+        ) : null}
+      </Modal>
+
+      <Modal title={editingPayment ? `Tahsilat Tip Dağılımı - ${editingPayment.collection.invoiceCode ?? ''}` : ''} open={!!editingPayment} onClose={() => setEditingPayment(null)}>
+        {editingPayment ? (
+          <AllocationEditor
+            title="Tahsilat"
+            total={editingPayment.collection.amount ?? 0}
+            allocations={getPaymentAllocations(editingPayment.key, editingPayment.collection, paymentAllocations)}
+            onChange={(next) => updatePaymentAllocations(editingPayment.key, next)}
+          />
+        ) : null}
+      </Modal>
       </div>
     </div>
   )
