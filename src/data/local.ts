@@ -9,17 +9,27 @@ const PAYMENT_ALLOC_KEY = 'hesapKapatmaPaymentAllocations'
 
 const userKey = (base: string, userId: string) => `${base}:${userId}`
 
-export function loadSessionUser() {
+export type SessionUser = { userName: string; isAdmin: boolean }
+
+export function loadSessionUser(): SessionUser | null {
   try {
     const v = localStorage.getItem(SESSION_KEY)
-    return v && v.trim() ? v : null
+    if (!v || !v.trim()) return null
+    try {
+      const parsed = JSON.parse(v) as { userName?: unknown; isAdmin?: unknown }
+      const userName = typeof parsed?.userName === 'string' ? parsed.userName.trim() : ''
+      if (!userName) return null
+      return { userName, isAdmin: Boolean(parsed.isAdmin) }
+    } catch {
+      return { userName: v.trim(), isAdmin: false }
+    }
   } catch {
     return null
   }
 }
 
-export function saveSessionUser(userId: string) {
-  localStorage.setItem(SESSION_KEY, userId)
+export function saveSessionUser(user: SessionUser) {
+  localStorage.setItem(SESSION_KEY, JSON.stringify(user))
 }
 
 export function clearSessionUser() {

@@ -290,3 +290,41 @@ export async function deletePositionRepresentative(args: {
   }
   return (await res.json()) as { ok: boolean }
 }
+
+export interface UserRow {
+  userName: string
+  isAdmin: boolean
+  isActive: boolean
+  createdAt?: string
+}
+
+export async function fetchUsers(args: {
+  userName: string
+}): Promise<{ ok: boolean; users: UserRow[]; message?: string }> {
+  const res = await fetch('/api/users', {
+    headers: { 'x-user': args.userName },
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, users: [], message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; users: UserRow[] }
+}
+
+export async function createUserAsAdmin(args: {
+  userName: string
+  newUserName: string
+  password: string
+  isAdmin: boolean
+}): Promise<{ ok: boolean; message?: string }> {
+  const res = await fetch('/api/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-user': args.userName },
+    body: JSON.stringify({ userName: args.newUserName, password: args.password, isAdmin: args.isAdmin }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean }
+}

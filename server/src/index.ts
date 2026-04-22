@@ -175,9 +175,15 @@ BEGIN
     UserName NVARCHAR(64) NOT NULL UNIQUE,
     PasswordSalt VARBINARY(16) NOT NULL,
     PasswordHash VARBINARY(32) NOT NULL,
+    IsAdmin BIT NOT NULL CONSTRAINT DF_Users_IsAdmin DEFAULT (0),
     IsActive BIT NOT NULL CONSTRAINT DF_Users_IsActive DEFAULT (1),
     CreatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_Users_CreatedAt DEFAULT (SYSUTCDATETIME())
   );
+END
+
+IF COL_LENGTH('dbo.Users', 'IsAdmin') IS NULL
+BEGIN
+  ALTER TABLE dbo.Users ADD IsAdmin BIT NOT NULL CONSTRAINT DF_Users_IsAdmin DEFAULT (0);
 END
 
 IF OBJECT_ID('dbo.ImportFiles', 'U') IS NULL
@@ -442,18 +448,19 @@ async function verifyUser(pool: mssql.ConnectionPool, userName: string, password
   const r = await pool
     .request()
     .input('UserName', mssql.NVarChar(64), userName)
-    .query('SELECT TOP 1 UserName, PasswordSalt, PasswordHash, IsActive FROM dbo.Users WHERE UserName = @UserName')
+    .query('SELECT TOP 1 UserName, PasswordSalt, PasswordHash, IsActive, IsAdmin FROM dbo.Users WHERE UserName = @UserName')
 
   const row = r.recordset?.[0] as
-    | { UserName: string; PasswordSalt: Buffer; PasswordHash: Buffer; IsActive: boolean }
+    | { UserName: string; PasswordSalt: Buffer; PasswordHash: Buffer; IsActive: boolean; IsAdmin: boolean }
     | undefined
 
-  if (!row || !row.IsActive) return false
+  if (!row || !row.IsActive) return null
   const computed = hashPassword(password, row.PasswordSalt)
-  return crypto.timingSafeEqual(computed, row.PasswordHash)
+  if (!crypto.timingSafeEqual(computed, row.PasswordHash)) return null
+  return { userName: row.UserName, isAdmin: Boolean(row.IsAdmin) }
 }
 
-async function createUser(pool: mssql.ConnectionPool, userName: string, password: string) {
+async function createUser(pool: mssql.ConnectionPool, userName: string, password: string, isAdmin: boolean) {
   const salt = crypto.randomBytes(16)
   const hash = hashPassword(password, salt)
   await pool
@@ -461,7 +468,8 @@ async function createUser(pool: mssql.ConnectionPool, userName: string, password
     .input('UserName', mssql.NVarChar(64), userName)
     .input('PasswordSalt', mssql.VarBinary(16), salt)
     .input('PasswordHash', mssql.VarBinary(32), hash)
-    .query('INSERT INTO dbo.Users (UserName, PasswordSalt, PasswordHash) VALUES (@UserName, @PasswordSalt, @PasswordHash)')
+    .input('IsAdmin', mssql.Bit, isAdmin)
+    .query('INSERT INTO dbo.Users (UserName, PasswordSalt, PasswordHash, IsAdmin) VALUES (@UserName, @PasswordSalt, @PasswordHash, @IsAdmin)')
 }
 
 async function replaceInvoiceDetails(pool: mssql.ConnectionPool, invoiceCode: string, details: unknown) {
@@ -890,9 +898,14 @@ async function requireActiveUser(pool: mssql.ConnectionPool, userName: string) {
   const r = await pool
     .request()
     .input('UserName', mssql.NVarChar(64), userName)
-    .query('SELECT TOP 1 IsActive FROM dbo.Users WHERE UserName = @UserName')
-  const row = r.recordset?.[0] as { IsActive: boolean } | undefined
-  return !!row?.IsActive
+    .query('SELECT TOP 1 IsActive, IsAdmin FROM dbo.Users WHERE UserName = @UserName')
+  const row = r.recordset?.[0] as { IsActive: boolean; IsAdmin: boolean } | undefined
+  return { active: !!row?.IsActive, isAdmin: Boolean(row?.IsAdmin) }
+}
+
+async function requireAdminUser(pool: mssql.ConnectionPool, userName: string) {
+  const r = await requireActiveUser(pool, userName)
+  return r.active && r.isAdmin
 }
 
 app.post('/api/auth/login', async (req, res) => {
@@ -906,12 +919,12 @@ app.post('/api/auth/login', async (req, res) => {
 
     const pool = await getPool()
     await ensureSchema(pool)
-    const ok = await verifyUser(pool, userName, password)
-    if (!ok) {
+    const info = await verifyUser(pool, userName, password)
+    if (!info) {
       res.status(401).send('Hatalı kullanıcı adı/şifre')
       return
     }
-    res.json({ ok: true, userName })
+    res.json({ ok: true, userName: info.userName, isAdmin: info.isAdmin })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
     res.status(500).send(msg)
@@ -921,13 +934,12 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/users', async (req, res) => {
   try {
     const secret = String(req.header('x-admin-secret') ?? '')
-    if (!env.adminSecret || secret !== env.adminSecret) {
-      res.status(403).send('Yetkisiz')
-      return
-    }
+    const isSecretOk = !!env.adminSecret && secret === env.adminSecret
+    const actor = String(req.header('x-user') ?? '').trim()
 
     const userName = String(req.body?.userName ?? '').trim()
     const password = String(req.body?.password ?? '')
+    const isAdmin = Boolean(req.body?.isAdmin)
     if (!userName || !password) {
       res.status(400).send('Eksik alan')
       return
@@ -935,8 +947,60 @@ app.post('/api/users', async (req, res) => {
 
     const pool = await getPool()
     await ensureSchema(pool)
-    await createUser(pool, userName, password)
+
+    if (!isSecretOk) {
+      if (!actor) {
+        res.status(401).send('Yetkisiz')
+        return
+      }
+      const ok = await requireAdminUser(pool, actor)
+      if (!ok) {
+        res.status(403).send('Yetkisiz')
+        return
+      }
+    }
+
+    await createUser(pool, userName, password, isAdmin)
     res.json({ ok: true })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
+app.get('/api/users', async (req, res) => {
+  try {
+    const secret = String(req.header('x-admin-secret') ?? '')
+    const isSecretOk = !!env.adminSecret && secret === env.adminSecret
+    const actor = String(req.header('x-user') ?? '').trim()
+
+    const pool = await getPool()
+    await ensureSchema(pool)
+
+    if (!isSecretOk) {
+      if (!actor) {
+        res.status(401).send('Yetkisiz')
+        return
+      }
+      const ok = await requireAdminUser(pool, actor)
+      if (!ok) {
+        res.status(403).send('Yetkisiz')
+        return
+      }
+    }
+
+    const r = await pool.request().query(`
+SELECT UserName, IsAdmin, IsActive, CreatedAt
+FROM dbo.Users
+ORDER BY UserName
+`)
+    const users = (r.recordset ?? []).map((row) => ({
+      userName: String(row.UserName ?? ''),
+      isAdmin: Boolean(row.IsAdmin),
+      isActive: Boolean(row.IsActive),
+      createdAt: row.CreatedAt ? new Date(row.CreatedAt).toISOString() : undefined,
+    }))
+    res.json({ ok: true, users })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
     res.status(500).send(msg)
@@ -1043,7 +1107,7 @@ app.get('/api/position-representatives', async (req, res) => {
     const pool = await getPool()
     await ensureSchema(pool)
     const active = await requireActiveUser(pool, userName)
-    if (!active) {
+    if (!active.active) {
       res.status(401).send('Yetkisiz')
       return
     }
@@ -1089,7 +1153,7 @@ app.post('/api/position-representatives', async (req, res) => {
     const pool = await getPool()
     await ensureSchema(pool)
     const active = await requireActiveUser(pool, userName)
-    if (!active) {
+    if (!active.active) {
       res.status(401).send('Yetkisiz')
       return
     }
@@ -1164,7 +1228,7 @@ app.delete('/api/position-representatives/:positionCode', async (req, res) => {
     const pool = await getPool()
     await ensureSchema(pool)
     const active = await requireActiveUser(pool, userName)
-    if (!active) {
+    if (!active.active) {
       res.status(401).send('Yetkisiz')
       return
     }
@@ -1793,7 +1857,7 @@ app.post('/api/mutabakat', async (req, res) => {
     const pool = await getPool()
     await ensureSchema(pool)
     const active = await requireActiveUser(pool, userName)
-    if (!active) {
+    if (!active.active) {
       res.status(401).send('Yetkisiz')
       return
     }
@@ -1986,7 +2050,7 @@ app.post('/api/mutabakat/complete', async (req, res) => {
     const pool = await getPool()
     await ensureSchema(pool)
     const active = await requireActiveUser(pool, userName)
-    if (!active) {
+    if (!active.active) {
       res.status(401).send('Yetkisiz')
       return
     }
@@ -2134,7 +2198,7 @@ app.post('/api/allocations/invoice', async (req, res) => {
     const pool = await getPool()
     await ensureSchema(pool)
     const active = await requireActiveUser(pool, userName)
-    if (!active) {
+    if (!active.active) {
       res.status(401).send('Yetkisiz')
       return
     }
@@ -2195,7 +2259,7 @@ app.post('/api/allocations/payment', async (req, res) => {
     const pool = await getPool()
     await ensureSchema(pool)
     const active = await requireActiveUser(pool, userName)
-    if (!active) {
+    if (!active.active) {
       res.status(401).send('Yetkisiz')
       return
     }

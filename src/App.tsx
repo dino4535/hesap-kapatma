@@ -1,11 +1,13 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import {
   completeMutabakat,
+  createUserAsAdmin,
   fetchImportFiles,
   fetchMutabakat,
   fetchPositionData,
   fetchPositions,
   fetchPositionRepresentatives,
+  fetchUsers,
   importSalesFiles,
   deletePositionRepresentative,
   saveMutabakat,
@@ -18,8 +20,9 @@ import {
   type ImportFileRow,
   type PositionRow,
   type PositionRepresentativeRow,
+  type UserRow,
 } from './data/api'
-import { clearSessionUser, loadSessionUser, saveSessionUser } from './data/local'
+import { clearSessionUser, loadSessionUser, saveSessionUser, type SessionUser } from './data/local'
 import { transferAmount, type Allocation, allocationAmountForType, computePaymentKey, getInvoiceAllocations, getPaymentAllocations, invoiceTotalAmount } from './domain/allocations'
 import { formatDateTr, formatMoney } from './domain/format'
 import type { Collection, Invoice } from './domain/models'
@@ -69,7 +72,7 @@ type Banknote = (typeof BANKNOTES)[number]
 
 const BANKS = ['Ziraat', 'İş Bankası', 'Garanti', 'Yapı Kredi', 'Akbank', 'VakıfBank', 'Halkbank', 'QNB', 'DenizBank'] as const
 
-function LoginPage(props: { onLogin: (userId: string) => void }) {
+function LoginPage(props: { onLogin: (user: SessionUser) => void }) {
   const [userId, setUserId] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -102,9 +105,9 @@ function LoginPage(props: { onLogin: (userId: string) => void }) {
                   const text = await res.text().catch(() => '')
                   throw new Error(text || `HTTP ${res.status}`)
                 }
-                const json = (await res.json()) as { ok: boolean; userName: string }
+                const json = (await res.json()) as { ok: boolean; userName: string; isAdmin?: boolean }
                 if (!json.ok) throw new Error('Giriş başarısız')
-                props.onLogin(json.userName)
+                props.onLogin({ userName: json.userName, isAdmin: Boolean(json.isAdmin) })
               } catch (e) {
                 setError(e instanceof Error ? e.message : 'Giriş sırasında hata oluştu')
               } finally {
@@ -216,11 +219,11 @@ function AllocationEditor(props: {
 }
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState<string | null>(() => loadSessionUser())
+  const [currentUser, setCurrentUser] = useState<SessionUser | null>(() => loadSessionUser())
   const [status, setStatus] = useState<{ type: StatusType; message: string } | null>(null)
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [fileInputKey, setFileInputKey] = useState(0)
-  const [page, setPage] = useState<'main' | 'mutabakat' | 'position-representative'>('main')
+  const [page, setPage] = useState<'main' | 'mutabakat' | 'position-representative' | 'user-admin'>('main')
   const [selectedPosition, setSelectedPosition] = useState<string | null>(null)
   const [detailSearch, setDetailSearch] = useState('')
 
@@ -259,6 +262,13 @@ export default function App() {
   const [mutabakatCorrectionsTab, setMutabakatCorrectionsTab] = useState<'faturalar' | 'tahsilatlar'>('faturalar')
   const [mutabakatCorrectionsSearch, setMutabakatCorrectionsSearch] = useState('')
 
+  const [adminUsers, setAdminUsers] = useState<UserRow[]>([])
+  const [adminUsersLoading, setAdminUsersLoading] = useState(false)
+  const [newUserName, setNewUserName] = useState('')
+  const [newUserPassword, setNewUserPassword] = useState('')
+  const [newUserIsAdmin, setNewUserIsAdmin] = useState(false)
+  const [adminStatus, setAdminStatus] = useState<{ type: StatusType; message: string } | null>(null)
+
   useEffect(() => {
     if (!currentUser) return
     fetchImportFiles()
@@ -278,11 +288,28 @@ export default function App() {
   }, [currentUser, selectedDate, selectedDepot])
 
   useEffect(() => {
+    if (!currentUser || !currentUser.isAdmin) return
+    if (page !== 'user-admin') return
+    setAdminUsersLoading(true)
+    setAdminStatus(null)
+    fetchUsers({ userName: currentUser.userName })
+      .then((r) => {
+        if (!r.ok) throw new Error(r.message || 'Kullanıcı listesi alınamadı')
+        setAdminUsers(r.users)
+      })
+      .catch((e) => {
+        setAdminStatus({ type: 'error', message: e instanceof Error ? e.message : 'Kullanıcı listesi alınamadı' })
+        setAdminUsers([])
+      })
+      .finally(() => setAdminUsersLoading(false))
+  }, [currentUser, page])
+
+  useEffect(() => {
     if (!currentUser) {
       setAllRepMappings([])
       return
     }
-    fetchPositionRepresentatives({ userName: currentUser })
+    fetchPositionRepresentatives({ userName: currentUser.userName })
       .then((r) => {
         if (!r.ok) throw new Error(r.message || 'Temsilci eşleme listesi alınamadı')
         setAllRepMappings(r.mappings)
@@ -410,7 +437,7 @@ export default function App() {
     if (!currentUser) return
     if (page !== 'position-representative') return
     setRepMappingsLoading(true)
-    Promise.all([fetchPositionRepresentatives({ userName: currentUser }), fetchPositions()])
+    Promise.all([fetchPositionRepresentatives({ userName: currentUser.userName }), fetchPositions()])
       .then(([m, p]) => {
         if (!m.ok) throw new Error(m.message || 'Eşleme listesi alınamadı')
         if (!p.ok) throw new Error(p.message || 'Pozisyon listesi alınamadı')
@@ -437,9 +464,9 @@ export default function App() {
     return (row?.representativeName ?? '').trim()
   }, [allRepMappings, selectedPosition])
 
-  const onLogin = (userId: string) => {
-    saveSessionUser(userId)
-    setCurrentUser(userId)
+  const onLogin = (user: SessionUser) => {
+    saveSessionUser(user)
+    setCurrentUser(user)
   }
 
   const onLogout = () => {
@@ -791,7 +818,7 @@ export default function App() {
       amount: Number(a.amount) || 0,
     }))
     const r = await saveMutabakat({
-      userName: currentUser,
+      userName: currentUser.userName,
       record: {
         sourceFileDate: selectedDataset.date,
         depotCode: selectedDataset.depot,
@@ -828,7 +855,7 @@ export default function App() {
 
     setStatus({ type: 'info', message: 'Mutabakat tamamlanıyor...' })
     const r = await completeMutabakat({
-      userName: currentUser,
+      userName: currentUser.userName,
       sourceFileDate: mutabakatSaved.sourceFileDate,
       depotCode: mutabakatSaved.depotCode,
       positionCode: mutabakatSaved.positionCode,
@@ -852,7 +879,7 @@ export default function App() {
 
     const rec = mutabakatSaved
     const completedAt = formatDateTimeTr(rec.completedAt || rec.updatedAt)
-    const completedBy = (rec.completedBy || rec.updatedBy || currentUser || '').trim() || '-'
+    const completedBy = (rec.completedBy || rec.updatedBy || currentUser?.userName || '').trim() || '-'
     const repName = selectedRepresentativeName.trim() || '-'
 
     const cashCounts = (rec.cashJson ?? {}) as { banknoteCounts?: Record<string, unknown> }
@@ -1123,7 +1150,7 @@ export default function App() {
   const updateInvoiceAllocations = (invoiceCode: string, next: Allocation[]) => {
     if (!currentUser) return
     setStatus({ type: 'info', message: 'Kaydediliyor...' })
-    saveInvoiceAllocationsSql({ userName: currentUser, invoiceCode, allocations: next })
+    saveInvoiceAllocationsSql({ userName: currentUser.userName, invoiceCode, allocations: next })
       .then((r) => {
         if (!r.ok) throw new Error(r.message || 'Kaydetme başarısız')
         setInvoiceAllocations((prev) => ({ ...prev, [invoiceCode]: next }))
@@ -1137,7 +1164,7 @@ export default function App() {
   const updatePaymentAllocations = (paymentKey: string, next: Allocation[]) => {
     if (!currentUser) return
     setStatus({ type: 'info', message: 'Kaydediliyor...' })
-    savePaymentAllocationsSql({ userName: currentUser, paymentKey, allocations: next })
+    savePaymentAllocationsSql({ userName: currentUser.userName, paymentKey, allocations: next })
       .then((r) => {
         if (!r.ok) throw new Error(r.message || 'Kaydetme başarısız')
         setPaymentAllocations((prev) => ({ ...prev, [paymentKey]: next }))
@@ -1155,6 +1182,8 @@ export default function App() {
       ? 'Mutabakat'
       : page === 'position-representative'
         ? 'Pozisyon - Temsilci'
+        : page === 'user-admin'
+          ? 'Kullanıcı Yönetimi'
         : selectedPosition
           ? `Pozisyon: ${selectedPosition}`
           : 'Pozisyon Hesabı'
@@ -1167,7 +1196,10 @@ export default function App() {
         <aside className="sidebar">
           <div className="sidebar-header">
             <div className="sidebar-brand">Hesap Kapatma</div>
-            <div className="sidebar-user">{currentUser}</div>
+            <div className="sidebar-user">
+              {currentUser.userName}
+              {currentUser.isAdmin ? ' (Admin)' : ''}
+            </div>
           </div>
 
           <nav className="sidebar-nav">
@@ -1203,6 +1235,17 @@ export default function App() {
             >
               Pozisyon - Temsilci
             </button>
+            {currentUser.isAdmin ? (
+              <button
+                className={`nav-item ${page === 'user-admin' ? 'active' : ''}`}
+                type="button"
+                onClick={() => {
+                  setPage('user-admin')
+                }}
+              >
+                Kullanıcılar
+              </button>
+            ) : null}
           </nav>
 
           <div className="sidebar-footer">
@@ -1217,7 +1260,15 @@ export default function App() {
           <div className="main-header">
             <div className="main-header-left">
               <div className="main-title">{pageTitle}</div>
-              <div className="main-subtitle">{page === 'position-representative' ? 'Pozisyona göre temsilci tanımlama' : page === 'mutabakat' ? 'Mutabakat akışı' : ''}</div>
+              <div className="main-subtitle">
+                {page === 'position-representative'
+                  ? 'Pozisyona göre temsilci tanımlama'
+                  : page === 'mutabakat'
+                    ? 'Mutabakat akışı'
+                    : page === 'user-admin'
+                      ? 'Kullanıcı ekleme ve listeleme'
+                      : ''}
+              </div>
             </div>
             <div className="main-header-right">
               {selectedPosition ? (
@@ -1277,7 +1328,7 @@ export default function App() {
                     return
                   }
                   setStatus({ type: 'info', message: 'Kaydediliyor...' })
-                  const r = await savePositionRepresentative({ userName: currentUser, positionCode: pc, representativeName: rn })
+                  const r = await savePositionRepresentative({ userName: currentUser.userName, positionCode: pc, representativeName: rn })
                   if (!r.ok || !r.mapping) {
                     setStatus({ type: 'error', message: r.message || 'Kaydedilemedi' })
                     return
@@ -1356,7 +1407,7 @@ export default function App() {
                             type="button"
                             onClick={async () => {
                               setStatus({ type: 'info', message: 'Siliniyor...' })
-                              const r = await deletePositionRepresentative({ userName: currentUser, positionCode: m.positionCode })
+                              const r = await deletePositionRepresentative({ userName: currentUser.userName, positionCode: m.positionCode })
                               if (!r.ok) {
                                 setStatus({ type: 'error', message: r.message || 'Silinemedi' })
                                 return
@@ -1375,6 +1426,121 @@ export default function App() {
               </table>
             </div>
           </div>
+        </>
+      ) : page === 'user-admin' ? (
+        <>
+          <div className="header">
+            <h1>Kullanıcı Yönetimi</h1>
+            <p>Admin kullanıcılar yeni kullanıcı ekleyebilir.</p>
+            {adminStatus ? <div className={`upload-status ${adminStatus.type}`}>{adminStatus.message}</div> : null}
+          </div>
+
+          {!currentUser.isAdmin ? (
+            <div className="upload-section">
+              <div className="upload-box" style={{ justifyContent: 'space-between' }}>
+                <div style={{ color: '#4a5568' }}>Bu sayfa sadece admin kullanıcılar içindir.</div>
+                <button className="btn btn-secondary" type="button" onClick={() => setPage('main')}>
+                  Geri
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="upload-section">
+                <div className="upload-box" style={{ gap: 10, alignItems: 'end' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 220 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Kullanıcı Adı</label>
+                    <input value={newUserName} onChange={(e) => setNewUserName(e.target.value)} placeholder="kullanıcı adı" />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 220 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Şifre</label>
+                    <input value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)} placeholder="şifre" type="password" />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 140 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Yetki</label>
+                    <label style={{ display: 'flex', gap: 8, alignItems: 'center', color: '#2d3748', fontSize: 13 }}>
+                      <input type="checkbox" checked={newUserIsAdmin} onChange={(e) => setNewUserIsAdmin(e.target.checked)} />
+                      Admin
+                    </label>
+                  </div>
+                  <button
+                    className="btn btn-primary"
+                    type="button"
+                    onClick={async () => {
+                      const u = newUserName.trim()
+                      const p = newUserPassword
+                      if (!u || !p) {
+                        setAdminStatus({ type: 'error', message: 'Kullanıcı adı ve şifre zorunlu' })
+                        return
+                      }
+                      setAdminStatus({ type: 'info', message: 'Kullanıcı oluşturuluyor...' })
+                      const r = await createUserAsAdmin({
+                        userName: currentUser.userName,
+                        newUserName: u,
+                        password: p,
+                        isAdmin: newUserIsAdmin,
+                      })
+                      if (!r.ok) {
+                        setAdminStatus({ type: 'error', message: r.message || 'Kullanıcı oluşturulamadı' })
+                        return
+                      }
+                      setNewUserName('')
+                      setNewUserPassword('')
+                      setNewUserIsAdmin(false)
+                      const list = await fetchUsers({ userName: currentUser.userName })
+                      if (list.ok) setAdminUsers(list.users)
+                      setAdminStatus({ type: 'success', message: 'Kullanıcı oluşturuldu' })
+                    }}
+                  >
+                    Ekle
+                  </button>
+                </div>
+              </div>
+
+              <div className="table-section">
+                <div className="table-header">
+                  <span className="table-title">Kullanıcılar</span>
+                  <div className="actions"></div>
+                </div>
+                <div className="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Kullanıcı</th>
+                        <th>Admin</th>
+                        <th>Aktif</th>
+                        <th>Oluşturma</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adminUsersLoading ? (
+                        <tr>
+                          <td colSpan={4} style={{ textAlign: 'center', color: '#718096' }}>
+                            Yükleniyor...
+                          </td>
+                        </tr>
+                      ) : adminUsers.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} style={{ textAlign: 'center', color: '#718096' }}>
+                            Kayıt yok
+                          </td>
+                        </tr>
+                      ) : (
+                        adminUsers.map((u) => (
+                          <tr key={u.userName}>
+                            <td>{u.userName}</td>
+                            <td>{u.isAdmin ? 'Evet' : 'Hayır'}</td>
+                            <td>{u.isActive ? 'Evet' : 'Hayır'}</td>
+                            <td>{u.createdAt ? formatDateTimeTr(u.createdAt) : '-'}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
         </>
       ) : page === 'mutabakat' ? (
         <>
