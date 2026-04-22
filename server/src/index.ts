@@ -356,7 +356,7 @@ IF OBJECT_ID('dbo.InvoiceDetails', 'U') IS NULL
 BEGIN
   CREATE TABLE dbo.InvoiceDetails (
     InvoiceCode NVARCHAR(64) NOT NULL,
-    LineNo INT NOT NULL,
+    LineNumber INT NOT NULL,
     ProductSequence INT NULL,
     ProductCode NVARCHAR(64) NULL,
     ProductDescription NVARCHAR(256) NULL,
@@ -365,9 +365,16 @@ BEGIN
     GrossAmount DECIMAL(18,4) NULL,
     Price DECIMAL(18,4) NULL,
     Availability INT NULL,
-    CONSTRAINT PK_InvoiceDetails PRIMARY KEY (InvoiceCode, LineNo),
+    CONSTRAINT PK_InvoiceDetails PRIMARY KEY (InvoiceCode, LineNumber),
     CONSTRAINT FK_InvoiceDetails_Invoices FOREIGN KEY (InvoiceCode) REFERENCES dbo.Invoices(Code)
   );
+END
+
+IF OBJECT_ID('dbo.InvoiceDetails', 'U') IS NOT NULL
+   AND COL_LENGTH('dbo.InvoiceDetails', 'LineNo') IS NOT NULL
+   AND COL_LENGTH('dbo.InvoiceDetails', 'LineNumber') IS NULL
+BEGIN
+  EXEC sp_rename 'dbo.InvoiceDetails.LineNo', 'LineNumber', 'COLUMN';
 END
 
 IF OBJECT_ID('dbo.Mutabakat', 'U') IS NULL
@@ -449,7 +456,7 @@ async function replaceInvoiceDetails(pool: mssql.ConnectionPool, invoiceCode: st
   const table = new mssql.Table('dbo.InvoiceDetails')
   table.create = false
   table.columns.add('InvoiceCode', mssql.NVarChar(64), { nullable: false })
-  table.columns.add('LineNo', mssql.Int, { nullable: false })
+  table.columns.add('LineNumber', mssql.Int, { nullable: false })
   table.columns.add('ProductSequence', mssql.Int, { nullable: true })
   table.columns.add('ProductCode', mssql.NVarChar(64), { nullable: true })
   table.columns.add('ProductDescription', mssql.NVarChar(256), { nullable: true })
@@ -459,13 +466,13 @@ async function replaceInvoiceDetails(pool: mssql.ConnectionPool, invoiceCode: st
   table.columns.add('Price', mssql.Decimal(18, 4), { nullable: true })
   table.columns.add('Availability', mssql.Int, { nullable: true })
 
-  let lineNo = 1
+  let lineNumber = 1
   for (const d of details as RawInvoiceDetail[]) {
     if (!d || typeof d !== 'object') continue
     const product = (d.PRODUCT ?? {}) as RawInvoiceDetailProduct
     table.rows.add(
       invoiceCode,
-      lineNo,
+      lineNumber,
       (toNumberOrUndef(product.SEQUENCE) ?? null) as number | null,
       (toStringOrUndef(product.CODE) ?? null) as string | null,
       (toStringOrUndef(product.DESCRIPTION) ?? null) as string | null,
@@ -475,7 +482,7 @@ async function replaceInvoiceDetails(pool: mssql.ConnectionPool, invoiceCode: st
       (toNumberFlexible(d.PRICE) ?? null) as number | null,
       (toNumberOrUndef(d.AVAILABILITY) ?? null) as number | null,
     )
-    lineNo += 1
+    lineNumber += 1
   }
 
   if (table.rows.length === 0) return
@@ -1223,7 +1230,7 @@ ORDER BY Code
         `
 SELECT
   d.InvoiceCode,
-  d.LineNo,
+  d.LineNumber,
   d.ProductSequence,
   d.ProductCode,
   d.ProductDescription,
@@ -1238,7 +1245,7 @@ WHERE i.PositionCode = @PositionCode
   AND i.IsStub = 0
   AND (@SourceFileDate IS NULL OR i.SourceFileDate = @SourceFileDate)
   AND (@SourceDepotCode IS NULL OR i.SourceDepotCode = @SourceDepotCode)
-ORDER BY d.InvoiceCode, d.LineNo
+ORDER BY d.InvoiceCode, d.LineNumber
 `,
       )
 
