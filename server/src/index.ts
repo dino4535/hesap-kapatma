@@ -198,6 +198,29 @@ BEGIN
   ALTER TABLE dbo.ImportFiles ADD JsonId NVARCHAR(64) NULL;
 END
 
+IF COL_LENGTH('dbo.ImportFiles', 'JsonId') IS NOT NULL
+   AND EXISTS (
+     SELECT 1
+     FROM sys.columns c
+     JOIN sys.types t ON t.user_type_id = c.user_type_id
+     WHERE c.object_id = OBJECT_ID('dbo.ImportFiles')
+       AND c.name = 'JsonId'
+       AND t.name NOT IN ('nvarchar')
+   )
+BEGIN
+  IF COL_LENGTH('dbo.ImportFiles', 'JsonId2') IS NULL
+  BEGIN
+    ALTER TABLE dbo.ImportFiles ADD JsonId2 NVARCHAR(64) NULL;
+  END
+
+  UPDATE dbo.ImportFiles
+  SET JsonId2 = CONVERT(NVARCHAR(64), JsonId)
+  WHERE JsonId IS NOT NULL;
+
+  ALTER TABLE dbo.ImportFiles DROP COLUMN JsonId;
+  EXEC sp_rename 'dbo.ImportFiles.JsonId2', 'JsonId', 'COLUMN';
+END
+
 IF COL_LENGTH('dbo.ImportFiles', 'JsonRowCount') IS NULL
 BEGIN
   ALTER TABLE dbo.ImportFiles ADD JsonRowCount INT NULL;
