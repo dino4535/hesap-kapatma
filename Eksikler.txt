@@ -1,0 +1,34 @@
+
+cd /opt/hesap-kapatma
+
+git pull
+
+docker compose up -d --build
+
+Pozisyon - Temsilci Eşleme
+Mutabakat Tamamlandığında Pozisyonun Yeşil olması
+Pozisyon Cardları Tasarımı Güncelle
+Havale ve Vadeli Tahsilat Havaleleri Bayi Bazında Toplam Çıkart ve Alfabetik sırala
+Mutabakat başarılı tamamlandı ise PDF çıktı AL Tam A4 olacak Şekilde ayrıca burada pozisyona ait Havale Ödeme tipli faturalar ve Vadeli tahsilat havaleler de olsun. Responsive tasarım. Tarih Saat Hesap Kapatmayı Yapan Kullanıcı bilgisi Yaz. Temsilci adıda olsun imza alanı ile birlikte
+
+Pozisyona ait Temsilci İsmi için İmza alanı ayarla
+
+Tablo kayıtlarını sil
+BEGIN TRY
+  BEGIN TRAN;
+
+  DELETE FROM dbo.PaymentAllocations;
+  DELETE FROM dbo.InvoiceAllocations;
+  DELETE FROM dbo.AllocationEdits;
+
+  DELETE FROM dbo.Payments;
+  DELETE FROM dbo.Invoices;
+
+  DELETE FROM dbo.ImportFiles;
+
+  COMMIT;
+END TRY
+BEGIN CATCH
+  IF @@TRANCOUNT > 0 ROLLBACK;
+  THROW;
+END CATCH;
