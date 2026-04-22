@@ -237,3 +237,55 @@ export async function completeMutabakat(args: {
   }
   return (await res.json()) as { ok: boolean; record: MutabakatRecord }
 }
+
+export interface PositionRepresentativeRow {
+  positionCode: string
+  representativeName: string
+  updatedAt?: string
+  updatedBy?: string
+}
+
+export async function fetchPositionRepresentatives(args: {
+  userName: string
+}): Promise<{ ok: boolean; mappings: PositionRepresentativeRow[]; message?: string }> {
+  const res = await fetch('/api/position-representatives', {
+    headers: { 'x-user': args.userName },
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, mappings: [], message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; mappings: PositionRepresentativeRow[] }
+}
+
+export async function savePositionRepresentative(args: {
+  userName: string
+  positionCode: string
+  representativeName: string
+}): Promise<{ ok: boolean; mapping?: PositionRepresentativeRow; message?: string }> {
+  const res = await fetch('/api/position-representatives', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-user': args.userName },
+    body: JSON.stringify({ positionCode: args.positionCode, representativeName: args.representativeName }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; mapping: PositionRepresentativeRow }
+}
+
+export async function deletePositionRepresentative(args: {
+  userName: string
+  positionCode: string
+}): Promise<{ ok: boolean; message?: string }> {
+  const res = await fetch(`/api/position-representatives/${encodeURIComponent(args.positionCode)}`, {
+    method: 'DELETE',
+    headers: { 'x-user': args.userName },
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean }
+}

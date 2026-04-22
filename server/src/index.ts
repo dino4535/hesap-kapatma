@@ -310,6 +310,16 @@ BEGIN
     CONSTRAINT PK_Mutabakat PRIMARY KEY (SourceFileDate, DepotCode, PositionCode)
   );
 END
+
+IF OBJECT_ID('dbo.PositionRepresentativeMap', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.PositionRepresentativeMap (
+    PositionCode NVARCHAR(64) NOT NULL PRIMARY KEY,
+    RepresentativeName NVARCHAR(128) NOT NULL,
+    UpdatedBy NVARCHAR(64) NULL,
+    UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_PositionRepresentativeMap_UpdatedAt DEFAULT (SYSUTCDATETIME())
+  );
+END
 `)
 }
 
@@ -726,6 +736,152 @@ app.post('/api/users', async (req, res) => {
     const pool = await getPool()
     await ensureSchema(pool)
     await createUser(pool, userName, password)
+    res.json({ ok: true })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
+app.get('/api/position-representatives', async (req, res) => {
+  try {
+    const userName = String(req.header('x-user') ?? '').trim()
+    if (!userName) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const active = await requireActiveUser(pool, userName)
+    if (!active) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+
+    const r = await pool.request().query(
+      `
+SELECT
+  PositionCode,
+  RepresentativeName,
+  UpdatedBy,
+  UpdatedAt
+FROM dbo.PositionRepresentativeMap
+ORDER BY PositionCode
+`,
+    )
+    const mappings = (r.recordset ?? []).map((row) => ({
+      positionCode: String(row.PositionCode ?? ''),
+      representativeName: String(row.RepresentativeName ?? ''),
+      updatedBy: row.UpdatedBy ?? undefined,
+      updatedAt: row.UpdatedAt ? new Date(row.UpdatedAt).toISOString() : undefined,
+    }))
+    res.json({ ok: true, mappings })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
+app.post('/api/position-representatives', async (req, res) => {
+  try {
+    const userName = String(req.header('x-user') ?? '').trim()
+    if (!userName) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+    const positionCode = String(req.body?.positionCode ?? '').trim()
+    const representativeName = String(req.body?.representativeName ?? '').trim()
+    if (!positionCode || !representativeName) {
+      res.status(400).send('Eksik alan')
+      return
+    }
+
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const active = await requireActiveUser(pool, userName)
+    if (!active) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+
+    await pool
+      .request()
+      .input('PositionCode', mssql.NVarChar(64), positionCode)
+      .input('RepresentativeName', mssql.NVarChar(128), representativeName)
+      .input('UserName', mssql.NVarChar(64), userName)
+      .query(
+        `
+MERGE dbo.PositionRepresentativeMap WITH (HOLDLOCK) AS t
+USING (SELECT
+  @PositionCode AS PositionCode,
+  @RepresentativeName AS RepresentativeName,
+  @UserName AS UserName
+) AS s
+ON t.PositionCode = s.PositionCode
+WHEN MATCHED THEN
+  UPDATE SET
+    RepresentativeName = s.RepresentativeName,
+    UpdatedBy = s.UserName,
+    UpdatedAt = SYSUTCDATETIME()
+WHEN NOT MATCHED THEN
+  INSERT (PositionCode, RepresentativeName, UpdatedBy)
+  VALUES (s.PositionCode, s.RepresentativeName, s.UserName);
+`,
+      )
+
+    const readBack = await pool
+      .request()
+      .input('PositionCode', mssql.NVarChar(64), positionCode)
+      .query(
+        `
+SELECT TOP 1 PositionCode, RepresentativeName, UpdatedBy, UpdatedAt
+FROM dbo.PositionRepresentativeMap
+WHERE PositionCode = @PositionCode
+`,
+      )
+    const row = readBack.recordset?.[0] as { PositionCode: string; RepresentativeName: string; UpdatedBy: string | null; UpdatedAt: Date } | undefined
+    if (!row) {
+      res.status(500).send('Kayıt okunamadı')
+      return
+    }
+    res.json({
+      ok: true,
+      mapping: {
+        positionCode: String(row.PositionCode ?? ''),
+        representativeName: String(row.RepresentativeName ?? ''),
+        updatedBy: row.UpdatedBy ?? undefined,
+        updatedAt: row.UpdatedAt ? new Date(row.UpdatedAt).toISOString() : undefined,
+      },
+    })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
+app.delete('/api/position-representatives/:positionCode', async (req, res) => {
+  try {
+    const userName = String(req.header('x-user') ?? '').trim()
+    if (!userName) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+    const positionCode = String(req.params.positionCode ?? '').trim()
+    if (!positionCode) {
+      res.status(400).send('Eksik alan')
+      return
+    }
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const active = await requireActiveUser(pool, userName)
+    if (!active) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+    await pool
+      .request()
+      .input('PositionCode', mssql.NVarChar(64), positionCode)
+      .query('DELETE FROM dbo.PositionRepresentativeMap WHERE PositionCode = @PositionCode')
     res.json({ ok: true })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'

@@ -5,8 +5,11 @@ import {
   fetchMutabakat,
   fetchPositionData,
   fetchPositions,
+  fetchPositionRepresentatives,
   importSalesFiles,
+  deletePositionRepresentative,
   saveMutabakat,
+  savePositionRepresentative,
   saveInvoiceAllocationsSql,
   savePaymentAllocationsSql,
   type MutabakatAdjustment,
@@ -14,6 +17,7 @@ import {
   type MutabakatRecord,
   type ImportFileRow,
   type PositionRow,
+  type PositionRepresentativeRow,
 } from './data/api'
 import { clearSessionUser, loadSessionUser, saveSessionUser } from './data/local'
 import { transferAmount, type Allocation, allocationAmountForType, computePaymentKey, getInvoiceAllocations, getPaymentAllocations, invoiceTotalAmount } from './domain/allocations'
@@ -200,6 +204,7 @@ export default function App() {
   const [status, setStatus] = useState<{ type: StatusType; message: string } | null>(null)
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [fileInputKey, setFileInputKey] = useState(0)
+  const [page, setPage] = useState<'main' | 'position-representative'>('main')
   const [selectedPosition, setSelectedPosition] = useState<string | null>(null)
   const [detailSearch, setDetailSearch] = useState('')
 
@@ -209,6 +214,13 @@ export default function App() {
 
   const [positions, setPositions] = useState<PositionRow[]>([])
   const [positionsLoading, setPositionsLoading] = useState(false)
+
+  const [repMappings, setRepMappings] = useState<PositionRepresentativeRow[]>([])
+  const [repMappingsLoading, setRepMappingsLoading] = useState(false)
+  const [repSearch, setRepSearch] = useState('')
+  const [repPositionCode, setRepPositionCode] = useState('')
+  const [repName, setRepName] = useState('')
+  const [repPositions, setRepPositions] = useState<PositionRow[]>([])
 
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [collections, setCollections] = useState<SqlCollectionRow[]>([])
@@ -368,6 +380,31 @@ export default function App() {
       })
   }, [selectedPosition, selectedDataset.date, selectedDataset.depot])
 
+  useEffect(() => {
+    if (!currentUser) return
+    if (page !== 'position-representative') return
+    setRepMappingsLoading(true)
+    Promise.all([fetchPositionRepresentatives({ userName: currentUser }), fetchPositions()])
+      .then(([m, p]) => {
+        if (!m.ok) throw new Error(m.message || 'Eşleme listesi alınamadı')
+        if (!p.ok) throw new Error(p.message || 'Pozisyon listesi alınamadı')
+        setRepMappings(m.mappings)
+        setRepPositions(p.positions)
+      })
+      .catch((e) => {
+        setStatus({ type: 'error', message: e instanceof Error ? e.message : 'Eşleme listesi alınamadı' })
+        setRepMappings([])
+        setRepPositions([])
+      })
+      .finally(() => setRepMappingsLoading(false))
+  }, [currentUser, page])
+
+  const filteredRepMappings = useMemo(() => {
+    const q = repSearch.trim().toLowerCase()
+    if (!q) return repMappings
+    return repMappings.filter((m) => `${m.positionCode} ${m.representativeName}`.toLowerCase().includes(q))
+  }, [repMappings, repSearch])
+
   const onLogin = (userId: string) => {
     saveSessionUser(userId)
     setCurrentUser(userId)
@@ -377,6 +414,7 @@ export default function App() {
     clearSessionUser()
     setCurrentUser(null)
     setSelectedPosition(null)
+    setPage('main')
     setStatus(null)
   }
 
@@ -720,6 +758,34 @@ export default function App() {
           </div>
         </div>
         <div className="topbar-right">
+          {page !== 'position-representative' ? (
+            <button
+              className="btn btn-secondary"
+              type="button"
+              onClick={() => {
+                setSelectedPosition(null)
+                setTypeFilter(null)
+                setPositionTab('faturalar')
+                setDetailSearch('')
+                setPage('position-representative')
+              }}
+            >
+              Pozisyon - Temsilci Eşleme
+            </button>
+          ) : (
+            <button
+              className="btn btn-secondary"
+              type="button"
+              onClick={() => {
+                setRepSearch('')
+                setRepPositionCode('')
+                setRepName('')
+                setPage('main')
+              }}
+            >
+              Ana Ekran
+            </button>
+          )}
           {selectedPosition ? (
             <button
               className="btn btn-secondary"
@@ -739,7 +805,140 @@ export default function App() {
         </div>
       </div>
 
-      {!selectedPosition ? (
+      {page === 'position-representative' ? (
+        <>
+          <div className="header">
+            <h1>Pozisyon - Temsilci Eşleme</h1>
+            <p>Pozisyona göre temsilci tanımlama</p>
+            {status ? <div className={`upload-status ${status.type}`}>{status.message}</div> : null}
+          </div>
+
+          <div className="upload-section">
+            <div className="upload-box" style={{ gap: 10, alignItems: 'end' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 220 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Pozisyon</label>
+                <input list="positionCodes" value={repPositionCode} onChange={(e) => setRepPositionCode(e.target.value)} placeholder="Pozisyon kodu" />
+                <datalist id="positionCodes">
+                  {repPositions.map((p) => (
+                    <option key={p.code} value={p.code} />
+                  ))}
+                </datalist>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 260 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Temsilci</label>
+                <input value={repName} onChange={(e) => setRepName(e.target.value)} placeholder="Temsilci adı" />
+              </div>
+              <button
+                className="btn btn-primary"
+                type="button"
+                onClick={async () => {
+                  const pc = repPositionCode.trim()
+                  const rn = repName.trim()
+                  if (!pc || !rn) {
+                    setStatus({ type: 'error', message: 'Pozisyon ve temsilci zorunlu' })
+                    return
+                  }
+                  setStatus({ type: 'info', message: 'Kaydediliyor...' })
+                  const r = await savePositionRepresentative({ userName: currentUser, positionCode: pc, representativeName: rn })
+                  if (!r.ok || !r.mapping) {
+                    setStatus({ type: 'error', message: r.message || 'Kaydedilemedi' })
+                    return
+                  }
+                  setRepMappings((prev) => {
+                    const next = prev.filter((x) => x.positionCode !== r.mapping!.positionCode)
+                    next.push(r.mapping!)
+                    next.sort((a, b) => a.positionCode.localeCompare(b.positionCode))
+                    return next
+                  })
+                  setRepPositionCode('')
+                  setRepName('')
+                  setStatus({ type: 'success', message: 'Kaydedildi' })
+                }}
+              >
+                Kaydet
+              </button>
+            </div>
+          </div>
+
+          <div className="table-section">
+            <div className="table-header">
+              <span className="table-title">Eşlemeler</span>
+              <div className="actions"></div>
+            </div>
+            <div className="table-search">
+              <input value={repSearch} onChange={(e) => setRepSearch(e.target.value)} placeholder="Ara (pozisyon / temsilci)" />
+              <button className="btn btn-secondary" type="button" onClick={() => setRepSearch('')} disabled={!repSearch.trim()}>
+                Temizle
+              </button>
+            </div>
+            <div className="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Pozisyon</th>
+                    <th>Temsilci</th>
+                    <th>Güncelleyen</th>
+                    <th>Güncelleme Tarihi</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {repMappingsLoading ? (
+                    <tr>
+                      <td colSpan={5} style={{ textAlign: 'center', color: '#718096' }}>
+                        Yükleniyor...
+                      </td>
+                    </tr>
+                  ) : filteredRepMappings.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} style={{ textAlign: 'center', color: '#718096' }}>
+                        Kayıt yok
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredRepMappings.map((m) => (
+                      <tr key={m.positionCode}>
+                        <td>{m.positionCode}</td>
+                        <td>{m.representativeName}</td>
+                        <td>{m.updatedBy ?? '-'}</td>
+                        <td>{m.updatedAt ? formatDateTr(m.updatedAt.slice(0, 10)) : '-'}</td>
+                        <td>
+                          <button
+                            className="btn btn-secondary"
+                            type="button"
+                            onClick={() => {
+                              setRepPositionCode(m.positionCode)
+                              setRepName(m.representativeName)
+                            }}
+                          >
+                            Düzenle
+                          </button>
+                          <button
+                            className="btn btn-secondary"
+                            type="button"
+                            onClick={async () => {
+                              setStatus({ type: 'info', message: 'Siliniyor...' })
+                              const r = await deletePositionRepresentative({ userName: currentUser, positionCode: m.positionCode })
+                              if (!r.ok) {
+                                setStatus({ type: 'error', message: r.message || 'Silinemedi' })
+                                return
+                              }
+                              setRepMappings((prev) => prev.filter((x) => x.positionCode !== m.positionCode))
+                              setStatus({ type: 'success', message: 'Silindi' })
+                            }}
+                          >
+                            Sil
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      ) : !selectedPosition ? (
         <>
           <div className="header">
             <h1>Hesap Kapatma</h1>
