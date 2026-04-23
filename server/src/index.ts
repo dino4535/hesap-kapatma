@@ -2283,6 +2283,105 @@ app.get('/api/manim/dekont', async (req, res) => {
   }
 })
 
+app.get('/api/manim/receipts', async (req, res) => {
+  try {
+    const userName = String(req.header('x-user') ?? '').trim()
+    if (!userName) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+
+    const bankName = String(req.query.bankName ?? '').trim()
+    const parsedDate = parseQueryDate(req.query.date)
+    if (!parsedDate.ok || !parsedDate.date) {
+      res.status(400).send(parsedDate.ok ? 'Tarih zorunlu' : parsedDate.error)
+      return
+    }
+    if (!bankName) {
+      res.status(400).send('bankName, date zorunlu')
+      return
+    }
+
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const active = await requireActiveUser(pool, userName)
+    if (!active.active) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+
+    const matchers = manimBankMatchers(bankName)
+    if (matchers.length === 0) {
+      res.json({ ok: true, receipts: [] })
+      return
+    }
+
+    const accounts = hasManimRemoteConfig() ? await loadManimAccountsRemote() : await loadManimAccounts()
+    const matchedAccounts = accounts.filter((a) => {
+      const lab = normalizeManimMatch(a.label)
+      return matchers.some((m) => lab.includes(m))
+    })
+
+    if (matchedAccounts.length === 0) {
+      res.json({ ok: true, receipts: [] })
+      return
+    }
+
+    const targetDay = manimIsoDay(parsedDate.date)
+    const targets = new Set([targetDay])
+    const dPrev = new Date(parsedDate.date)
+    dPrev.setUTCDate(dPrev.getUTCDate() - 1)
+    targets.add(manimIsoDay(dPrev))
+    const dNext = new Date(parsedDate.date)
+    dNext.setUTCDate(dNext.getUTCDate() + 1)
+    targets.add(manimIsoDay(dNext))
+
+    const startIso = `${manimIsoDay(dPrev)}T00:00:00.000Z`
+    const endIso = `${manimIsoDay(dNext)}T23:59:59.999Z`
+
+    const dedupe = new Map<string, ManimReceiptCandidate & { timeScore: number }>()
+
+    for (const acc of matchedAccounts) {
+      const receipts = hasManimRemoteConfig()
+        ? await loadManimReceiptsRemote({ accountId: acc.id, startIso, endIso })
+        : await loadManimReceipts(acc.id)
+      for (const r of receipts) {
+        const dt = new Date(r.receiptDate)
+        if (Number.isNaN(dt.getTime())) continue
+        const day = manimIsoDay(dt)
+        if (!targets.has(day)) continue
+        const row: ManimReceiptCandidate & { timeScore: number } = {
+          ...r,
+          bankAccountId: r.bankAccountId ?? acc.id,
+          bankAccountLabel: r.bankAccountLabel ?? acc.label,
+          timeScore: dt.getTime(),
+        }
+        const key = `${row.bankAccountId ?? ''}|${row.receiptNo}|${row.receiptDate}|${row.amount}`
+        if (!dedupe.has(key)) dedupe.set(key, row)
+      }
+    }
+
+    const list = [...dedupe.values()]
+    list.sort((a, b) => b.timeScore - a.timeScore)
+
+    res.json({
+      ok: true,
+      receipts: list.slice(0, 200).map((x) => ({
+        receiptNo: x.receiptNo,
+        receiptDate: x.receiptDate,
+        amount: x.amount,
+        direction: x.direction,
+        explanation: x.explanation,
+        bankAccountId: x.bankAccountId,
+        bankAccountLabel: x.bankAccountLabel,
+      })),
+    })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
 app.get('/api/positions', async (req, res) => {
   try {
     const parsedDate = parseQueryDate(req.query.date)

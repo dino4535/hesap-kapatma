@@ -5,6 +5,7 @@ import {
   deleteDataByDateDepot,
   deleteDataByImportFile,
   findManimDekont,
+  fetchManimReceipts,
   fetchImportFiles,
   fetchMutabakat,
   fetchPositionData,
@@ -18,6 +19,7 @@ import {
   saveInvoiceAllocationsSql,
   savePaymentAllocationsSql,
   type ManimDekontCandidate,
+  type ManimReceiptRow,
   type MutabakatAdjustment,
   type MutabakatMode,
   type MutabakatRecord,
@@ -265,6 +267,8 @@ export default function App() {
   const [manimDekontNo, setManimDekontNo] = useState('')
   const [autoDekontNo, setAutoDekontNo] = useState<string | null>(null)
   const [manimDekontCandidates, setManimDekontCandidates] = useState<ManimDekontCandidate[]>([])
+  const [manimReceipts, setManimReceipts] = useState<ManimReceiptRow[]>([])
+  const [manimReceiptSearch, setManimReceiptSearch] = useState('')
   const [mutabakatAdjustments, setMutabakatAdjustments] = useState<MutabakatAdjustment[]>([])
   const [mutabakatStep, setMutabakatStep] = useState<0 | 1 | 2>(0)
   const [mutabakatCorrectionsTab, setMutabakatCorrectionsTab] = useState<'faturalar' | 'tahsilatlar'>('faturalar')
@@ -921,6 +925,50 @@ export default function App() {
 
     return () => window.clearTimeout(handle)
   }, [currentUser, bankEnabled, mutabakatSaved?.status, bankName, selectedDataset.date, yatanTutar, manimDekontNo, autoDekontNo, cashEnabled, torbaTutari])
+
+  useEffect(() => {
+    if (!currentUser) return
+    if (!bankEnabled) {
+      setManimReceipts([])
+      return
+    }
+    const bank = bankName.trim()
+    const date = selectedDataset.date
+    if (!bank || !date) {
+      setManimReceipts([])
+      return
+    }
+    if (mutabakatSaved?.status === 'COMPLETED') return
+
+    const handle = window.setTimeout(() => {
+      setManimReceipts([])
+      fetchManimReceipts({ userName: currentUser.userName, bankName: bank, date })
+        .then((r) => {
+          if (!r.ok) {
+            setStatus({ type: 'error', message: r.message || 'Manim hareket listesi alınamadı' })
+            return
+          }
+          setManimReceipts(Array.isArray(r.receipts) ? r.receipts : [])
+        })
+        .catch((e) => {
+          const msg = e instanceof Error ? e.message : 'Manim hareket listesi alınamadı'
+          setStatus({ type: 'error', message: msg })
+        })
+    }, 350)
+
+    return () => window.clearTimeout(handle)
+  }, [currentUser, bankEnabled, bankName, selectedDataset.date, mutabakatSaved?.status])
+
+  const filteredManimReceipts = useMemo(() => {
+    const q = manimReceiptSearch.trim().toLocaleLowerCase('tr-TR')
+    if (!q) return manimReceipts
+    return manimReceipts.filter((r) => {
+      const hay = `${r.receiptNo ?? ''} ${r.receiptDate ?? ''} ${r.amount ?? ''} ${r.direction ?? ''} ${r.bankAccountLabel ?? ''} ${r.explanation ?? ''}`.toLocaleLowerCase(
+        'tr-TR',
+      )
+      return hay.includes(q)
+    })
+  }, [manimReceipts, manimReceiptSearch])
 
   const addMutabakatAdjustment = () => {
     const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -2154,6 +2202,64 @@ export default function App() {
                             </div>
                           ) : null}
                         </div>
+                      </>
+                    ) : null}
+
+                    {bankEnabled ? (
+                      <>
+                        <div className="mutabakat-section-title">Manim Hareketleri</div>
+                        <div className="mutabakat-form">
+                          <div className="mutabakat-field" style={{ gridColumn: '1 / -1' }}>
+                            <label>Arama</label>
+                            <input value={manimReceiptSearch} onChange={(e) => setManimReceiptSearch(e.target.value)} placeholder="Dekont no / açıklama / tutar" />
+                          </div>
+                        </div>
+                        <table className="mini-table">
+                          <thead>
+                            <tr>
+                              <th>Tarih</th>
+                              <th>Dekont</th>
+                              <th>Tutar</th>
+                              <th>Hesap</th>
+                              <th>Açıklama</th>
+                              <th></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredManimReceipts.length === 0 ? (
+                              <tr>
+                                <td colSpan={6} style={{ textAlign: 'center', color: '#718096' }}>
+                                  Kayıt yok
+                                </td>
+                              </tr>
+                            ) : (
+                              filteredManimReceipts.slice(0, 50).map((r) => (
+                                <tr key={`${r.receiptNo}|${r.receiptDate}|${r.amount}`}>
+                                  <td>{formatDateTr(r.receiptDate)}</td>
+                                  <td>{r.receiptNo}</td>
+                                  <td>{formatMoney(Number(r.amount) || 0)}</td>
+                                  <td>{(r.bankAccountLabel ?? '').trim() || '-'}</td>
+                                  <td>{(r.explanation ?? '').trim() || '-'}</td>
+                                  <td style={{ textAlign: 'right' }}>
+                                    <button
+                                      className="btn btn-secondary"
+                                      type="button"
+                                      disabled={mutabakatSaved?.status === 'COMPLETED'}
+                                      onClick={() => {
+                                        setYatanTutar(Number(r.amount) || 0)
+                                        setManimDekontNo(String(r.receiptNo ?? '').trim())
+                                        setAutoDekontNo(String(r.receiptNo ?? '').trim())
+                                        setManimDekontCandidates([])
+                                      }}
+                                    >
+                                      Seç
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
                       </>
                     ) : null}
 

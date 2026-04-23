@@ -395,3 +395,29 @@ export async function findManimDekont(args: {
   }
   return (await res.json()) as { ok: boolean; match: ManimDekontCandidate | null; candidates: ManimDekontCandidate[]; message?: string }
 }
+
+export interface ManimReceiptRow {
+  receiptNo: string
+  receiptDate: string
+  amount: number
+  direction?: string
+  explanation?: string
+  bankAccountId?: string
+  bankAccountLabel?: string
+}
+
+export async function fetchManimReceipts(args: {
+  userName: string
+  bankName: string
+  date: string
+}): Promise<{ ok: boolean; receipts: ManimReceiptRow[]; message?: string }> {
+  const qs = new URLSearchParams()
+  qs.set('bankName', args.bankName)
+  qs.set('date', args.date)
+  const res = await fetch(`/api/manim/receipts?${qs.toString()}`, { headers: { 'x-user': args.userName } })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, receipts: [], message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; receipts: ManimReceiptRow[]; message?: string }
+}
