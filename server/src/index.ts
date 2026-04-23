@@ -4,6 +4,8 @@ import express from 'express'
 import multer from 'multer'
 import mssql from 'mssql'
 import crypto from 'node:crypto'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 
 dotenv.config()
 
@@ -16,6 +18,7 @@ const env = {
   sqlTrustServerCertificate: (process.env.SQL_TRUST_SERVER_CERT ?? 'true').toLowerCase() !== 'false',
   port: process.env.PORT ? Number(process.env.PORT) : 3001,
   adminSecret: process.env.ADMIN_SECRET ?? '',
+  manimDir: process.env.MANIM_DIR ?? '',
 }
 
 type SalesFileMeta = { fileName: string; fileDate?: string; depotCode?: string }
@@ -164,6 +167,112 @@ function computePaymentKey(invoiceCode: string, p: { code?: string; issueDate?: 
 
 function computeInvoicePaymentKey(invoiceCode: string, p: { code?: string; issueDate?: string; amount: number; formCode?: string }) {
   return `INV|${computePaymentKey(invoiceCode, p)}`
+}
+
+function normalizeManimMatch(value: string) {
+  return value
+    .toLocaleLowerCase('tr-TR')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replaceAll('ı', 'i')
+    .replaceAll('İ', 'i')
+    .replaceAll('ş', 's')
+    .replaceAll('ğ', 'g')
+    .replaceAll('ü', 'u')
+    .replaceAll('ö', 'o')
+    .replaceAll('ç', 'c')
+    .replace(/[^a-z0-9]+/g, '')
+}
+
+function manimBankMatchers(bankName: string) {
+  const n = normalizeManimMatch(bankName)
+  if (!n) return []
+  if (n.includes('ziraat')) return ['ziraat']
+  if (n.includes('isbankasi') || n.includes('isbank')) return ['isbankasi', 'isbank']
+  if (n.includes('garanti')) return ['garanti']
+  if (n.includes('yapikredi') || n.includes('ykb')) return ['yapikredi', 'ykb']
+  if (n.includes('akbank')) return ['akbank']
+  if (n.includes('vakifbank') || n.includes('vakif')) return ['vakifbank', 'vakif']
+  if (n.includes('halkbank') || n.includes('halk')) return ['halkbank', 'halk']
+  if (n.includes('qnb') || n.includes('finans')) return ['qnb', 'finans']
+  if (n.includes('denizbank') || n.includes('deniz')) return ['denizbank', 'deniz']
+  return [n]
+}
+
+function getManimDir() {
+  const fromEnv = env.manimDir.trim()
+  if (fromEnv) return fromEnv
+  return path.resolve(process.cwd(), '..', '..', 'Manim')
+}
+
+type ManimAccount = { id: string; label: string }
+
+async function loadManimAccounts(): Promise<ManimAccount[]> {
+  const manimDir = getManimDir()
+  const statePath = path.join(manimDir, 'sync_state.json')
+  try {
+    const raw = await fs.readFile(statePath, 'utf-8')
+    const parsed = JSON.parse(raw) as { accounts?: Record<string, { label?: unknown }> }
+    const accounts = parsed?.accounts ?? {}
+    return Object.entries(accounts)
+      .map(([id, v]) => ({ id: String(id), label: String(v?.label ?? '').trim() }))
+      .filter((x) => x.id && x.label)
+  } catch {
+    return []
+  }
+}
+
+type ManimReceiptCandidate = {
+  receiptNo: string
+  receiptDate: string
+  amount: number
+  direction?: string
+  explanation?: string
+  bankAccountId?: string
+  bankAccountLabel?: string
+}
+
+function manimIsoDay(d: Date) {
+  return d.toISOString().slice(0, 10)
+}
+
+function manimAbsDiff(a: number, b: number) {
+  return Math.abs((Number(a) || 0) - (Number(b) || 0))
+}
+
+async function loadManimReceipts(accountId: string): Promise<ManimReceiptCandidate[]> {
+  const manimDir = getManimDir()
+  const filePath = path.join(manimDir, 'hesap_hareketleri', `${accountId}.json`)
+  try {
+    const raw = await fs.readFile(filePath, 'utf-8')
+    const rows = JSON.parse(raw) as unknown
+    if (!Array.isArray(rows)) return []
+    return rows
+      .map((r) => {
+        const obj = r as any
+        const receiptNo = String(obj?.receiptNo ?? '').trim()
+        const receiptDate = String(obj?.receiptDate ?? '').trim()
+        const amount = typeof obj?.receiptAmount === 'number' ? obj.receiptAmount : toNumberFlexible(obj?.receiptAmount) ?? 0
+        const direction = typeof obj?.direction === 'string' ? obj.direction : undefined
+        const explanation = typeof obj?.explanation === 'string' ? obj.explanation : undefined
+        const bankAccountId = typeof obj?.bankAccount?._id === 'string' ? obj.bankAccount._id : accountId
+        const bankAccountLabel = typeof obj?.bankAccount?.label === 'string' ? obj.bankAccount.label : undefined
+        if (!receiptNo || !receiptDate || !Number.isFinite(amount)) return null
+        const candidate: ManimReceiptCandidate = {
+          receiptNo,
+          receiptDate,
+          amount,
+          ...(direction ? { direction } : {}),
+          ...(explanation ? { explanation } : {}),
+          ...(bankAccountId ? { bankAccountId } : {}),
+          ...(bankAccountLabel ? { bankAccountLabel } : {}),
+        }
+        return candidate
+      })
+      .filter((x): x is ManimReceiptCandidate => !!x)
+  } catch {
+    return []
+  }
 }
 
 let poolPromise: Promise<mssql.ConnectionPool> | null = null
@@ -1944,6 +2053,113 @@ function parseQueryDate(value: unknown) {
   if (Number.isNaN(d.getTime())) return { ok: false as const, error: 'Geçersiz tarih formatı (YYYY-MM-DD bekleniyor)' }
   return { ok: true as const, date: d }
 }
+
+app.get('/api/manim/dekont', async (req, res) => {
+  try {
+    const userName = String(req.header('x-user') ?? '').trim()
+    if (!userName) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+
+    const bankName = String(req.query.bankName ?? '').trim()
+    const parsedDate = parseQueryDate(req.query.date)
+    if (!parsedDate.ok || !parsedDate.date) {
+      res.status(400).send(parsedDate.ok ? 'Tarih zorunlu' : parsedDate.error)
+      return
+    }
+    const amount = toNumberFlexible(req.query.amount) ?? 0
+    if (!bankName || !Number.isFinite(amount) || amount <= 0) {
+      res.status(400).send('bankName, date, amount zorunlu')
+      return
+    }
+
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const active = await requireActiveUser(pool, userName)
+    if (!active.active) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+
+    const matchers = manimBankMatchers(bankName)
+    if (matchers.length === 0) {
+      res.json({ ok: true, match: null, candidates: [] })
+      return
+    }
+
+    const accounts = await loadManimAccounts()
+    const matchedAccounts = accounts.filter((a) => {
+      const lab = normalizeManimMatch(a.label)
+      return matchers.some((m) => lab.includes(m))
+    })
+
+    if (matchedAccounts.length === 0) {
+      res.json({ ok: true, match: null, candidates: [], message: 'Manim hesap bulunamadı' })
+      return
+    }
+
+    const targetDay = manimIsoDay(parsedDate.date)
+    const targets = new Set([targetDay])
+    const dPrev = new Date(parsedDate.date)
+    dPrev.setUTCDate(dPrev.getUTCDate() - 1)
+    targets.add(manimIsoDay(dPrev))
+    const dNext = new Date(parsedDate.date)
+    dNext.setUTCDate(dNext.getUTCDate() + 1)
+    targets.add(manimIsoDay(dNext))
+
+    const scored: Array<ManimReceiptCandidate & { dayDiff: number; amountDiff: number; directionPenalty: number; timeScore: number }> = []
+
+    for (const acc of matchedAccounts) {
+      const receipts = await loadManimReceipts(acc.id)
+      for (const r of receipts) {
+        const dt = new Date(r.receiptDate)
+        if (Number.isNaN(dt.getTime())) continue
+        const day = manimIsoDay(dt)
+        if (!targets.has(day)) continue
+        const amountDiff = manimAbsDiff(r.amount, amount)
+        if (amountDiff > 0.01) continue
+        const dayDiff = day === targetDay ? 0 : 1
+        const directionPenalty = (r.direction ?? '').toLowerCase() === 'in' ? 0 : 1
+        scored.push({
+          ...r,
+          bankAccountId: r.bankAccountId ?? acc.id,
+          bankAccountLabel: r.bankAccountLabel ?? acc.label,
+          dayDiff,
+          amountDiff,
+          directionPenalty,
+          timeScore: dt.getTime(),
+        })
+      }
+    }
+
+    scored.sort((a, b) => {
+      if (a.dayDiff !== b.dayDiff) return a.dayDiff - b.dayDiff
+      if (a.amountDiff !== b.amountDiff) return a.amountDiff - b.amountDiff
+      if (a.directionPenalty !== b.directionPenalty) return a.directionPenalty - b.directionPenalty
+      return b.timeScore - a.timeScore
+    })
+
+    const candidates = scored.slice(0, 10).map((x) => ({
+      receiptNo: x.receiptNo,
+      receiptDate: x.receiptDate,
+      amount: x.amount,
+      direction: x.direction,
+      explanation: x.explanation,
+      bankAccountId: x.bankAccountId,
+      bankAccountLabel: x.bankAccountLabel,
+    }))
+
+    res.json({
+      ok: true,
+      match: candidates[0] ?? null,
+      candidates,
+    })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
 
 app.get('/api/positions', async (req, res) => {
   try {

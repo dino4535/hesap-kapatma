@@ -365,3 +365,31 @@ export async function deleteDataByImportFile(args: {
   }
   return (await res.json()) as { ok: boolean; deleted?: Record<string, unknown> }
 }
+
+export interface ManimDekontCandidate {
+  receiptNo: string
+  receiptDate: string
+  amount: number
+  direction?: string
+  explanation?: string
+  bankAccountId?: string
+  bankAccountLabel?: string
+}
+
+export async function findManimDekont(args: {
+  userName: string
+  bankName: string
+  date: string
+  amount: number
+}): Promise<{ ok: boolean; match: ManimDekontCandidate | null; candidates: ManimDekontCandidate[]; message?: string }> {
+  const qs = new URLSearchParams()
+  qs.set('bankName', args.bankName)
+  qs.set('date', args.date)
+  qs.set('amount', String(args.amount))
+  const res = await fetch(`/api/manim/dekont?${qs.toString()}`, { headers: { 'x-user': args.userName } })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, match: null, candidates: [], message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; match: ManimDekontCandidate | null; candidates: ManimDekontCandidate[]; message?: string }
+}

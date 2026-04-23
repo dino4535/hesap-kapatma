@@ -4,6 +4,7 @@ import {
   createUserAsAdmin,
   deleteDataByDateDepot,
   deleteDataByImportFile,
+  findManimDekont,
   fetchImportFiles,
   fetchMutabakat,
   fetchPositionData,
@@ -261,6 +262,7 @@ export default function App() {
   const [bankName, setBankName] = useState('')
   const [yatanTutar, setYatanTutar] = useState<number>(0)
   const [manimDekontNo, setManimDekontNo] = useState('')
+  const [autoDekontNo, setAutoDekontNo] = useState<string | null>(null)
   const [mutabakatAdjustments, setMutabakatAdjustments] = useState<MutabakatAdjustment[]>([])
   const [mutabakatStep, setMutabakatStep] = useState<0 | 1 | 2>(0)
   const [mutabakatCorrectionsTab, setMutabakatCorrectionsTab] = useState<'faturalar' | 'tahsilatlar'>('faturalar')
@@ -877,6 +879,32 @@ export default function App() {
     mutabakatRecord.positionCode === selectedPosition
       ? mutabakatRecord
       : null
+
+  useEffect(() => {
+    if (!currentUser) return
+    if (!bankEnabled) return
+    if (mutabakatSaved?.status === 'COMPLETED') return
+
+    const bank = bankName.trim()
+    const date = selectedDataset.date
+    const amount = Number(yatanTutar) || 0
+    if (!bank || !date || amount <= 0) return
+
+    const handle = window.setTimeout(() => {
+      findManimDekont({ userName: currentUser.userName, bankName: bank, date, amount })
+        .then((r) => {
+          if (!r.ok) return
+          const receiptNo = (r.match?.receiptNo ?? '').trim()
+          if (!receiptNo) return
+          if (manimDekontNo.trim() && manimDekontNo.trim() !== (autoDekontNo ?? '')) return
+          setManimDekontNo(receiptNo)
+          setAutoDekontNo(receiptNo)
+        })
+        .catch(() => {})
+    }, 350)
+
+    return () => window.clearTimeout(handle)
+  }, [currentUser, bankEnabled, mutabakatSaved?.status, bankName, selectedDataset.date, yatanTutar, manimDekontNo, autoDekontNo])
 
   const addMutabakatAdjustment = () => {
     const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
