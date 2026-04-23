@@ -370,6 +370,8 @@ export interface ManimDekontCandidate {
   receiptNo: string
   receiptDate: string
   amount: number
+  amountDiff: number
+  dayDiff: number
   direction?: string
   explanation?: string
   bankAccountId?: string

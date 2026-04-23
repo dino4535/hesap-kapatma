@@ -17,6 +17,7 @@ import {
   savePositionRepresentative,
   saveInvoiceAllocationsSql,
   savePaymentAllocationsSql,
+  type ManimDekontCandidate,
   type MutabakatAdjustment,
   type MutabakatMode,
   type MutabakatRecord,
@@ -263,6 +264,7 @@ export default function App() {
   const [yatanTutar, setYatanTutar] = useState<number>(0)
   const [manimDekontNo, setManimDekontNo] = useState('')
   const [autoDekontNo, setAutoDekontNo] = useState<string | null>(null)
+  const [manimDekontCandidates, setManimDekontCandidates] = useState<ManimDekontCandidate[]>([])
   const [mutabakatAdjustments, setMutabakatAdjustments] = useState<MutabakatAdjustment[]>([])
   const [mutabakatStep, setMutabakatStep] = useState<0 | 1 | 2>(0)
   const [mutabakatCorrectionsTab, setMutabakatCorrectionsTab] = useState<'faturalar' | 'tahsilatlar'>('faturalar')
@@ -891,14 +893,20 @@ export default function App() {
     if (!bank || !date || amount <= 0) return
 
     const handle = window.setTimeout(() => {
+      setManimDekontCandidates([])
       findManimDekont({ userName: currentUser.userName, bankName: bank, date, amount })
         .then((r) => {
           if (!r.ok) return
           const receiptNo = (r.match?.receiptNo ?? '').trim()
-          if (!receiptNo) return
-          if (manimDekontNo.trim() && manimDekontNo.trim() !== (autoDekontNo ?? '')) return
-          setManimDekontNo(receiptNo)
-          setAutoDekontNo(receiptNo)
+          if (receiptNo) {
+            if (manimDekontNo.trim() && manimDekontNo.trim() !== (autoDekontNo ?? '')) return
+            setManimDekontNo(receiptNo)
+            setAutoDekontNo(receiptNo)
+            setManimDekontCandidates([])
+            return
+          }
+          const list = Array.isArray(r.candidates) ? r.candidates : []
+          setManimDekontCandidates(list)
         })
         .catch(() => {})
     }, 350)
@@ -2094,8 +2102,47 @@ export default function App() {
                           </div>
                           <div className="mutabakat-field">
                             <label>Manim Dekont No</label>
-                            <input value={manimDekontNo} disabled={mutabakatSaved?.status === 'COMPLETED'} onChange={(e) => setManimDekontNo(e.target.value)} />
+                            <input
+                              value={manimDekontNo}
+                              disabled={mutabakatSaved?.status === 'COMPLETED'}
+                              onChange={(e) => {
+                                setManimDekontNo(e.target.value)
+                                setAutoDekontNo(null)
+                              }}
+                            />
                           </div>
+                          {manimDekontCandidates.length > 0 ? (
+                            <div className="mutabakat-field">
+                              <label>Yakın Tutarlar</label>
+                              <select
+                                value=""
+                                disabled={mutabakatSaved?.status === 'COMPLETED'}
+                                onChange={(e) => {
+                                  const receiptNo = e.target.value
+                                  if (!receiptNo) return
+                                  setManimDekontNo(receiptNo)
+                                  setAutoDekontNo(receiptNo)
+                                  setManimDekontCandidates([])
+                                }}
+                              >
+                                <option value="">Seçiniz</option>
+                                {manimDekontCandidates.map((c) => (
+                                  <option key={`${c.receiptNo}|${c.receiptDate}`} value={c.receiptNo}>
+                                    {[
+                                      c.receiptNo,
+                                      formatMoney(c.amount),
+                                      `fark ${formatMoney(c.amountDiff)}`,
+                                      c.dayDiff === 0 ? 'aynı gün' : '+/-1 gün',
+                                      (c.bankAccountLabel ?? '').trim(),
+                                      (c.explanation ?? '').trim(),
+                                    ]
+                                      .filter((x) => String(x ?? '').trim())
+                                      .join(' • ')}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ) : null}
                         </div>
                       </>
                     ) : null}

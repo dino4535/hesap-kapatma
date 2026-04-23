@@ -2118,7 +2118,6 @@ app.get('/api/manim/dekont', async (req, res) => {
         const day = manimIsoDay(dt)
         if (!targets.has(day)) continue
         const amountDiff = manimAbsDiff(r.amount, amount)
-        if (amountDiff > 0.01) continue
         const dayDiff = day === targetDay ? 0 : 1
         const directionPenalty = (r.direction ?? '').toLowerCase() === 'in' ? 0 : 1
         scored.push({
@@ -2134,16 +2133,25 @@ app.get('/api/manim/dekont', async (req, res) => {
     }
 
     scored.sort((a, b) => {
-      if (a.dayDiff !== b.dayDiff) return a.dayDiff - b.dayDiff
       if (a.amountDiff !== b.amountDiff) return a.amountDiff - b.amountDiff
+      if (a.dayDiff !== b.dayDiff) return a.dayDiff - b.dayDiff
       if (a.directionPenalty !== b.directionPenalty) return a.directionPenalty - b.directionPenalty
       return b.timeScore - a.timeScore
     })
 
-    const candidates = scored.slice(0, 10).map((x) => ({
+    const top = scored.slice(0, 10)
+
+    const exact =
+      top.find((x) => x.amountDiff <= 0.01 && x.dayDiff === 0) ??
+      top.find((x) => x.amountDiff <= 0.01) ??
+      null
+
+    const candidates = top.map((x) => ({
       receiptNo: x.receiptNo,
       receiptDate: x.receiptDate,
       amount: x.amount,
+      amountDiff: x.amountDiff,
+      dayDiff: x.dayDiff,
       direction: x.direction,
       explanation: x.explanation,
       bankAccountId: x.bankAccountId,
@@ -2152,7 +2160,19 @@ app.get('/api/manim/dekont', async (req, res) => {
 
     res.json({
       ok: true,
-      match: candidates[0] ?? null,
+      match: exact
+        ? {
+            receiptNo: exact.receiptNo,
+            receiptDate: exact.receiptDate,
+            amount: exact.amount,
+            amountDiff: exact.amountDiff,
+            dayDiff: exact.dayDiff,
+            direction: exact.direction,
+            explanation: exact.explanation,
+            bankAccountId: exact.bankAccountId,
+            bankAccountLabel: exact.bankAccountLabel,
+          }
+        : null,
       candidates,
     })
   } catch (e) {
