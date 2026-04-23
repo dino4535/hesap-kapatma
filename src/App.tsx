@@ -890,11 +890,12 @@ export default function App() {
     const bank = bankName.trim()
     const date = selectedDataset.date
     const amount = Number(yatanTutar) || 0
-    if (!bank || !date || amount <= 0) return
+    const lookupAmount = amount > 0 ? amount : !cashEnabled ? torbaTutari : 0
+    if (!bank || !date || lookupAmount <= 0) return
 
     const handle = window.setTimeout(() => {
       setManimDekontCandidates([])
-      findManimDekont({ userName: currentUser.userName, bankName: bank, date, amount })
+      findManimDekont({ userName: currentUser.userName, bankName: bank, date, amount: lookupAmount })
         .then((r) => {
           if (!r.ok) return
           const receiptNo = (r.match?.receiptNo ?? '').trim()
@@ -902,6 +903,7 @@ export default function App() {
             if (manimDekontNo.trim() && manimDekontNo.trim() !== (autoDekontNo ?? '')) return
             setManimDekontNo(receiptNo)
             setAutoDekontNo(receiptNo)
+            if ((Number(yatanTutar) || 0) <= 0 && !cashEnabled) setYatanTutar(Number(r.match?.amount) || lookupAmount)
             setManimDekontCandidates([])
             return
           }
@@ -912,7 +914,7 @@ export default function App() {
     }, 350)
 
     return () => window.clearTimeout(handle)
-  }, [currentUser, bankEnabled, mutabakatSaved?.status, bankName, selectedDataset.date, yatanTutar, manimDekontNo, autoDekontNo])
+  }, [currentUser, bankEnabled, mutabakatSaved?.status, bankName, selectedDataset.date, yatanTutar, manimDekontNo, autoDekontNo, cashEnabled, torbaTutari])
 
   const addMutabakatAdjustment = () => {
     const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -2120,6 +2122,8 @@ export default function App() {
                                 onChange={(e) => {
                                   const receiptNo = e.target.value
                                   if (!receiptNo) return
+                                  const selected = manimDekontCandidates.find((x) => x.receiptNo === receiptNo) ?? null
+                                  if (selected) setYatanTutar(Number(selected.amount) || 0)
                                   setManimDekontNo(receiptNo)
                                   setAutoDekontNo(receiptNo)
                                   setManimDekontCandidates([])
