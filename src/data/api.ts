@@ -165,6 +165,8 @@ export interface MutabakatRecord {
   bankName?: string
   bankDepositAmount?: number
   dekontNo?: string
+  bankExplanation?: string
+  bankReceiptDateTime?: string
   adjustments?: MutabakatAdjustment[]
   status: 'DRAFT' | 'COMPLETED'
   updatedAt?: string
@@ -202,6 +204,8 @@ export async function saveMutabakat(args: {
     bankName?: string
     bankDepositAmount?: number
     dekontNo?: string
+    bankExplanation?: string
+    bankReceiptDateTime?: string
     cashJson?: unknown
     adjustments?: MutabakatAdjustment[]
   }

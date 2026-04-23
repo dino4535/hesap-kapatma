@@ -771,6 +771,15 @@ BEGIN
   );
 END
 
+IF COL_LENGTH('dbo.Mutabakat', 'BankReceiptDateTime') IS NULL
+BEGIN
+  ALTER TABLE dbo.Mutabakat ADD BankReceiptDateTime DATETIME2(0) NULL;
+END
+IF COL_LENGTH('dbo.Mutabakat', 'BankExplanation') IS NULL
+BEGIN
+  ALTER TABLE dbo.Mutabakat ADD BankExplanation NVARCHAR(512) NULL;
+END
+
 IF OBJECT_ID('dbo.PositionRepresentativeMap', 'U') IS NULL
 BEGIN
   CREATE TABLE dbo.PositionRepresentativeMap (
@@ -2777,6 +2786,8 @@ SELECT TOP 1
   BankName,
   BankDepositAmount,
   DekontNo,
+  BankExplanation,
+  BankReceiptDateTime,
   AdjustmentsJson,
   Status,
   UpdatedBy,
@@ -2804,6 +2815,8 @@ WHERE SourceFileDate = @SourceFileDate
           BankName: string | null
           BankDepositAmount: unknown
           DekontNo: string | null
+          BankExplanation: string | null
+          BankReceiptDateTime: Date | null
           AdjustmentsJson: string | null
           Status: string
           UpdatedBy: string | null
@@ -2850,6 +2863,8 @@ WHERE SourceFileDate = @SourceFileDate
         bankName: row.BankName ?? undefined,
         bankDepositAmount: row.BankDepositAmount != null ? Number(row.BankDepositAmount) : undefined,
         dekontNo: row.DekontNo ?? undefined,
+        bankExplanation: row.BankExplanation ?? undefined,
+        bankReceiptDateTime: row.BankReceiptDateTime ? new Date(row.BankReceiptDateTime).toISOString() : undefined,
         adjustments: Array.isArray(adjustments) ? adjustments : undefined,
         status: row.Status,
         updatedBy: row.UpdatedBy ?? undefined,
@@ -2905,6 +2920,8 @@ app.post('/api/mutabakat', async (req, res) => {
     const bankName = String(req.body?.bankName ?? '').trim() || null
     const bankDepositAmount = toNumberFlexible(req.body?.bankDepositAmount) ?? toNumberOrUndef(req.body?.bankDepositAmount) ?? null
     const dekontNo = String(req.body?.dekontNo ?? '').trim() || null
+    const bankExplanation = String(req.body?.bankExplanation ?? '').trim() || null
+    const bankReceiptDateTime = safeDate(typeof req.body?.bankReceiptDateTime === 'string' ? req.body.bankReceiptDateTime : '')
 
     const pool = await getPool()
     await ensureSchema(pool)
@@ -2948,6 +2965,8 @@ WHERE SourceFileDate = @SourceFileDate
       .input('BankName', mssql.NVarChar(64), bankName)
       .input('BankDepositAmount', mssql.Decimal(18, 4), bankDepositAmount)
       .input('DekontNo', mssql.NVarChar(64), dekontNo)
+      .input('BankExplanation', mssql.NVarChar(512), bankExplanation)
+      .input('BankReceiptDateTime', mssql.DateTime2(0), bankReceiptDateTime)
       .input('AdjustmentsJson', mssql.NVarChar(mssql.MAX), adjustmentsJson)
       .input('UserName', mssql.NVarChar(64), userName)
       .query(
@@ -2966,6 +2985,8 @@ USING (SELECT
   @BankName AS BankName,
   @BankDepositAmount AS BankDepositAmount,
   @DekontNo AS DekontNo,
+  @BankExplanation AS BankExplanation,
+  @BankReceiptDateTime AS BankReceiptDateTime,
   @AdjustmentsJson AS AdjustmentsJson,
   @UserName AS UserName
 ) AS s
@@ -2981,6 +3002,8 @@ WHEN MATCHED THEN
     BankName = s.BankName,
     BankDepositAmount = s.BankDepositAmount,
     DekontNo = s.DekontNo,
+    BankExplanation = s.BankExplanation,
+    BankReceiptDateTime = s.BankReceiptDateTime,
     AdjustmentsJson = s.AdjustmentsJson,
     UpdatedBy = s.UserName,
     UpdatedAt = SYSUTCDATETIME()
@@ -2988,13 +3011,13 @@ WHEN NOT MATCHED THEN
   INSERT (
     SourceFileDate, DepotCode, PositionCode, Mode,
     TorbaTutari, EnteredAmount, AdjustmentAmount, DiffAmount,
-    CashJson, BankName, BankDepositAmount, DekontNo, AdjustmentsJson,
+    CashJson, BankName, BankDepositAmount, DekontNo, BankExplanation, BankReceiptDateTime, AdjustmentsJson,
     CreatedBy, UpdatedBy
   )
   VALUES (
     s.SourceFileDate, s.DepotCode, s.PositionCode, s.Mode,
     s.TorbaTutari, s.EnteredAmount, s.AdjustmentAmount, s.DiffAmount,
-    s.CashJson, s.BankName, s.BankDepositAmount, s.DekontNo, s.AdjustmentsJson,
+    s.CashJson, s.BankName, s.BankDepositAmount, s.DekontNo, s.BankExplanation, s.BankReceiptDateTime, s.AdjustmentsJson,
     s.UserName, s.UserName
   );
 `,
@@ -3020,6 +3043,8 @@ SELECT TOP 1
   BankName,
   BankDepositAmount,
   DekontNo,
+  BankExplanation,
+  BankReceiptDateTime,
   AdjustmentsJson,
   Status,
   UpdatedBy,
@@ -3066,6 +3091,8 @@ WHERE SourceFileDate = @SourceFileDate
         bankName: row.BankName ?? undefined,
         bankDepositAmount: row.BankDepositAmount != null ? Number(row.BankDepositAmount) : undefined,
         dekontNo: row.DekontNo ?? undefined,
+        bankExplanation: row.BankExplanation ?? undefined,
+        bankReceiptDateTime: row.BankReceiptDateTime ? new Date(row.BankReceiptDateTime).toISOString() : undefined,
         adjustments: Array.isArray(outAdj) ? outAdj : undefined,
         status: String(row.Status),
         updatedBy: row.UpdatedBy ?? undefined,
@@ -3177,6 +3204,8 @@ SELECT TOP 1
   BankName,
   BankDepositAmount,
   DekontNo,
+  BankExplanation,
+  BankReceiptDateTime,
   AdjustmentsJson,
   Status,
   UpdatedBy,
@@ -3223,6 +3252,8 @@ WHERE SourceFileDate = @SourceFileDate
         bankName: rrow.BankName ?? undefined,
         bankDepositAmount: rrow.BankDepositAmount != null ? Number(rrow.BankDepositAmount) : undefined,
         dekontNo: rrow.DekontNo ?? undefined,
+        bankExplanation: rrow.BankExplanation ?? undefined,
+        bankReceiptDateTime: rrow.BankReceiptDateTime ? new Date(rrow.BankReceiptDateTime).toISOString() : undefined,
         adjustments: Array.isArray(outAdj) ? outAdj : undefined,
         status: String(rrow.Status),
         updatedBy: rrow.UpdatedBy ?? undefined,

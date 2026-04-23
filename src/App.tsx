@@ -266,6 +266,8 @@ export default function App() {
   const [yatanTutar, setYatanTutar] = useState<number>(0)
   const [manimDekontNo, setManimDekontNo] = useState('')
   const [autoDekontNo, setAutoDekontNo] = useState<string | null>(null)
+  const [bankReceiptDateTime, setBankReceiptDateTime] = useState<string>('')
+  const [bankExplanation, setBankExplanation] = useState<string>('')
   const [manimDekontCandidates, setManimDekontCandidates] = useState<ManimDekontCandidate[]>([])
   const [manimReceipts, setManimReceipts] = useState<ManimReceiptRow[]>([])
   const [manimReceiptSearch, setManimReceiptSearch] = useState('')
@@ -840,6 +842,8 @@ export default function App() {
       setBankName(mutabakatRecord.bankName ?? '')
       setYatanTutar(mutabakatRecord.bankDepositAmount ?? 0)
       setManimDekontNo(mutabakatRecord.dekontNo ?? '')
+      setBankReceiptDateTime(mutabakatRecord.bankReceiptDateTime ?? '')
+      setBankExplanation(mutabakatRecord.bankExplanation ?? '')
       setMutabakatAdjustments(mutabakatRecord.adjustments ?? [])
       return
     }
@@ -849,6 +853,8 @@ export default function App() {
     setBankName('')
     setYatanTutar(0)
     setManimDekontNo('')
+    setBankReceiptDateTime('')
+    setBankExplanation('')
     setMutabakatAdjustments([])
   }
 
@@ -910,6 +916,8 @@ export default function App() {
             if (manimDekontNo.trim() && manimDekontNo.trim() !== (autoDekontNo ?? '')) return
             setManimDekontNo(receiptNo)
             setAutoDekontNo(receiptNo)
+            setBankReceiptDateTime(String(r.match?.receiptDate ?? '').trim())
+            setBankExplanation(String(r.match?.explanation ?? '').trim())
             if ((Number(yatanTutar) || 0) <= 0 && !cashEnabled) setYatanTutar(Number(r.match?.amount) || lookupAmount)
             setManimDekontCandidates([])
             return
@@ -1018,6 +1026,8 @@ export default function App() {
         bankName: bankEnabled ? bankName : undefined,
         bankDepositAmount: bankEnabled ? (Number(yatanTutar) || 0) : undefined,
         dekontNo: bankEnabled ? manimDekontNo : undefined,
+        bankExplanation: bankEnabled ? bankExplanation : undefined,
+        bankReceiptDateTime: bankEnabled ? bankReceiptDateTime : undefined,
         adjustments: cleanAdjustments,
       },
     })
@@ -1155,6 +1165,8 @@ export default function App() {
     <div class="k">Banka</div><div class="v">${escapeHtml((rec.bankName ?? '').trim() || '-')}</div>
     <div class="k">Yatan Tutar</div><div class="v">${escapeHtml(money(rec.bankDepositAmount ?? 0))}</div>
     <div class="k">Manim Dekont No</div><div class="v">${escapeHtml((rec.dekontNo ?? '').trim() || '-')}</div>
+    <div class="k">Ödeme Açıklaması</div><div class="v">${escapeHtml((rec.bankExplanation ?? '').trim() || '-')}</div>
+    <div class="k">İşlem Tarihi</div><div class="v">${escapeHtml(formatDateTimeTr((rec.bankReceiptDateTime ?? '').trim() || '-'))}</div>
   </div>
 </div>
 `
@@ -2167,6 +2179,14 @@ export default function App() {
                               }}
                             />
                           </div>
+                          <div className="mutabakat-field">
+                            <label>Ödeme Açıklaması</label>
+                            <input value={bankExplanation} readOnly />
+                          </div>
+                          <div className="mutabakat-field">
+                            <label>İşlem Tarihi</label>
+                            <input value={bankReceiptDateTime ? formatDateTimeTr(bankReceiptDateTime) : ''} readOnly />
+                          </div>
                           {manimDekontCandidates.length > 0 ? (
                             <div className="mutabakat-field">
                               <label>Yakın Tutarlar</label>
@@ -2177,7 +2197,11 @@ export default function App() {
                                   const receiptNo = e.target.value
                                   if (!receiptNo) return
                                   const selected = manimDekontCandidates.find((x) => x.receiptNo === receiptNo) ?? null
-                                  if (selected) setYatanTutar(Number(selected.amount) || 0)
+                                  if (selected) {
+                                    setYatanTutar(Number(selected.amount) || 0)
+                                    setBankReceiptDateTime(String(selected.receiptDate ?? '').trim())
+                                    setBankExplanation(String(selected.explanation ?? '').trim())
+                                  }
                                   setManimDekontNo(receiptNo)
                                   setAutoDekontNo(receiptNo)
                                   setManimDekontCandidates([])
@@ -2235,7 +2259,7 @@ export default function App() {
                             ) : (
                               filteredManimReceipts.slice(0, 50).map((r) => (
                                 <tr key={`${r.receiptNo}|${r.receiptDate}|${r.amount}`}>
-                                  <td>{formatDateTr(r.receiptDate)}</td>
+                                  <td>{formatDateTimeTr(r.receiptDate)}</td>
                                   <td>{r.receiptNo}</td>
                                   <td>{formatMoney(Number(r.amount) || 0)}</td>
                                   <td>{(r.bankAccountLabel ?? '').trim() || '-'}</td>
@@ -2249,6 +2273,8 @@ export default function App() {
                                         setYatanTutar(Number(r.amount) || 0)
                                         setManimDekontNo(String(r.receiptNo ?? '').trim())
                                         setAutoDekontNo(String(r.receiptNo ?? '').trim())
+                                        setBankReceiptDateTime(String(r.receiptDate ?? '').trim())
+                                        setBankExplanation(String(r.explanation ?? '').trim())
                                         setManimDekontCandidates([])
                                       }}
                                     >
