@@ -897,7 +897,10 @@ export default function App() {
       setManimDekontCandidates([])
       findManimDekont({ userName: currentUser.userName, bankName: bank, date, amount: lookupAmount })
         .then((r) => {
-          if (!r.ok) return
+          if (!r.ok) {
+            setStatus({ type: 'error', message: r.message || 'Manim dekont sorgusu başarısız' })
+            return
+          }
           const receiptNo = (r.match?.receiptNo ?? '').trim()
           if (receiptNo) {
             if (manimDekontNo.trim() && manimDekontNo.trim() !== (autoDekontNo ?? '')) return
@@ -910,7 +913,10 @@ export default function App() {
           const list = Array.isArray(r.candidates) ? r.candidates : []
           setManimDekontCandidates(list)
         })
-        .catch(() => {})
+        .catch((e) => {
+          const msg = e instanceof Error ? e.message : 'Manim dekont sorgusu başarısız'
+          setStatus({ type: 'error', message: msg })
+        })
     }, 350)
 
     return () => window.clearTimeout(handle)

@@ -19,6 +19,8 @@ const env = {
   port: process.env.PORT ? Number(process.env.PORT) : 3001,
   adminSecret: process.env.ADMIN_SECRET ?? '',
   manimDir: process.env.MANIM_DIR ?? '',
+  manimBaseUrl: process.env.MANIM_BASE_URL ?? '',
+  manimToken: process.env.MANIM_TOKEN ?? '',
 }
 
 type SalesFileMeta = { fileName: string; fileDate?: string; depotCode?: string }
@@ -273,6 +275,101 @@ async function loadManimReceipts(accountId: string): Promise<ManimReceiptCandida
   } catch {
     return []
   }
+}
+
+function hasManimRemoteConfig() {
+  return !!env.manimBaseUrl.trim() && !!env.manimToken.trim()
+}
+
+function manimRemoteHeaders() {
+  return {
+    Authorization: `Bearer ${env.manimToken}`,
+    'Content-Type': 'application/json',
+  } as const
+}
+
+function manimEncodeQuery(obj: unknown) {
+  return encodeURIComponent(JSON.stringify(obj))
+}
+
+async function manimFetchJson<T>(url: string): Promise<T> {
+  const res = await fetch(url, { headers: manimRemoteHeaders() })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(text || `Manim HTTP ${res.status}`)
+  }
+  return (await res.json()) as T
+}
+
+type ManimRemoteAccount = { _id?: string; label?: string }
+
+async function loadManimAccountsRemote(): Promise<ManimAccount[]> {
+  if (!hasManimRemoteConfig()) return []
+  const base = env.manimBaseUrl.replace(/\/+$/, '')
+  const url = `${base}/bankAccount/where/${manimEncodeQuery({})}`
+  const list = await manimFetchJson<ManimRemoteAccount[]>(url)
+  return (Array.isArray(list) ? list : [])
+    .map((a) => ({ id: String(a?._id ?? '').trim(), label: String(a?.label ?? '').trim() }))
+    .filter((x) => x.id && x.label)
+}
+
+type ManimReceiptRaw = {
+  _id?: string
+  receiptNo?: unknown
+  receiptDate?: unknown
+  receiptAmount?: unknown
+  direction?: unknown
+  explanation?: unknown
+  bankAccount?: unknown
+}
+
+const manimReceiptCache = new Map<string, { expiresAt: number; receipts: ManimReceiptCandidate[] }>()
+
+async function loadManimReceiptsRemote(args: {
+  accountId: string
+  startIso: string
+  endIso: string
+}): Promise<ManimReceiptCandidate[]> {
+  if (!hasManimRemoteConfig()) return []
+
+  const cacheKey = `${args.accountId}|${args.startIso}|${args.endIso}`
+  const cached = manimReceiptCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) return cached.receipts
+
+  const queryObj = {
+    query: {
+      bankAccount: args.accountId,
+      receiptDate: { $gte: args.startIso, $lte: args.endIso },
+    },
+    options: { limit: 1000, skip: 0, sort: { receiptDate: -1 } },
+  }
+
+  const base = env.manimBaseUrl.replace(/\/+$/, '')
+  const url = `${base}/receipt/where/${manimEncodeQuery(queryObj)}`
+  const rows = await manimFetchJson<ManimReceiptRaw[]>(url)
+
+  const receipts = (Array.isArray(rows) ? rows : [])
+    .map((obj) => {
+      const receiptNo = String(obj?.receiptNo ?? '').trim()
+      const receiptDate = String(obj?.receiptDate ?? '').trim()
+      const amount = typeof obj?.receiptAmount === 'number' ? (obj.receiptAmount as number) : toNumberFlexible(obj?.receiptAmount) ?? 0
+      const direction = typeof obj?.direction === 'string' ? obj.direction : undefined
+      const explanation = typeof obj?.explanation === 'string' ? obj.explanation : undefined
+      if (!receiptNo || !receiptDate || !Number.isFinite(amount)) return null
+      const candidate: ManimReceiptCandidate = {
+        receiptNo,
+        receiptDate,
+        amount,
+        ...(direction ? { direction } : {}),
+        ...(explanation ? { explanation } : {}),
+        bankAccountId: args.accountId,
+      }
+      return candidate
+    })
+    .filter((x): x is ManimReceiptCandidate => !!x)
+
+  manimReceiptCache.set(cacheKey, { expiresAt: Date.now() + 2 * 60 * 1000, receipts })
+  return receipts
 }
 
 let poolPromise: Promise<mssql.ConnectionPool> | null = null
@@ -2088,7 +2185,7 @@ app.get('/api/manim/dekont', async (req, res) => {
       return
     }
 
-    const accounts = await loadManimAccounts()
+    const accounts = hasManimRemoteConfig() ? await loadManimAccountsRemote() : await loadManimAccounts()
     const matchedAccounts = accounts.filter((a) => {
       const lab = normalizeManimMatch(a.label)
       return matchers.some((m) => lab.includes(m))
@@ -2108,10 +2205,15 @@ app.get('/api/manim/dekont', async (req, res) => {
     dNext.setUTCDate(dNext.getUTCDate() + 1)
     targets.add(manimIsoDay(dNext))
 
+    const startIso = `${manimIsoDay(dPrev)}T00:00:00.000Z`
+    const endIso = `${manimIsoDay(dNext)}T23:59:59.999Z`
+
     const scored: Array<ManimReceiptCandidate & { dayDiff: number; amountDiff: number; directionPenalty: number; timeScore: number }> = []
 
     for (const acc of matchedAccounts) {
-      const receipts = await loadManimReceipts(acc.id)
+      const receipts = hasManimRemoteConfig()
+        ? await loadManimReceiptsRemote({ accountId: acc.id, startIso, endIso })
+        : await loadManimReceipts(acc.id)
       for (const r of receipts) {
         const dt = new Date(r.receiptDate)
         if (Number.isNaN(dt.getTime())) continue
