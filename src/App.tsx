@@ -1161,12 +1161,16 @@ export default function App() {
         : `
 <div class="section">
   <div class="section-title">Bankaya Yatan Bilgileri</div>
-  <div class="kv">
-    <div class="k">Banka</div><div class="v">${escapeHtml((rec.bankName ?? '').trim() || '-')}</div>
-    <div class="k">Yatan Tutar</div><div class="v">${escapeHtml(money(rec.bankDepositAmount ?? 0))}</div>
-    <div class="k">Manim Dekont No</div><div class="v">${escapeHtml((rec.dekontNo ?? '').trim() || '-')}</div>
-    <div class="k">Ödeme Açıklaması</div><div class="v">${escapeHtml((rec.bankExplanation ?? '').trim() || '-')}</div>
-    <div class="k">İşlem Tarihi</div><div class="v">${escapeHtml(formatDateTimeTr((rec.bankReceiptDateTime ?? '').trim() || '-'))}</div>
+  <div class="kv2">
+    <div class="kv">
+      <div class="k">Banka</div><div class="v">${escapeHtml((rec.bankName ?? '').trim() || '-')}</div>
+      <div class="k">Yatan Tutar</div><div class="v">${escapeHtml(money(rec.bankDepositAmount ?? 0))}</div>
+      <div class="k">Manim Dekont No</div><div class="v">${escapeHtml((rec.dekontNo ?? '').trim() || '-')}</div>
+    </div>
+    <div class="kv">
+      <div class="k">İşlem Tarihi</div><div class="v">${escapeHtml(formatDateTimeTr((rec.bankReceiptDateTime ?? '').trim() || '-'))}</div>
+      <div class="k">Ödeme Açıklaması</div><div class="v">${escapeHtml((rec.bankExplanation ?? '').trim() || '-')}</div>
+    </div>
   </div>
 </div>
 `
@@ -1210,6 +1214,7 @@ export default function App() {
     .section { margin-top: 7px; }
     .section-title { font-size: 10px; font-weight: 700; margin-bottom: 4px; }
     .kv { display: grid; grid-template-columns: 100px 1fr; gap: 3px 8px; font-size: 9px; }
+    .kv2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .kv .k { color: #718096; }
     .kv .v { font-weight: 700; }
     table { width: 100%; border-collapse: collapse; font-size: 9px; }
