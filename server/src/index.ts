@@ -2202,15 +2202,9 @@ app.get('/api/manim/dekont', async (req, res) => {
 
     const targetDay = manimIsoDay(parsedDate.date)
     const targets = new Set([targetDay])
-    const dPrev = new Date(parsedDate.date)
-    dPrev.setUTCDate(dPrev.getUTCDate() - 1)
-    targets.add(manimIsoDay(dPrev))
-    const dNext = new Date(parsedDate.date)
-    dNext.setUTCDate(dNext.getUTCDate() + 1)
-    targets.add(manimIsoDay(dNext))
 
-    const startIso = `${manimIsoDay(dPrev)}T00:00:00.000Z`
-    const endIso = `${manimIsoDay(dNext)}T23:59:59.999Z`
+    const startIso = `${targetDay}T00:00:00.000Z`
+    const endIso = `${targetDay}T23:59:59.999Z`
 
     const scored: Array<ManimReceiptCandidate & { dayDiff: number; amountDiff: number; directionPenalty: number; timeScore: number }> = []
 
@@ -2224,7 +2218,7 @@ app.get('/api/manim/dekont', async (req, res) => {
         const day = manimIsoDay(dt)
         if (!targets.has(day)) continue
         const amountDiff = manimAbsDiff(r.amount, amount)
-        const dayDiff = day === targetDay ? 0 : 1
+        const dayDiff = 0
         const directionPenalty = (r.direction ?? '').toLowerCase() === 'in' ? 0 : 1
         scored.push({
           ...r,
@@ -2333,15 +2327,9 @@ app.get('/api/manim/receipts', async (req, res) => {
 
     const targetDay = manimIsoDay(parsedDate.date)
     const targets = new Set([targetDay])
-    const dPrev = new Date(parsedDate.date)
-    dPrev.setUTCDate(dPrev.getUTCDate() - 1)
-    targets.add(manimIsoDay(dPrev))
-    const dNext = new Date(parsedDate.date)
-    dNext.setUTCDate(dNext.getUTCDate() + 1)
-    targets.add(manimIsoDay(dNext))
 
-    const startIso = `${manimIsoDay(dPrev)}T00:00:00.000Z`
-    const endIso = `${manimIsoDay(dNext)}T23:59:59.999Z`
+    const startIso = `${targetDay}T00:00:00.000Z`
+    const endIso = `${targetDay}T23:59:59.999Z`
 
     const dedupe = new Map<string, ManimReceiptCandidate & { timeScore: number }>()
 
