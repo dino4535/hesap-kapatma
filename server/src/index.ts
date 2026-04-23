@@ -6,7 +6,10 @@ import mssql from 'mssql'
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
+const moduleDir = path.dirname(fileURLToPath(import.meta.url))
+dotenv.config({ path: path.resolve(moduleDir, '../.env') })
 dotenv.config()
 
 const env = {
