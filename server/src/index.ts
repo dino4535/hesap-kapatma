@@ -263,8 +263,30 @@ function toNumberFlexible(v: unknown) {
   if (typeof v !== 'string') return undefined
   const s = v.trim()
   if (!s) return undefined
-  const cleaned = s.replaceAll('.', '').replace(',', '.')
-  const parsed = Number(cleaned)
+
+  // Normalize localized values like "1.234,56", "1,234.56", "1 234,56", "₺1.234,56"
+  const normalized = s
+    .replace(/[\s\u00A0\u202F]/g, '')
+    .replace(/[^\d,.\-+]/g, '')
+  if (!normalized) return undefined
+
+  const lastComma = normalized.lastIndexOf(',')
+  const lastDot = normalized.lastIndexOf('.')
+  let canonical = normalized
+  if (lastComma >= 0 && lastDot >= 0) {
+    if (lastComma > lastDot) {
+      canonical = normalized.replaceAll('.', '').replace(',', '.')
+    } else {
+      canonical = normalized.replaceAll(',', '')
+    }
+  } else if (lastComma >= 0) {
+    canonical = normalized.replaceAll('.', '').replace(',', '.')
+  } else if (lastDot >= 0) {
+    const dotCount = (normalized.match(/\./g) ?? []).length
+    canonical = dotCount > 1 ? normalized.replaceAll('.', '') : normalized
+  }
+
+  const parsed = Number(canonical)
   return Number.isFinite(parsed) ? parsed : undefined
 }
 
