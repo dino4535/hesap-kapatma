@@ -2,18 +2,10 @@ services:
   api:
     build:
       context: ./server
+    env_file:
+      - ./server/.env
     environment:
-      SQL_SERVER: ${SQL_SERVER}
-      SQL_USER: ${SQL_USER}
-      SQL_PASSWORD: ${SQL_PASSWORD}
-      SQL_DATABASE: ${SQL_DATABASE}
-      SQL_PORT: ${SQL_PORT}
-      SQL_TRUST_SERVER_CERT: ${SQL_TRUST_SERVER_CERT}
       PORT: 3001
-      ADMIN_SECRET: ${ADMIN_SECRET}
-      MANIM_BASE_URL: ${MANIM_BASE_URL}
-      MANIM_TOKEN: ${MANIM_TOKEN}
-      MANIM_DIR: ${MANIM_DIR}
     restart: unless-stopped
 
   web:
