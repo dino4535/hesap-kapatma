@@ -708,10 +708,9 @@ export default function App() {
     return {
       havaleTutari,
       nakitTutari,
-      nakitToplam: invoiceNakit + collectionVadeliTahsilat,
+      nakitToplam: invoiceNakit,
       vadeliTahsilatHavale: collectionVadeliTahsilatHavale,
       toplam: rutToplam,
-      iskonto: havaleIskonto,
       iskontoToplam: discountTotalAll,
       toplamTahsilat: paymentTotal,
       vadeliSatisTutari,
@@ -2709,12 +2708,6 @@ export default function App() {
                     <div>HAVALE</div>
                     <div>{formatMoney(summaryTotals.havaleTutari)}</div>
                   </div>
-                  {summaryTotals.iskonto > 0 ? (
-                    <div className="summary-row">
-                      <div>İSKONTO</div>
-                      <div>{formatMoney(summaryTotals.iskonto)}</div>
-                    </div>
-                  ) : null}
                   {summaryTotals.iskontoToplam > 0 ? (
                     <div className="summary-row">
                       <div>İSKONTO TOPLAMI</div>
