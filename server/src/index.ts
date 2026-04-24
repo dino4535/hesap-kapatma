@@ -46,6 +46,60 @@ const env = {
   importUploadDir: process.env.IMPORT_UPLOAD_DIR?.trim() || path.resolve(moduleDir, '../uploads/import-jobs'),
 }
 
+const manimEnvFileCandidates = [
+  path.resolve(moduleDir, '../.env'),
+  path.resolve(moduleDir, '../../.env'),
+  path.resolve(process.cwd(), '.env'),
+]
+
+function firstNonEmpty(values: Array<unknown>) {
+  for (const value of values) {
+    const text = String(value ?? '').trim()
+    if (text) return text
+  }
+  return ''
+}
+
+async function syncManimConfigFromEnvironment() {
+  const parsedFromFiles: Record<string, string> = {}
+  for (const candidate of manimEnvFileCandidates) {
+    try {
+      const raw = await fs.readFile(candidate, 'utf-8')
+      const parsed = dotenv.parse(raw)
+      for (const [k, v] of Object.entries(parsed)) {
+        if (!parsedFromFiles[k] && String(v ?? '').trim()) {
+          parsedFromFiles[k] = String(v ?? '')
+        }
+      }
+    } catch {
+      // ignore missing/unreadable env candidates
+    }
+  }
+
+  const nextBaseUrl = firstNonEmpty([process.env.MANIM_BASE_URL, parsedFromFiles.MANIM_BASE_URL, env.manimBaseUrl])
+  const nextAuthPath = firstNonEmpty([process.env.MANIM_AUTH_PATH, parsedFromFiles.MANIM_AUTH_PATH, env.manimAuthPath, '/auth/login'])
+  const nextUser = firstNonEmpty([
+    process.env.MANIM_USER,
+    process.env.MANIM_USERNAME,
+    process.env.MANIM_EMAIL,
+    parsedFromFiles.MANIM_USER,
+    parsedFromFiles.MANIM_USERNAME,
+    parsedFromFiles.MANIM_EMAIL,
+    env.manimUser,
+  ])
+  const nextPassword = firstNonEmpty([process.env.MANIM_PASSWORD, parsedFromFiles.MANIM_PASSWORD, env.manimPassword])
+  const nextToken = firstNonEmpty([process.env.MANIM_TOKEN, parsedFromFiles.MANIM_TOKEN, env.manimToken])
+  const skewRaw = firstNonEmpty([process.env.MANIM_TOKEN_REFRESH_SKEW_SEC, parsedFromFiles.MANIM_TOKEN_REFRESH_SKEW_SEC])
+  const skew = Number(skewRaw)
+
+  env.manimBaseUrl = nextBaseUrl
+  env.manimAuthPath = nextAuthPath
+  env.manimUser = nextUser
+  env.manimPassword = nextPassword
+  env.manimToken = nextToken
+  if (Number.isFinite(skew) && skew > 0) env.manimTokenRefreshSkewSec = Math.floor(skew)
+}
+
 type SalesFileMeta = { fileName: string; fileDate?: string; depotCode?: string }
 type ImportRuntimeState = {
   upsertedPositions: Set<string>
@@ -471,7 +525,19 @@ function extractManimTokenFromAuthResponse(obj: unknown) {
 }
 
 async function refreshManimToken(): Promise<string> {
+  await syncManimConfigFromEnvironment()
   if (!env.manimBaseUrl.trim()) throw new Error('MANIM_BASE_URL tanimli degil')
+
+  const configuredToken = env.manimToken.trim()
+  if (configuredToken) {
+    const expMs = parseJwtExpMs(configuredToken)
+    if (!isManimTokenExpiredOrNear(expMs)) {
+      manimTokenState.token = configuredToken
+      manimTokenState.expiresAtMs = expMs
+      return configuredToken
+    }
+  }
+
   if (!env.manimUser.trim() || !env.manimPassword.trim()) {
     throw new Error('Manim token suresi doldu. Otomatik yenileme icin MANIM_USER ve MANIM_PASSWORD gerekli.')
   }
