@@ -35,6 +35,10 @@ const env = {
   manimDir: process.env.MANIM_DIR ?? '',
   manimBaseUrl: process.env.MANIM_BASE_URL ?? '',
   manimToken: process.env.MANIM_TOKEN ?? '',
+  manimAuthPath: process.env.MANIM_AUTH_PATH ?? '/auth/login',
+  manimUser: process.env.MANIM_USER ?? process.env.MANIM_USERNAME ?? process.env.MANIM_EMAIL ?? '',
+  manimPassword: process.env.MANIM_PASSWORD ?? '',
+  manimTokenRefreshSkewSec: readEnvMs('MANIM_TOKEN_REFRESH_SKEW_SEC', 60),
   httpRequestTimeoutMs: readEnvMs('HTTP_REQUEST_TIMEOUT_MS', 15 * 60 * 1000),
   httpHeadersTimeoutMs: readEnvMs('HTTP_HEADERS_TIMEOUT_MS', 2 * 60 * 1000),
   httpKeepAliveTimeoutMs: readEnvMs('HTTP_KEEPALIVE_TIMEOUT_MS', 75 * 1000),
@@ -414,12 +418,123 @@ async function loadManimReceipts(accountId: string): Promise<ManimReceiptCandida
 }
 
 function hasManimRemoteConfig() {
-  return !!env.manimBaseUrl.trim() && !!env.manimToken.trim()
+  const hasBase = !!env.manimBaseUrl.trim()
+  const hasStaticToken = !!env.manimToken.trim()
+  const hasRefreshCreds = !!env.manimUser.trim() && !!env.manimPassword.trim()
+  return hasBase && (hasStaticToken || hasRefreshCreds)
 }
 
-function manimRemoteHeaders() {
+type ManimTokenState = {
+  token: string
+  expiresAtMs?: number
+  refreshing?: Promise<string>
+}
+
+const manimTokenState: ManimTokenState = {
+  token: env.manimToken.trim(),
+  expiresAtMs: undefined,
+}
+
+function parseJwtExpMs(token: string): number | undefined {
+  const parts = token.split('.')
+  if (parts.length < 2) return undefined
+  try {
+    const payloadRaw = Buffer.from(parts[1], 'base64url').toString('utf-8')
+    const payload = JSON.parse(payloadRaw) as { exp?: unknown }
+    const expSec = typeof payload.exp === 'number' ? payload.exp : undefined
+    if (!expSec || !Number.isFinite(expSec)) return undefined
+    return expSec * 1000
+  } catch {
+    return undefined
+  }
+}
+
+manimTokenState.expiresAtMs = parseJwtExpMs(manimTokenState.token)
+
+function isManimTokenExpiredOrNear(expMs?: number) {
+  if (!expMs) return false
+  const skewMs = Math.max(5, env.manimTokenRefreshSkewSec) * 1000
+  return Date.now() >= expMs - skewMs
+}
+
+function extractManimTokenFromAuthResponse(obj: unknown) {
+  const x = obj as any
+  const direct =
+    (typeof x?.token === 'string' && x.token) ||
+    (typeof x?.accessToken === 'string' && x.accessToken) ||
+    (typeof x?.jwt === 'string' && x.jwt) ||
+    (typeof x?.id_token === 'string' && x.id_token) ||
+    (typeof x?.data?.token === 'string' && x.data.token) ||
+    (typeof x?.data?.accessToken === 'string' && x.data.accessToken) ||
+    ''
+  return String(direct || '').trim()
+}
+
+async function refreshManimToken(): Promise<string> {
+  if (!env.manimBaseUrl.trim()) throw new Error('MANIM_BASE_URL tanimli degil')
+  if (!env.manimUser.trim() || !env.manimPassword.trim()) {
+    throw new Error('Manim token suresi doldu. Otomatik yenileme icin MANIM_USER ve MANIM_PASSWORD gerekli.')
+  }
+
+  const base = env.manimBaseUrl.replace(/\/+$/, '')
+  const authPath = env.manimAuthPath.trim()
+  const fullPath = authPath.startsWith('/') ? authPath : `/${authPath}`
+  const url = `${base}${fullPath}`
+
+  const payloads = [
+    { userName: env.manimUser, password: env.manimPassword },
+    { username: env.manimUser, password: env.manimPassword },
+    { email: env.manimUser, password: env.manimPassword },
+  ]
+
+  let lastError = ''
+  for (const body of payloads) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const text = await res.text().catch(() => '')
+    if (!res.ok) {
+      lastError = text || `Manim auth HTTP ${res.status}`
+      continue
+    }
+    const parsed = (() => {
+      try {
+        return text ? JSON.parse(text) : null
+      } catch {
+        return null
+      }
+    })()
+    const token = extractManimTokenFromAuthResponse(parsed)
+    if (!token) {
+      lastError = 'Manim auth basarili fakat token donmedi'
+      continue
+    }
+    manimTokenState.token = token
+    manimTokenState.expiresAtMs = parseJwtExpMs(token)
+    return token
+  }
+
+  throw new Error(lastError || 'Manim token yenilenemedi')
+}
+
+async function getManimToken(forceRefresh = false): Promise<string> {
+  const hasToken = !!manimTokenState.token
+  const shouldRefresh = forceRefresh || !hasToken || isManimTokenExpiredOrNear(manimTokenState.expiresAtMs)
+  if (!shouldRefresh) return manimTokenState.token
+  if (manimTokenState.refreshing) return manimTokenState.refreshing
+
+  manimTokenState.refreshing = refreshManimToken().finally(() => {
+    manimTokenState.refreshing = undefined
+  })
+  return manimTokenState.refreshing
+}
+
+async function manimRemoteHeaders() {
+  const token = await getManimToken(false)
   return {
-    Authorization: `Bearer ${env.manimToken}`,
+    Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json',
   } as const
 }
@@ -428,13 +543,36 @@ function manimEncodeQuery(obj: unknown) {
   return encodeURIComponent(JSON.stringify(obj))
 }
 
+function isManimTokenExpiredResponse(status: number, bodyText: string) {
+  if (status === 401) return true
+  const t = (bodyText ?? '').toLowerCase()
+  return t.includes('jwtexpirederror') || t.includes('jwt expired') || t.includes('token expired')
+}
+
 async function manimFetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url, { headers: manimRemoteHeaders() })
-  if (!res.ok) {
+  const run = async () => {
+    const headers = await manimRemoteHeaders()
+    const res = await fetch(url, { headers })
     const text = await res.text().catch(() => '')
-    throw new Error(text || `Manim HTTP ${res.status}`)
+    const parsed = (() => {
+      try {
+        return text ? (JSON.parse(text) as T) : (null as T)
+      } catch {
+        return null
+      }
+    })()
+    return { res, text, parsed }
   }
-  return (await res.json()) as T
+
+  let first = await run()
+  if (!first.res.ok && isManimTokenExpiredResponse(first.res.status, first.text)) {
+    await getManimToken(true)
+    first = await run()
+  }
+  if (!first.res.ok) {
+    throw new Error(first.text || `Manim HTTP ${first.res.status}`)
+  }
+  return first.parsed as T
 }
 
 type ManimRemoteAccount = { _id?: string; label?: string }
