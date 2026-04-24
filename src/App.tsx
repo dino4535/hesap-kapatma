@@ -708,7 +708,7 @@ export default function App() {
     return {
       havaleTutari,
       nakitTutari,
-      nakitToplam: totalsByTypeInvoices.NAKIT + totalsByTypePayments.NAKIT,
+      nakitToplam: invoiceNakit,
       vadeliTahsilatHavale: collectionVadeliTahsilatHavale,
       toplam: rutToplam,
       iskonto: havaleIskonto,
