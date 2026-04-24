@@ -60,6 +60,7 @@ const manimEnvFileCandidates = [
   path.resolve(process.cwd(), '.env.production'),
   path.resolve(process.cwd(), '.env.development'),
 ]
+let manimEnvLastSyncDebug = 'sync-calismadi'
 
 function firstNonEmpty(values: Array<unknown>) {
   for (const value of values) {
@@ -71,17 +72,21 @@ function firstNonEmpty(values: Array<unknown>) {
 
 async function syncManimConfigFromEnvironment() {
   const parsedFromFiles: Record<string, string> = {}
+  const debugRows: string[] = []
   for (const candidate of manimEnvFileCandidates) {
     try {
       const raw = await fs.readFile(candidate, 'utf-8')
       const parsed = dotenv.parse(raw)
+      const hasUser = !!firstNonEmpty([parsed.MANIM_USER, parsed.MANIM_USERNAME, parsed.MANIM_EMAIL])
+      const hasPassword = !!firstNonEmpty([parsed.MANIM_PASSWORD])
+      debugRows.push(`${candidate} user=${hasUser ? '1' : '0'} pass=${hasPassword ? '1' : '0'}`)
       for (const [k, v] of Object.entries(parsed)) {
         if (!parsedFromFiles[k] && String(v ?? '').trim()) {
           parsedFromFiles[k] = String(v ?? '')
         }
       }
     } catch {
-      // ignore missing/unreadable env candidates
+      debugRows.push(`${candidate} read=0`)
     }
   }
 
@@ -107,6 +112,7 @@ async function syncManimConfigFromEnvironment() {
   env.manimPassword = nextPassword
   env.manimToken = nextToken
   if (Number.isFinite(skew) && skew > 0) env.manimTokenRefreshSkewSec = Math.floor(skew)
+  manimEnvLastSyncDebug = debugRows.join(' | ')
 }
 
 type SalesFileMeta = { fileName: string; fileDate?: string; depotCode?: string }
@@ -552,7 +558,7 @@ async function refreshManimToken(): Promise<string> {
     if (!env.manimUser.trim()) missing.push('MANIM_USER')
     if (!env.manimPassword.trim()) missing.push('MANIM_PASSWORD')
     throw new Error(
-      `Manim token suresi doldu. Otomatik yenileme icin MANIM_USER ve MANIM_PASSWORD gerekli. Eksik: ${missing.join(', ')}.`,
+      `Manim token suresi doldu. Otomatik yenileme icin MANIM_USER ve MANIM_PASSWORD gerekli. Eksik: ${missing.join(', ')}. EnvDebug: ${manimEnvLastSyncDebug}`,
     )
   }
 
