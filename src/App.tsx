@@ -161,6 +161,7 @@ function Modal(props: { title: string; open: boolean; onClose: () => void; child
 }
 
 function AllocationEditor(props: {
+  editorKey: string
   title: string
   total: number
   allocations: Allocation[]
@@ -169,6 +170,17 @@ function AllocationEditor(props: {
   const [from, setFrom] = useState<PaymentType>('HAVALE')
   const [to, setTo] = useState<PaymentType>('NAKIT')
   const [amount, setAmount] = useState<number>(0)
+
+  useEffect(() => {
+    const positive = props.allocations
+      .filter((a) => (Number(a.amount) || 0) > 0)
+      .sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0))
+    const source = (positive[0]?.type ?? 'NAKIT') as PaymentType
+    const target = (PAYMENT_TYPES.find((t) => t !== source) ?? source) as PaymentType
+    setFrom(source)
+    setTo(target)
+    setAmount(0)
+  }, [props.editorKey, props.allocations])
 
   const onApply = () => {
     props.onChange(transferAmount(props.allocations, from, to, amount))
@@ -2943,9 +2955,15 @@ export default function App() {
         </>
       )}
 
-      <Modal title={editingInvoice ? `Fatura Tip Dağılımı - ${editingInvoice.code}` : ''} open={!!editingInvoice} onClose={() => setEditingInvoice(null)}>
+      <Modal
+        title={editingInvoice ? `Fatura Tip Dağılımı - ${editingInvoice.code}` : ''}
+        open={!!editingInvoice}
+        onClose={() => setEditingInvoice(null)}
+        size="wide"
+      >
         {editingInvoice ? (
           <AllocationEditor
+            editorKey={editingInvoice.code}
             title="Fatura"
             total={invoiceTotalAmount(editingInvoice)}
             allocations={getInvoiceAllocations(editingInvoice, invoiceAllocations)}
@@ -2954,9 +2972,15 @@ export default function App() {
         ) : null}
       </Modal>
 
-      <Modal title={editingPayment ? `Tahsilat Tip Dağılımı - ${editingPayment.collection.invoiceCode ?? ''}` : ''} open={!!editingPayment} onClose={() => setEditingPayment(null)}>
+      <Modal
+        title={editingPayment ? `Tahsilat Tip Dağılımı - ${editingPayment.collection.invoiceCode ?? ''}` : ''}
+        open={!!editingPayment}
+        onClose={() => setEditingPayment(null)}
+        size="wide"
+      >
         {editingPayment ? (
           <AllocationEditor
+            editorKey={editingPayment.key}
             title="Tahsilat"
             total={editingPayment.collection.amount ?? 0}
             allocations={getPaymentAllocations(editingPayment.key, editingPayment.collection, paymentAllocations)}
