@@ -420,6 +420,51 @@ export async function deleteDataByImportFile(args: {
   return (await res.json()) as { ok: boolean; deleted?: Record<string, unknown> }
 }
 
+export interface AdminManimSettings {
+  manimBaseUrl: string
+  manimAuthPath: string
+  manimUser: string
+  manimToken: string
+  manimTokenRefreshSkewSec: number
+  manimPasswordSet: boolean
+}
+
+export async function fetchAdminManimSettings(args: {
+  userName: string
+}): Promise<{ ok: boolean; settings?: AdminManimSettings; message?: string }> {
+  const res = await fetch('/api/admin/manim-settings', {
+    headers: { 'x-user': args.userName },
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; settings?: AdminManimSettings }
+}
+
+export async function updateAdminManimSettings(args: {
+  userName: string
+  settings: {
+    manimBaseUrl?: string
+    manimAuthPath?: string
+    manimUser?: string
+    manimPassword?: string
+    manimToken?: string
+    manimTokenRefreshSkewSec?: number
+  }
+}): Promise<{ ok: boolean; settings?: AdminManimSettings; message?: string }> {
+  const res = await fetch('/api/admin/manim-settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'x-user': args.userName },
+    body: JSON.stringify(args.settings),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; settings?: AdminManimSettings }
+}
+
 export interface ManimDekontCandidate {
   receiptNo: string
   receiptDate: string

@@ -46,6 +46,131 @@ const env = {
   importUploadDir: process.env.IMPORT_UPLOAD_DIR?.trim() || path.resolve(moduleDir, '../uploads/import-jobs'),
 }
 
+type AdminManimSettings = {
+  manimBaseUrl: string
+  manimAuthPath: string
+  manimUser: string
+  manimToken: string
+  manimTokenRefreshSkewSec: number
+  manimPasswordSet: boolean
+}
+
+const envFileCandidates = [
+  path.resolve(moduleDir, '../.env'),
+  path.resolve(moduleDir, '../../.env'),
+  path.resolve(process.cwd(), '.env'),
+]
+
+async function resolveWritableEnvPath() {
+  for (const candidate of envFileCandidates) {
+    try {
+      await fs.access(candidate, fsSync.constants.F_OK)
+      return candidate
+    } catch {
+      // continue
+    }
+  }
+  return envFileCandidates[0]
+}
+
+function escapeRegex(text: string) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function normalizeEnvValue(value: unknown) {
+  return String(value ?? '')
+    .replace(/\r/g, '')
+    .replace(/\n/g, '')
+}
+
+function encodeEnvValue(value: string) {
+  if (!value) return ''
+  if (/[#\s"'`]/.test(value)) return JSON.stringify(value)
+  return value
+}
+
+function upsertEnvLine(content: string, key: string, value: string) {
+  const line = `${key}=${encodeEnvValue(value)}`
+  const re = new RegExp(`^\\s*${escapeRegex(key)}\\s*=.*$`, 'm')
+  if (re.test(content)) return content.replace(re, line)
+  const trimmedEnd = content.trimEnd()
+  return trimmedEnd ? `${trimmedEnd}\n${line}\n` : `${line}\n`
+}
+
+function currentAdminManimSettings(): AdminManimSettings {
+  return {
+    manimBaseUrl: env.manimBaseUrl,
+    manimAuthPath: env.manimAuthPath,
+    manimUser: env.manimUser,
+    manimToken: env.manimToken,
+    manimTokenRefreshSkewSec: env.manimTokenRefreshSkewSec,
+    manimPasswordSet: !!env.manimPassword,
+  }
+}
+
+function applyManimEnvValues(values: {
+  manimBaseUrl?: string
+  manimAuthPath?: string
+  manimUser?: string
+  manimPassword?: string
+  manimToken?: string
+  manimTokenRefreshSkewSec?: number
+}) {
+  const changedAuthRelated =
+    values.manimBaseUrl !== undefined ||
+    values.manimAuthPath !== undefined ||
+    values.manimUser !== undefined ||
+    values.manimPassword !== undefined
+
+  if (values.manimBaseUrl !== undefined) env.manimBaseUrl = values.manimBaseUrl
+  if (values.manimAuthPath !== undefined) env.manimAuthPath = values.manimAuthPath
+  if (values.manimUser !== undefined) env.manimUser = values.manimUser
+  if (values.manimPassword !== undefined) env.manimPassword = values.manimPassword
+  if (values.manimToken !== undefined) env.manimToken = values.manimToken
+  if (values.manimTokenRefreshSkewSec !== undefined) env.manimTokenRefreshSkewSec = values.manimTokenRefreshSkewSec
+
+  if (values.manimToken !== undefined) {
+    manimTokenState.token = values.manimToken.trim()
+    manimTokenState.expiresAtMs = parseJwtExpMs(manimTokenState.token)
+    return
+  }
+  if (changedAuthRelated) {
+    manimTokenState.token = ''
+    manimTokenState.expiresAtMs = undefined
+  } else {
+    manimTokenState.token = env.manimToken.trim()
+    manimTokenState.expiresAtMs = parseJwtExpMs(manimTokenState.token)
+  }
+}
+
+async function persistManimEnvValues(values: {
+  manimBaseUrl?: string
+  manimAuthPath?: string
+  manimUser?: string
+  manimPassword?: string
+  manimToken?: string
+  manimTokenRefreshSkewSec?: number
+}) {
+  const envPath = await resolveWritableEnvPath()
+  let text = ''
+  try {
+    text = await fs.readFile(envPath, 'utf-8')
+  } catch {
+    text = ''
+  }
+
+  if (values.manimBaseUrl !== undefined) text = upsertEnvLine(text, 'MANIM_BASE_URL', values.manimBaseUrl)
+  if (values.manimAuthPath !== undefined) text = upsertEnvLine(text, 'MANIM_AUTH_PATH', values.manimAuthPath)
+  if (values.manimUser !== undefined) text = upsertEnvLine(text, 'MANIM_USER', values.manimUser)
+  if (values.manimPassword !== undefined) text = upsertEnvLine(text, 'MANIM_PASSWORD', values.manimPassword)
+  if (values.manimToken !== undefined) text = upsertEnvLine(text, 'MANIM_TOKEN', values.manimToken)
+  if (values.manimTokenRefreshSkewSec !== undefined) {
+    text = upsertEnvLine(text, 'MANIM_TOKEN_REFRESH_SKEW_SEC', String(values.manimTokenRefreshSkewSec))
+  }
+
+  await fs.writeFile(envPath, text, 'utf-8')
+}
+
 type SalesFileMeta = { fileName: string; fileDate?: string; depotCode?: string }
 type ImportRuntimeState = {
   upsertedPositions: Set<string>
@@ -1720,6 +1845,76 @@ ORDER BY UserName
       createdAt: row.CreatedAt ? new Date(row.CreatedAt).toISOString() : undefined,
     }))
     res.json({ ok: true, users })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
+app.get('/api/admin/manim-settings', async (req, res) => {
+  try {
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const ok = await isAdminAuthorized(req, pool)
+    if (!ok) {
+      res.status(403).send('Yetkisiz')
+      return
+    }
+    res.json({ ok: true, settings: currentAdminManimSettings() })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
+app.put('/api/admin/manim-settings', async (req, res) => {
+  try {
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const ok = await isAdminAuthorized(req, pool)
+    if (!ok) {
+      res.status(403).send('Yetkisiz')
+      return
+    }
+
+    const updates: {
+      manimBaseUrl?: string
+      manimAuthPath?: string
+      manimUser?: string
+      manimPassword?: string
+      manimToken?: string
+      manimTokenRefreshSkewSec?: number
+    } = {}
+
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'manimBaseUrl')) {
+      updates.manimBaseUrl = normalizeEnvValue(req.body.manimBaseUrl).trim()
+    }
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'manimAuthPath')) {
+      const authPath = normalizeEnvValue(req.body.manimAuthPath).trim()
+      updates.manimAuthPath = authPath || '/auth/login'
+    }
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'manimUser')) {
+      updates.manimUser = normalizeEnvValue(req.body.manimUser).trim()
+    }
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'manimPassword')) {
+      updates.manimPassword = normalizeEnvValue(req.body.manimPassword)
+    }
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'manimToken')) {
+      updates.manimToken = normalizeEnvValue(req.body.manimToken).trim()
+    }
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'manimTokenRefreshSkewSec')) {
+      const raw = Number(req.body.manimTokenRefreshSkewSec)
+      if (!Number.isFinite(raw) || raw <= 0) {
+        res.status(400).send('manimTokenRefreshSkewSec gecersiz')
+        return
+      }
+      updates.manimTokenRefreshSkewSec = Math.floor(raw)
+    }
+
+    await persistManimEnvValues(updates)
+    applyManimEnvValues(updates)
+
+    res.json({ ok: true, settings: currentAdminManimSettings() })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
     res.status(500).send(msg)
