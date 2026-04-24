@@ -601,10 +601,8 @@ async function refreshManimToken(): Promise<string> {
     throw new Error('Manim token suresi doldu. Otomatik yenileme icin MANIM_USER ve MANIM_PASSWORD gerekli.')
   }
 
-  const base = env.manimBaseUrl.replace(/\/+$/, '')
-  const authPath = env.manimAuthPath.trim()
-  const fullPath = authPath.startsWith('/') ? authPath : `/${authPath}`
-  const url = `${base}${fullPath}`
+  const authPaths = uniqueStrings([env.manimAuthPath.trim(), '/auth/login'])
+  const authUrls = manimBaseUrlCandidates().flatMap((base) => authPaths.map((p) => combineManimUrl(base, p)))
 
   const payloads = [
     { userName: env.manimUser, password: env.manimPassword },
@@ -613,32 +611,35 @@ async function refreshManimToken(): Promise<string> {
   ]
 
   let lastError = ''
-  for (const body of payloads) {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    const text = await res.text().catch(() => '')
-    if (!res.ok) {
-      lastError = text || `Manim auth HTTP ${res.status}`
-      continue
-    }
-    const parsed = (() => {
-      try {
-        return text ? JSON.parse(text) : null
-      } catch {
-        return null
+  for (const url of authUrls) {
+    for (const body of payloads) {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const text = await res.text().catch(() => '')
+      if (!res.ok) {
+        lastError = text || `Manim auth HTTP ${res.status}`
+        if (res.status === 404) break
+        continue
       }
-    })()
-    const token = extractManimTokenFromAuthResponse(parsed)
-    if (!token) {
-      lastError = 'Manim auth basarili fakat token donmedi'
-      continue
+      const parsed = (() => {
+        try {
+          return text ? JSON.parse(text) : null
+        } catch {
+          return null
+        }
+      })()
+      const token = extractManimTokenFromAuthResponse(parsed)
+      if (!token) {
+        lastError = 'Manim auth basarili fakat token donmedi'
+        continue
+      }
+      manimTokenState.token = token
+      manimTokenState.expiresAtMs = parseJwtExpMs(token)
+      return token
     }
-    manimTokenState.token = token
-    manimTokenState.expiresAtMs = parseJwtExpMs(token)
-    return token
   }
 
   throw new Error(lastError || 'Manim token yenilenemedi')
@@ -666,6 +667,32 @@ async function manimRemoteHeaders() {
 
 function manimEncodeQuery(obj: unknown) {
   return encodeURIComponent(JSON.stringify(obj))
+}
+
+function uniqueStrings(values: string[]) {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const v of values) {
+    const x = String(v ?? '').trim()
+    if (!x || seen.has(x)) continue
+    seen.add(x)
+    out.push(x)
+  }
+  return out
+}
+
+function manimBaseUrlCandidates() {
+  const raw = env.manimBaseUrl.trim().replace(/\/+$/, '')
+  if (!raw) return []
+  const hasApi = /\/api$/i.test(raw)
+  const withApi = hasApi ? raw : `${raw}/api`
+  const withoutApi = hasApi ? raw.replace(/\/api$/i, '') : raw
+  return uniqueStrings([raw, withApi, withoutApi])
+}
+
+function combineManimUrl(base: string, endpointPath: string) {
+  const normalizedPath = endpointPath.startsWith('/') ? endpointPath : `/${endpointPath}`
+  return `${base.replace(/\/+$/, '')}${normalizedPath}`
 }
 
 function isManimTokenExpiredResponse(status: number, bodyText: string) {
@@ -700,13 +727,32 @@ async function manimFetchJson<T>(url: string): Promise<T> {
   return first.parsed as T
 }
 
+async function manimFetchJsonWithFallback<T>(urls: string[]): Promise<T> {
+  const candidates = uniqueStrings(urls)
+  let last404Error = ''
+  for (const url of candidates) {
+    try {
+      return await manimFetchJson<T>(url)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e ?? '')
+      const lower = msg.toLowerCase()
+      if (lower.includes('not found') || msg.includes('404')) {
+        last404Error = msg
+        continue
+      }
+      throw e
+    }
+  }
+  throw new Error(last404Error || 'Manim endpoint bulunamadi')
+}
+
 type ManimRemoteAccount = { _id?: string; label?: string }
 
 async function loadManimAccountsRemote(): Promise<ManimAccount[]> {
   if (!hasManimRemoteConfig()) return []
-  const base = env.manimBaseUrl.replace(/\/+$/, '')
-  const url = `${base}/bankAccount/where/${manimEncodeQuery({})}`
-  const list = await manimFetchJson<ManimRemoteAccount[]>(url)
+  const endpoint = `/bankAccount/where/${manimEncodeQuery({})}`
+  const urls = manimBaseUrlCandidates().map((base) => combineManimUrl(base, endpoint))
+  const list = await manimFetchJsonWithFallback<ManimRemoteAccount[]>(urls)
   return (Array.isArray(list) ? list : [])
     .map((a) => ({ id: String(a?._id ?? '').trim(), label: String(a?.label ?? '').trim() }))
     .filter((x) => x.id && x.label)
@@ -743,9 +789,9 @@ async function loadManimReceiptsRemote(args: {
     options: { limit: 1000, skip: 0, sort: { receiptDate: -1 } },
   }
 
-  const base = env.manimBaseUrl.replace(/\/+$/, '')
-  const url = `${base}/receipt/where/${manimEncodeQuery(queryObj)}`
-  const rows = await manimFetchJson<ManimReceiptRaw[]>(url)
+  const endpoint = `/receipt/where/${manimEncodeQuery(queryObj)}`
+  const urls = manimBaseUrlCandidates().map((base) => combineManimUrl(base, endpoint))
+  const rows = await manimFetchJsonWithFallback<ManimReceiptRaw[]>(urls)
 
   const receipts = (Array.isArray(rows) ? rows : [])
     .map((obj) => {
