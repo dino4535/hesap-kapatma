@@ -32,7 +32,7 @@ import { clearSessionUser, loadSessionUser, saveSessionUser, type SessionUser } 
 import { transferAmount, type Allocation, allocationAmountForType, computePaymentKey, getInvoiceAllocations, getPaymentAllocations, invoiceTotalAmount } from './domain/allocations'
 import { formatDateTr, formatMoney } from './domain/format'
 import type { Collection, Invoice } from './domain/models'
-import { PAYMENT_TYPES, type PaymentType, paymentTypeLabel } from './domain/paymentTypes'
+import { PAYMENT_TYPES, normalizePaymentType, type PaymentType, paymentTypeLabel } from './domain/paymentTypes'
 
 type StatusType = 'success' | 'error' | 'info'
 
@@ -681,12 +681,31 @@ export default function App() {
       .sort((a, b) => a.bayi.localeCompare(b.bayi, 'tr', { sensitivity: 'base' }))
   }, [positionCollections, paymentAllocations])
 
+  const invoiceNakitGrossTotal = useMemo(() => {
+    let total = 0
+    for (const inv of positionInvoices) {
+      const hasNakitPayment = (inv.payments ?? []).some((p) => normalizePaymentType(p.paymentFormCode, p.paymentFormDescription) === 'NAKIT')
+      if (!hasNakitPayment) continue
+      total += inv.grossAmount ?? 0
+    }
+    return total
+  }, [positionInvoices])
+
+  const collectionVadeliTahsilatAmountTotal = useMemo(() => {
+    let total = 0
+    for (const c of positionCollections) {
+      if (normalizePaymentType(c.paymentFormCode, c.paymentFormDescription) !== 'VADETAH') continue
+      total += c.amount ?? 0
+    }
+    return total
+  }, [positionCollections])
+
   const summaryTotals = useMemo(() => {
     if (!selectedPosition) return null
 
-    const invoiceNakit = totalsByTypeInvoices.NAKIT
+    const invoiceNakit = invoiceNakitGrossTotal
     const invoiceHavale = totalsByTypeInvoices.HAVALE
-    const collectionVadeliTahsilat = totalsByTypePayments.VADETAH
+    const collectionVadeliTahsilat = collectionVadeliTahsilatAmountTotal
     const collectionVadeliTahsilatHavale = totalsByTypePayments.VADETAHHAV
 
     const havaleTutari = invoiceHavale
@@ -713,6 +732,8 @@ export default function App() {
     }
   }, [
     selectedPosition,
+    invoiceNakitGrossTotal,
+    collectionVadeliTahsilatAmountTotal,
     totalsByTypeInvoices,
     totalsByTypePayments,
     discountTotalAll,
