@@ -700,6 +700,43 @@ BEGIN
   CREATE INDEX IX_Payments_CustomerCode ON dbo.Payments (CustomerCode);
 END
 
+IF OBJECT_ID('dbo.InvoicePayments', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.InvoicePayments (
+    PaymentKey NVARCHAR(300) NOT NULL PRIMARY KEY,
+    InvoiceCode NVARCHAR(64) NOT NULL,
+    Code NVARCHAR(64) NULL,
+    IssueDate DATETIME2(0) NULL,
+    Amount DECIMAL(18,4) NOT NULL,
+    PaymentFormCode NVARCHAR(32) NULL,
+    PaymentFormDescription NVARCHAR(64) NULL,
+    CustomerCode NVARCHAR(64) NULL,
+    CustomerName NVARCHAR(256) NULL,
+    CustomerTaxNumber NVARCHAR(64) NULL,
+    CustomerLicenseNumber NVARCHAR(64) NULL,
+    PositionCode NVARCHAR(64) NULL,
+    PositionDescription NVARCHAR(256) NULL,
+    SourceFileName NVARCHAR(260) NULL,
+    SourceFileDate DATE NULL,
+    SourceDepotCode NVARCHAR(32) NULL,
+    UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_InvoicePayments_UpdatedAt DEFAULT (SYSUTCDATETIME()),
+    CONSTRAINT FK_InvoicePayments_Invoices FOREIGN KEY (InvoiceCode) REFERENCES dbo.Invoices(Code)
+  );
+END
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_InvoicePayments_InvoiceCode' AND object_id = OBJECT_ID('dbo.InvoicePayments'))
+BEGIN
+  CREATE INDEX IX_InvoicePayments_InvoiceCode ON dbo.InvoicePayments (InvoiceCode);
+END
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_InvoicePayments_SourceFileDate_Depot_Position' AND object_id = OBJECT_ID('dbo.InvoicePayments'))
+BEGIN
+  CREATE INDEX IX_InvoicePayments_SourceFileDate_Depot_Position ON dbo.InvoicePayments (SourceFileDate, SourceDepotCode, PositionCode);
+END
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_InvoicePayments_CustomerCode' AND object_id = OBJECT_ID('dbo.InvoicePayments'))
+BEGIN
+  CREATE INDEX IX_InvoicePayments_CustomerCode ON dbo.InvoicePayments (CustomerCode);
+END
+
 IF OBJECT_ID('dbo.Collections', 'U') IS NULL
 BEGIN
   CREATE TABLE dbo.Collections (
@@ -1048,9 +1085,8 @@ WHEN NOT MATCHED THEN INSERT (
         .input('SourceFileName', mssql.NVarChar(260), source.fileName)
         .input('SourceFileDate', mssql.Date, source.fileDate ? new Date(source.fileDate) : null)
         .input('SourceDepotCode', mssql.NVarChar(32), source.depotCode ?? null)
-        .input('PaymentSource', mssql.NVarChar(16), 'INVOICE')
         .query(`
-MERGE dbo.Payments WITH (HOLDLOCK) AS t
+MERGE dbo.InvoicePayments WITH (HOLDLOCK) AS t
 USING (SELECT
   @PaymentKey AS PaymentKey,
   @InvoiceCode AS InvoiceCode,
@@ -1067,8 +1103,7 @@ USING (SELECT
   @PositionDescription AS PositionDescription,
   @SourceFileName AS SourceFileName,
   @SourceFileDate AS SourceFileDate,
-  @SourceDepotCode AS SourceDepotCode,
-  @PaymentSource AS PaymentSource
+  @SourceDepotCode AS SourceDepotCode
 ) AS s
 ON t.PaymentKey = s.PaymentKey
 WHEN MATCHED THEN UPDATE SET
@@ -1087,7 +1122,6 @@ WHEN MATCHED THEN UPDATE SET
   SourceFileName = s.SourceFileName,
   SourceFileDate = s.SourceFileDate,
   SourceDepotCode = s.SourceDepotCode,
-  PaymentSource = s.PaymentSource,
   UpdatedAt = SYSUTCDATETIME()
 WHEN NOT MATCHED THEN INSERT (
   PaymentKey, InvoiceCode, Code, IssueDate, Amount,
@@ -1095,7 +1129,6 @@ WHEN NOT MATCHED THEN INSERT (
   CustomerCode, CustomerName, CustomerTaxNumber, CustomerLicenseNumber,
   PositionCode, PositionDescription,
   SourceFileName, SourceFileDate, SourceDepotCode,
-  PaymentSource,
   UpdatedAt
 )
 VALUES (
@@ -1104,7 +1137,6 @@ VALUES (
   s.CustomerCode, s.CustomerName, s.CustomerTaxNumber, s.CustomerLicenseNumber,
   s.PositionCode, s.PositionDescription,
   s.SourceFileName, s.SourceFileDate, s.SourceDepotCode,
-  s.PaymentSource,
   SYSUTCDATETIME()
 )
 OUTPUT $action AS MergeAction;
@@ -1219,89 +1251,6 @@ async function insertCollection(pool: mssql.ConnectionPool, c: RawCollection, so
     .input('SourceFileName', mssql.NVarChar(260), source.fileName)
     .input('SourceFileDate', mssql.Date, source.fileDate ? new Date(source.fileDate) : null)
     .input('SourceDepotCode', mssql.NVarChar(32), source.depotCode ?? null)
-    .input('PaymentSource', mssql.NVarChar(16), 'COLLECTION')
-    .query(`
-MERGE dbo.Payments WITH (HOLDLOCK) AS t
-USING (SELECT
-  @PaymentKey AS PaymentKey,
-  @InvoiceCode AS InvoiceCode,
-  @Code AS Code,
-  @IssueDate AS IssueDate,
-  @Amount AS Amount,
-  @PaymentFormCode AS PaymentFormCode,
-  @PaymentFormDescription AS PaymentFormDescription,
-  @CustomerCode AS CustomerCode,
-  @CustomerName AS CustomerName,
-  @CustomerTaxNumber AS CustomerTaxNumber,
-  @CustomerLicenseNumber AS CustomerLicenseNumber,
-  @PositionCode AS PositionCode,
-  @PositionDescription AS PositionDescription,
-  @SourceFileName AS SourceFileName,
-  @SourceFileDate AS SourceFileDate,
-  @SourceDepotCode AS SourceDepotCode,
-  @PaymentSource AS PaymentSource
-) AS s
-ON t.PaymentKey = s.PaymentKey
-WHEN MATCHED THEN UPDATE SET
-  InvoiceCode = s.InvoiceCode,
-  Code = s.Code,
-  IssueDate = s.IssueDate,
-  Amount = s.Amount,
-  PaymentFormCode = s.PaymentFormCode,
-  PaymentFormDescription = s.PaymentFormDescription,
-  CustomerCode = s.CustomerCode,
-  CustomerName = s.CustomerName,
-  CustomerTaxNumber = s.CustomerTaxNumber,
-  CustomerLicenseNumber = s.CustomerLicenseNumber,
-  PositionCode = s.PositionCode,
-  PositionDescription = s.PositionDescription,
-  SourceFileName = s.SourceFileName,
-  SourceFileDate = s.SourceFileDate,
-  SourceDepotCode = s.SourceDepotCode,
-  PaymentSource = s.PaymentSource,
-  UpdatedAt = SYSUTCDATETIME()
-WHEN NOT MATCHED THEN INSERT (
-  PaymentKey, InvoiceCode, Code, IssueDate, Amount,
-  PaymentFormCode, PaymentFormDescription,
-  CustomerCode, CustomerName, CustomerTaxNumber, CustomerLicenseNumber,
-  PositionCode, PositionDescription,
-  SourceFileName, SourceFileDate, SourceDepotCode,
-  PaymentSource,
-  UpdatedAt
-)
-VALUES (
-  s.PaymentKey, s.InvoiceCode, s.Code, s.IssueDate, s.Amount,
-  s.PaymentFormCode, s.PaymentFormDescription,
-  s.CustomerCode, s.CustomerName, s.CustomerTaxNumber, s.CustomerLicenseNumber,
-  s.PositionCode, s.PositionDescription,
-  s.SourceFileName, s.SourceFileDate, s.SourceDepotCode,
-  s.PaymentSource,
-  SYSUTCDATETIME()
-)
-OUTPUT $action AS MergeAction;
-`)
-
-  const action = String((insertRes.recordset?.[0] as { MergeAction?: unknown } | undefined)?.MergeAction ?? '')
-  const inserted = action.toUpperCase() === 'INSERT'
-
-  await pool
-    .request()
-    .input('PaymentKey', mssql.NVarChar(300), paymentKey)
-    .input('InvoiceCode', mssql.NVarChar(64), invoiceCode)
-    .input('Code', mssql.NVarChar(64), code ?? null)
-    .input('IssueDate', mssql.DateTime2(0), safeDate(issueDate))
-    .input('Amount', mssql.Decimal(18, 4), amount)
-    .input('PaymentFormCode', mssql.NVarChar(32), formCode ?? null)
-    .input('PaymentFormDescription', mssql.NVarChar(64), formDesc ?? null)
-    .input('CustomerCode', mssql.NVarChar(64), customerCode)
-    .input('CustomerName', mssql.NVarChar(256), customerName)
-    .input('CustomerTaxNumber', mssql.NVarChar(64), customerTaxNumber)
-    .input('CustomerLicenseNumber', mssql.NVarChar(64), customerLicenseNumber)
-    .input('PositionCode', mssql.NVarChar(64), positionCode)
-    .input('PositionDescription', mssql.NVarChar(256), positionDescription)
-    .input('SourceFileName', mssql.NVarChar(260), source.fileName)
-    .input('SourceFileDate', mssql.Date, source.fileDate ? new Date(source.fileDate) : null)
-    .input('SourceDepotCode', mssql.NVarChar(32), source.depotCode ?? null)
     .query(`
 MERGE dbo.Collections WITH (HOLDLOCK) AS t
 USING (SELECT
@@ -1346,14 +1295,19 @@ WHEN NOT MATCHED THEN INSERT (
   CustomerCode, CustomerName, CustomerTaxNumber, CustomerLicenseNumber,
   PositionCode, PositionDescription,
   SourceFileName, SourceFileDate, SourceDepotCode
-) VALUES (
+)
+VALUES (
   s.PaymentKey, s.InvoiceCode, s.Code, s.IssueDate, s.Amount,
   s.PaymentFormCode, s.PaymentFormDescription,
   s.CustomerCode, s.CustomerName, s.CustomerTaxNumber, s.CustomerLicenseNumber,
   s.PositionCode, s.PositionDescription,
   s.SourceFileName, s.SourceFileDate, s.SourceDepotCode
-);
+)
+OUTPUT $action AS MergeAction;
 `)
+
+  const action = String((insertRes.recordset?.[0] as { MergeAction?: unknown } | undefined)?.MergeAction ?? '')
+  const inserted = action.toUpperCase() === 'INSERT'
 
   return inserted
 }
@@ -1610,6 +1564,7 @@ async function cleanupDatabase(pool: mssql.ConnectionPool) {
 
   const deleteInOrder = [
     'dbo.InvoiceDetails',
+    'dbo.InvoicePayments',
     'dbo.Payments',
     'dbo.Collections',
     'dbo.InvoiceAllocations',
@@ -1631,6 +1586,7 @@ async function cleanupDatabase(pool: mssql.ConnectionPool) {
     'Users',
     'ImportFiles',
     'Invoices',
+    'InvoicePayments',
     'Payments',
     'Collections',
     'InvoiceAllocations',
@@ -1743,9 +1699,9 @@ WHERE SourceFileDate = @SourceFileDate
 
 DECLARE @Pay TABLE (PaymentKey NVARCHAR(300) PRIMARY KEY);
 INSERT INTO @Pay (PaymentKey)
-SELECT p.PaymentKey
-FROM dbo.Payments p
-JOIN @Inv i ON i.Code = p.InvoiceCode;
+SELECT c.PaymentKey
+FROM dbo.Collections c
+JOIN @Inv i ON i.Code = c.InvoiceCode;
 
 DECLARE @cPaymentAlloc INT = 0;
 DECLARE @cInvoiceAlloc INT = 0;
@@ -1766,8 +1722,11 @@ SET @cInvoiceAlloc = @@ROWCOUNT;
 DELETE d FROM dbo.InvoiceDetails d JOIN @Inv i ON i.Code = d.InvoiceCode;
 SET @cInvoiceDetails = @@ROWCOUNT;
 
-DELETE p FROM dbo.Payments p JOIN @Inv i ON i.Code = p.InvoiceCode;
+DELETE ip FROM dbo.InvoicePayments ip JOIN @Inv i ON i.Code = ip.InvoiceCode;
 SET @cPayments = @@ROWCOUNT;
+
+DELETE p FROM dbo.Payments p JOIN @Inv i ON i.Code = p.InvoiceCode;
+SET @cPayments = @cPayments + @@ROWCOUNT;
 
 DELETE c FROM dbo.Collections c JOIN @Inv i ON i.Code = c.InvoiceCode;
 SET @cCollections = @@ROWCOUNT;
@@ -1852,10 +1811,10 @@ WHERE SourceFileName = @FileName
 
 DECLARE @Pay TABLE (PaymentKey NVARCHAR(300) PRIMARY KEY);
 INSERT INTO @Pay (PaymentKey)
-SELECT DISTINCT p.PaymentKey
-FROM dbo.Payments p
-LEFT JOIN @Inv i ON i.Code = p.InvoiceCode
-WHERE p.SourceFileName = @FileName OR i.Code IS NOT NULL;
+SELECT DISTINCT c.PaymentKey
+FROM dbo.Collections c
+LEFT JOIN @Inv i ON i.Code = c.InvoiceCode
+WHERE c.SourceFileName = @FileName OR i.Code IS NOT NULL;
 
 DECLARE @Col TABLE (PaymentKey NVARCHAR(300) PRIMARY KEY);
 INSERT INTO @Col (PaymentKey)
@@ -1883,8 +1842,11 @@ SET @cInvoiceAlloc = @@ROWCOUNT;
 DELETE d FROM dbo.InvoiceDetails d JOIN @Inv i ON i.Code = d.InvoiceCode;
 SET @cInvoiceDetails = @@ROWCOUNT;
 
-DELETE p FROM dbo.Payments p WHERE EXISTS (SELECT 1 FROM @Pay k WHERE k.PaymentKey = p.PaymentKey);
+DELETE ip FROM dbo.InvoicePayments ip WHERE EXISTS (SELECT 1 FROM @Inv i WHERE i.Code = ip.InvoiceCode);
 SET @cPayments = @@ROWCOUNT;
+
+DELETE p FROM dbo.Payments p WHERE EXISTS (SELECT 1 FROM @Inv i WHERE i.Code = p.InvoiceCode);
+SET @cPayments = @cPayments + @@ROWCOUNT;
 
 DELETE c FROM dbo.Collections c WHERE EXISTS (SELECT 1 FROM @Col k WHERE k.PaymentKey = c.PaymentKey);
 SET @cCollections = @@ROWCOUNT;
@@ -2540,13 +2502,12 @@ SELECT
   p.Amount,
   p.PaymentFormCode,
   p.PaymentFormDescription
-FROM dbo.Payments p
+FROM dbo.InvoicePayments p
 JOIN dbo.Invoices i ON i.Code = p.InvoiceCode
 WHERE i.PositionCode = @PositionCode
-  AND p.PaymentSource = 'INVOICE'
   AND (@SourceFileDate IS NULL OR i.SourceFileDate = @SourceFileDate)
   AND (@SourceDepotCode IS NULL OR i.SourceDepotCode = @SourceDepotCode)
-ORDER BY p.Id
+ORDER BY p.PaymentKey
 `,
       )
 
@@ -2575,7 +2536,7 @@ WHERE i.PositionCode = @PositionCode
         `
 SELECT pa.PaymentKey, pa.AllocationsJson
 FROM dbo.PaymentAllocations pa
-JOIN dbo.Payments p ON p.PaymentKey = pa.PaymentKey
+JOIN dbo.Collections p ON p.PaymentKey = pa.PaymentKey
 JOIN dbo.Invoices i ON i.Code = p.InvoiceCode
 WHERE i.PositionCode = @PositionCode
   AND (@SourceFileDate IS NULL OR i.SourceFileDate = @SourceFileDate)
