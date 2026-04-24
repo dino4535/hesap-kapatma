@@ -98,6 +98,7 @@ export interface PositionRow {
   code: string
   description?: string
   invoiceCount: number
+  torbaTutari?: number
   mutabakatStatus?: 'DRAFT' | 'COMPLETED' | null
 }
 

@@ -2740,6 +2740,7 @@ export default function App() {
                     <div className="card-title">{p.invoiceCount} fatura</div>
                   </div>
                   <div className="card-title">{p.description ?? ''}</div>
+                  <div className="card-title">Torba: {formatMoney(Number(p.torbaTutari ?? 0))}</div>
                 </div>
               ))
             )}

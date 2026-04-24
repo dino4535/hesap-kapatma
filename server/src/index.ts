@@ -2579,23 +2579,66 @@ app.get('/api/positions', async (req, res) => {
       .input('SourceFileDate', mssql.Date, sourceFileDate)
       .input('SourceDepotCode', mssql.NVarChar(32), sourceDepotCode)
       .query(`
+;WITH base AS (
+  SELECT
+    i.position_code AS code,
+    MAX(dp.description) AS description,
+    COUNT(1) AS invoiceCount,
+    MAX(m.Status) AS mutabakatStatus
+  FROM dist2k.FACT_INVOICE i
+  LEFT JOIN dist2k.DIM_POSITION dp
+    ON dp.position_code = i.position_code
+  LEFT JOIN dbo.Mutabakat m
+    ON m.PositionCode = i.position_code
+    AND @SourceFileDate IS NOT NULL AND m.SourceFileDate = @SourceFileDate
+    AND @SourceDepotCode IS NOT NULL AND m.DepotCode = @SourceDepotCode
+  WHERE i.position_code IS NOT NULL AND LTRIM(RTRIM(i.position_code)) <> ''
+    AND (@SourceFileDate IS NULL OR i.source_file_date = @SourceFileDate)
+    AND (@SourceDepotCode IS NULL OR i.source_depot_code = @SourceDepotCode)
+  GROUP BY i.position_code
+),
+nakit_by_pos AS (
+  SELECT
+    p.position_code,
+    SUM(p.amount) AS nakitTutari
+  FROM dist2k.FACT_INVOICE_PAYMENT p
+  WHERE p.position_code IS NOT NULL AND LTRIM(RTRIM(p.position_code)) <> ''
+    AND (@SourceFileDate IS NULL OR p.source_file_date = @SourceFileDate)
+    AND (@SourceDepotCode IS NULL OR p.source_depot_code = @SourceDepotCode)
+    AND (
+      UPPER(LTRIM(RTRIM(ISNULL(p.paymentform_code, '')))) IN ('CASH', 'NAKIT')
+      OR LOWER(LTRIM(RTRIM(ISNULL(p.paymentform_desc, '')))) LIKE '%nakit%'
+    )
+  GROUP BY p.position_code
+),
+vadetah_by_pos AS (
+  SELECT
+    c.position_code,
+    SUM(c.amount) AS vadeliTahsilatTutari
+  FROM dist2k.FACT_COLLECTION c
+  WHERE c.position_code IS NOT NULL AND LTRIM(RTRIM(c.position_code)) <> ''
+    AND (@SourceFileDate IS NULL OR c.source_file_date = @SourceFileDate)
+    AND (@SourceDepotCode IS NULL OR c.source_depot_code = @SourceDepotCode)
+    AND (
+      UPPER(LTRIM(RTRIM(ISNULL(c.paymentform_code, '')))) LIKE 'VADETAH%'
+      OR LOWER(LTRIM(RTRIM(ISNULL(c.paymentform_desc, '')))) LIKE '%vadeli tahsilat%'
+    )
+    AND NOT (
+      UPPER(LTRIM(RTRIM(ISNULL(c.paymentform_code, '')))) = 'VADETAHHAV'
+      OR LOWER(LTRIM(RTRIM(ISNULL(c.paymentform_desc, '')))) LIKE '%vadeli tahsilat havale%'
+    )
+  GROUP BY c.position_code
+)
 SELECT
-  i.position_code AS code,
-  MAX(dp.description) AS description,
-  COUNT(1) AS invoiceCount,
-  MAX(m.Status) AS mutabakatStatus
-FROM dist2k.FACT_INVOICE i
-LEFT JOIN dist2k.DIM_POSITION dp
-  ON dp.position_code = i.position_code
-LEFT JOIN dbo.Mutabakat m
-  ON m.PositionCode = i.position_code
-  AND @SourceFileDate IS NOT NULL AND m.SourceFileDate = @SourceFileDate
-  AND @SourceDepotCode IS NOT NULL AND m.DepotCode = @SourceDepotCode
-WHERE i.position_code IS NOT NULL AND LTRIM(RTRIM(i.position_code)) <> ''
-  AND (@SourceFileDate IS NULL OR i.source_file_date = @SourceFileDate)
-  AND (@SourceDepotCode IS NULL OR i.source_depot_code = @SourceDepotCode)
-GROUP BY i.position_code
-ORDER BY i.position_code
+  b.code,
+  b.description,
+  b.invoiceCount,
+  b.mutabakatStatus,
+  CAST(ISNULL(n.nakitTutari, 0) + ISNULL(v.vadeliTahsilatTutari, 0) AS DECIMAL(18, 2)) AS torbaTutari
+FROM base b
+LEFT JOIN nakit_by_pos n ON n.position_code = b.code
+LEFT JOIN vadetah_by_pos v ON v.position_code = b.code
+ORDER BY b.code
 `)
     res.json({ ok: true, positions: r.recordset ?? [] })
   } catch (e) {
