@@ -686,7 +686,7 @@ export default function App() {
     for (const inv of positionInvoices) {
       const hasNakitPayment = (inv.payments ?? []).some((p) => normalizePaymentType(p.paymentFormCode, p.paymentFormDescription) === 'NAKIT')
       if (!hasNakitPayment) continue
-      total += inv.grossAmount ?? 0
+      total += inv.grossAmount ?? invoiceTotalAmount(inv)
     }
     return total
   }, [positionInvoices])
