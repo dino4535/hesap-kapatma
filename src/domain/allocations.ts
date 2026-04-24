@@ -8,7 +8,14 @@ export interface Allocation {
 }
 
 export function invoiceTotalAmount(inv: Invoice) {
-  return inv.grossAmount ?? (inv.netAmount ?? 0)
+  const net = Number(inv.netAmount) || 0
+  const gross = Number(inv.grossAmount) || 0
+  if (gross <= 0) return net
+
+  const explicitDiscount = Number(inv.totalDiscount) || 0
+  const inferredDiscount = net > 0 && gross > net ? gross - net : 0
+  const discount = explicitDiscount > 0 ? explicitDiscount : inferredDiscount
+  return Math.max(0, gross - discount)
 }
 
 export function computePaymentKey(invoiceCode: string, p: Payment) {
@@ -64,7 +71,16 @@ export function deriveInvoiceAllocations(inv: Invoice): Allocation[] {
 
 export function getInvoiceAllocations(inv: Invoice, overrides: Record<string, Allocation[]>) {
   const fromOverride = overrides[inv.code]
-  if (fromOverride) return normalizeAllocations(fromOverride)
+  if (fromOverride) {
+    const normalized = normalizeAllocations(fromOverride)
+    const sum = normalized.reduce((s, a) => s + a.amount, 0)
+    const total = invoiceTotalAmount(inv)
+    if (sum > 0 && total > 0) {
+      const factor = total / sum
+      return normalizeAllocations(normalized.map((a) => ({ ...a, amount: a.amount * factor })))
+    }
+    return normalized
+  }
   return deriveInvoiceAllocations(inv)
 }
 

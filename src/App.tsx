@@ -650,7 +650,15 @@ export default function App() {
   }, [positionCollections, paymentAllocations])
 
   const invoiceTotal = useMemo(() => positionInvoices.reduce((s, i) => s + invoiceTotalAmount(i), 0), [positionInvoices])
-  const discountTotalAll = useMemo(() => positionInvoices.reduce((s, i) => s + (i.totalDiscount ?? 0), 0), [positionInvoices])
+  const discountTotalAll = useMemo(() => {
+    return positionInvoices.reduce((s, i) => {
+      const gross = i.grossAmount ?? 0
+      const net = i.netAmount ?? 0
+      const explicit = i.totalDiscount ?? 0
+      const inferred = gross > 0 && net > 0 && gross > net ? gross - net : 0
+      return s + (explicit > 0 ? explicit : inferred)
+    }, 0)
+  }, [positionInvoices])
   const paymentTotal = useMemo(() => positionCollections.reduce((s, c) => s + (c.amount ?? 0), 0), [positionCollections])
 
   const havaleInvoicesByBayi = useMemo(() => {
@@ -689,22 +697,8 @@ export default function App() {
     const collectionVadeliTahsilat = totalsByTypePayments.VADETAH
     const collectionVadeliTahsilatHavale = totalsByTypePayments.VADETAHHAV
 
-    const havaleIskonto = positionInvoices.reduce((s, inv) => {
-      const allocs = getInvoiceAllocations(inv, invoiceAllocations)
-      const havalePart = allocationAmountForType(allocs, 'HAVALE')
-      if (havalePart <= 0) return s
-      return s + (inv.totalDiscount ?? 0)
-    }, 0)
-
-    const havaleTutari = havaleIskonto > 0 ? Math.max(0, invoiceHavale - havaleIskonto) : invoiceHavale
-    const nakitIskonto = positionInvoices.reduce((s, inv) => {
-      const allocs = getInvoiceAllocations(inv, invoiceAllocations)
-      const nakitPart = allocationAmountForType(allocs, 'NAKIT')
-      if (nakitPart <= 0) return s
-      return s + (inv.totalDiscount ?? 0)
-    }, 0)
-
-    const nakitTutari = nakitIskonto > 0 ? Math.max(0, invoiceNakit - nakitIskonto) : invoiceNakit
+    const havaleTutari = invoiceHavale
+    const nakitTutari = invoiceNakit
     const rutToplam = havaleTutari + nakitTutari
 
     const vadeliSatisTutari = totalsByTypeInvoices.VADELI
@@ -732,8 +726,6 @@ export default function App() {
     discountTotalAll,
     paymentTotal,
     invoiceTotal,
-    positionInvoices,
-    invoiceAllocations,
   ])
 
   const detailInvoices = useMemo(() => {
