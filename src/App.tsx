@@ -1,11 +1,9 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import {
-  type AdminManimSettings,
   completeMutabakat,
   createUserAsAdmin,
   deleteDataByDateDepot,
   deleteDataByImportFile,
-  fetchAdminManimSettings,
   findManimDekont,
   fetchManimReceipts,
   fetchImportJobStatus,
@@ -19,7 +17,6 @@ import {
   deletePositionRepresentative,
   saveMutabakat,
   savePositionRepresentative,
-  updateAdminManimSettings,
   saveInvoiceAllocationsSql,
   savePaymentAllocationsSql,
   type ManimDekontCandidate,
@@ -309,24 +306,6 @@ export default function App() {
   const [adminDeleteDate, setAdminDeleteDate] = useState('')
   const [adminDeleteDepot, setAdminDeleteDepot] = useState('')
   const [adminDeleteFileName, setAdminDeleteFileName] = useState('')
-  const [adminSettingsLoading, setAdminSettingsLoading] = useState(false)
-  const [adminManimBaseUrl, setAdminManimBaseUrl] = useState('')
-  const [adminManimAuthPath, setAdminManimAuthPath] = useState('/auth/login')
-  const [adminManimUser, setAdminManimUser] = useState('')
-  const [adminManimPassword, setAdminManimPassword] = useState('')
-  const [adminManimToken, setAdminManimToken] = useState('')
-  const [adminManimPasswordSet, setAdminManimPasswordSet] = useState(false)
-  const [adminManimTokenSkewSec, setAdminManimTokenSkewSec] = useState('60')
-
-  const applyAdminManimSettings = (settings: AdminManimSettings) => {
-    setAdminManimBaseUrl(settings.manimBaseUrl ?? '')
-    setAdminManimAuthPath(settings.manimAuthPath ?? '/auth/login')
-    setAdminManimUser(settings.manimUser ?? '')
-    setAdminManimToken(settings.manimToken ?? '')
-    setAdminManimTokenSkewSec(String(settings.manimTokenRefreshSkewSec ?? 60))
-    setAdminManimPassword('')
-    setAdminManimPasswordSet(Boolean(settings.manimPasswordSet))
-  }
 
   useEffect(() => {
     if (!currentUser) return
@@ -364,23 +343,17 @@ export default function App() {
     if (!currentUser || !currentUser.isAdmin) return
     if (page !== 'user-admin') return
     setAdminUsersLoading(true)
-    setAdminSettingsLoading(true)
     setAdminStatus(null)
-    Promise.all([fetchUsers({ userName: currentUser.userName }), fetchAdminManimSettings({ userName: currentUser.userName })])
-      .then(([usersRes, settingsRes]) => {
-        if (!usersRes.ok) throw new Error(usersRes.message || 'Kullanıcı listesi alınamadı')
-        if (!settingsRes.ok || !settingsRes.settings) throw new Error(settingsRes.message || 'Manim ayarları alınamadı')
-        setAdminUsers(usersRes.users)
-        applyAdminManimSettings(settingsRes.settings)
+    fetchUsers({ userName: currentUser.userName })
+      .then((r) => {
+        if (!r.ok) throw new Error(r.message || 'Kullanıcı listesi alınamadı')
+        setAdminUsers(r.users)
       })
       .catch((e) => {
-        setAdminStatus({ type: 'error', message: e instanceof Error ? e.message : 'Admin verileri alınamadı' })
+        setAdminStatus({ type: 'error', message: e instanceof Error ? e.message : 'Kullanıcı listesi alınamadı' })
         setAdminUsers([])
       })
-      .finally(() => {
-        setAdminUsersLoading(false)
-        setAdminSettingsLoading(false)
-      })
+      .finally(() => setAdminUsersLoading(false))
   }, [currentUser, page])
 
   useEffect(() => {
@@ -1832,89 +1805,6 @@ export default function App() {
                       )}
                     </tbody>
                   </table>
-                </div>
-              </div>
-
-              <div className="table-section">
-                <div className="table-header">
-                  <span className="table-title">Manim Ayarları (.env)</span>
-                  <div className="actions"></div>
-                </div>
-                <div className="upload-section">
-                  <div className="upload-box" style={{ gap: 10, alignItems: 'end', flexWrap: 'wrap' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 320, flex: 1 }}>
-                      <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>MANIM_BASE_URL</label>
-                      <input value={adminManimBaseUrl} onChange={(e) => setAdminManimBaseUrl(e.target.value)} placeholder="https://..." />
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 220 }}>
-                      <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>MANIM_AUTH_PATH</label>
-                      <input value={adminManimAuthPath} onChange={(e) => setAdminManimAuthPath(e.target.value)} placeholder="/auth/login" />
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 220 }}>
-                      <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>MANIM_USER</label>
-                      <input value={adminManimUser} onChange={(e) => setAdminManimUser(e.target.value)} placeholder="kullanici" />
-                    </div>
-                  </div>
-
-                  <div className="upload-box" style={{ gap: 10, alignItems: 'end', flexWrap: 'wrap' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 220 }}>
-                      <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>MANIM_PASSWORD</label>
-                      <input
-                        value={adminManimPassword}
-                        onChange={(e) => setAdminManimPassword(e.target.value)}
-                        type="password"
-                        placeholder={adminManimPasswordSet ? 'Değiştirmek için yeni şifre girin' : 'şifre'}
-                      />
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 320, flex: 1 }}>
-                      <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>MANIM_TOKEN (opsiyonel)</label>
-                      <input value={adminManimToken} onChange={(e) => setAdminManimToken(e.target.value)} type="password" placeholder="statik token" />
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 180 }}>
-                      <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>MANIM_TOKEN_REFRESH_SKEW_SEC</label>
-                      <input type="number" min={1} value={adminManimTokenSkewSec} onChange={(e) => setAdminManimTokenSkewSec(e.target.value)} />
-                    </div>
-                    <button
-                      className="btn btn-primary"
-                      type="button"
-                      disabled={adminSettingsLoading}
-                      onClick={async () => {
-                        const skew = Number(adminManimTokenSkewSec)
-                        if (!Number.isFinite(skew) || skew <= 0) {
-                          setAdminStatus({ type: 'error', message: 'Token yenileme saniyesi geçersiz' })
-                          return
-                        }
-                        setAdminSettingsLoading(true)
-                        setAdminStatus({ type: 'info', message: 'Ayarlar kaydediliyor...' })
-                        const payload: {
-                          manimBaseUrl: string
-                          manimAuthPath: string
-                          manimUser: string
-                          manimToken: string
-                          manimTokenRefreshSkewSec: number
-                          manimPassword?: string
-                        } = {
-                          manimBaseUrl: adminManimBaseUrl.trim(),
-                          manimAuthPath: adminManimAuthPath.trim() || '/auth/login',
-                          manimUser: adminManimUser.trim(),
-                          manimToken: adminManimToken.trim(),
-                          manimTokenRefreshSkewSec: Math.floor(skew),
-                        }
-                        if (adminManimPassword) payload.manimPassword = adminManimPassword
-                        const r = await updateAdminManimSettings({ userName: currentUser.userName, settings: payload })
-                        if (!r.ok || !r.settings) {
-                          setAdminStatus({ type: 'error', message: r.message || 'Ayarlar kaydedilemedi' })
-                          setAdminSettingsLoading(false)
-                          return
-                        }
-                        applyAdminManimSettings(r.settings)
-                        setAdminStatus({ type: 'success', message: 'Manim ayarları güncellendi' })
-                        setAdminSettingsLoading(false)
-                      }}
-                    >
-                      {adminSettingsLoading ? 'Kaydediliyor...' : 'Ayarları Kaydet'}
-                    </button>
-                  </div>
                 </div>
               </div>
 
