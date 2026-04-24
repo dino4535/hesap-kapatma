@@ -1212,33 +1212,6 @@ async function upsertDist2kCollection(pool: mssql.ConnectionPool, state: ImportR
   await ensureDist2kCustomer(pool, state, customerCode, customerName, customerTaxNumber, customerLicenseNumber)
 
   const invoiceCodeNormalized = invoiceCode.slice(0, 60)
-  if (!state.knownInvoices.has(invoiceCodeNormalized)) {
-    await pool
-      .request()
-      .input('InvoiceCode', mssql.NVarChar(60), invoiceCodeNormalized)
-      .input('CustomerCode', mssql.NVarChar(30), customerCode)
-      .input('PositionCode', mssql.NVarChar(20), positionCode)
-      .input('SourceFileName', mssql.NVarChar(260), source.fileName)
-      .input('SourceFileDate', mssql.Date, source.fileDate ? new Date(source.fileDate) : null)
-      .input('SourceDepotCode', mssql.NVarChar(32), source.depotCode ?? null)
-      .query(
-        `
-IF NOT EXISTS (SELECT 1 FROM dist2k.FACT_INVOICE WHERE invoice_code = @InvoiceCode)
-BEGIN
-  INSERT INTO dist2k.FACT_INVOICE (
-    invoice_code, is_edos, legal_number, status, sales_type, issue_date, due_date, credit_days,
-    net_amount, outstanding_amount, tax_amount, total_discount, customer_code, position_code,
-    source_file_name, source_file_date, source_depot_code
-  ) VALUES (
-    @InvoiceCode, 0, @InvoiceCode, 'I', 'UNKNOWN', CONVERT(DATETIME2(0), '1900-01-01'), NULL, 0,
-    0, 0, 0, 0, @CustomerCode, @PositionCode,
-    @SourceFileName, @SourceFileDate, @SourceDepotCode
-  );
-END
-`,
-      )
-    state.knownInvoices.add(invoiceCodeNormalized)
-  }
 
   const code = toStringOrUndef(c.CODE)
   const issueDate = toStringOrUndef(c.ISSUEDATE)
