@@ -48,8 +48,17 @@ const env = {
 
 const manimEnvFileCandidates = [
   path.resolve(moduleDir, '../.env'),
+  path.resolve(moduleDir, '../.env.local'),
+  path.resolve(moduleDir, '../.env.production'),
+  path.resolve(moduleDir, '../.env.development'),
   path.resolve(moduleDir, '../../.env'),
+  path.resolve(moduleDir, '../../.env.local'),
+  path.resolve(moduleDir, '../../.env.production'),
+  path.resolve(moduleDir, '../../.env.development'),
   path.resolve(process.cwd(), '.env'),
+  path.resolve(process.cwd(), '.env.local'),
+  path.resolve(process.cwd(), '.env.production'),
+  path.resolve(process.cwd(), '.env.development'),
 ]
 
 function firstNonEmpty(values: Array<unknown>) {
@@ -539,7 +548,12 @@ async function refreshManimToken(): Promise<string> {
   }
 
   if (!env.manimUser.trim() || !env.manimPassword.trim()) {
-    throw new Error('Manim token suresi doldu. Otomatik yenileme icin MANIM_USER ve MANIM_PASSWORD gerekli.')
+    const missing: string[] = []
+    if (!env.manimUser.trim()) missing.push('MANIM_USER')
+    if (!env.manimPassword.trim()) missing.push('MANIM_PASSWORD')
+    throw new Error(
+      `Manim token suresi doldu. Otomatik yenileme icin MANIM_USER ve MANIM_PASSWORD gerekli. Eksik: ${missing.join(', ')}.`,
+    )
   }
 
   const authPaths = uniqueStrings([env.manimAuthPath.trim(), '/auth/login'])
