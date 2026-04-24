@@ -469,7 +469,26 @@ type ManimReceiptCandidate = {
 }
 
 function manimIsoDay(d: Date) {
-  return d.toISOString().slice(0, 10)
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Istanbul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d)
+}
+
+function manimIstanbulUtcRange(isoDay: string) {
+  const [yRaw, mRaw, dRaw] = isoDay.split('-')
+  const y = Number(yRaw)
+  const m = Number(mRaw)
+  const d = Number(dRaw)
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) {
+    return { startIso: `${isoDay}T00:00:00.000Z`, endIso: `${isoDay}T23:59:59.999Z` }
+  }
+  // Turkey is UTC+3 year-round. Convert local-day boundaries to UTC.
+  const start = new Date(Date.UTC(y, m - 1, d, -3, 0, 0, 0))
+  const end = new Date(Date.UTC(y, m - 1, d, 20, 59, 59, 999))
+  return { startIso: start.toISOString(), endIso: end.toISOString() }
 }
 
 function manimAbsDiff(a: number, b: number) {
@@ -2694,8 +2713,7 @@ app.get('/api/manim/dekont', async (req, res) => {
     const targetDay = manimIsoDay(parsedDate.date)
     const targets = new Set([targetDay])
 
-    const startIso = `${targetDay}T00:00:00.000Z`
-    const endIso = `${targetDay}T23:59:59.999Z`
+    const { startIso, endIso } = manimIstanbulUtcRange(targetDay)
 
     const scored: Array<ManimReceiptCandidate & { dayDiff: number; amountDiff: number; directionPenalty: number; timeScore: number }> = []
 
@@ -2819,8 +2837,7 @@ app.get('/api/manim/receipts', async (req, res) => {
     const targetDay = manimIsoDay(parsedDate.date)
     const targets = new Set([targetDay])
 
-    const startIso = `${targetDay}T00:00:00.000Z`
-    const endIso = `${targetDay}T23:59:59.999Z`
+    const { startIso, endIso } = manimIstanbulUtcRange(targetDay)
 
     const dedupe = new Map<string, ManimReceiptCandidate & { timeScore: number }>()
 
