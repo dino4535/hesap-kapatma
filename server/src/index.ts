@@ -478,166 +478,25 @@ BEGIN
   ALTER TABLE dbo.ImportFiles ADD JsonModDate DATETIME2(0) NULL;
 END
 
-IF OBJECT_ID('dbo.Invoices', 'U') IS NULL
-BEGIN
-  CREATE TABLE dbo.Invoices (
-    Code NVARCHAR(64) NOT NULL PRIMARY KEY,
-    IsEdos BIT NULL,
-    LegalNumber NVARCHAR(64) NULL,
-    Status NVARCHAR(32) NULL,
-    SalesType NVARCHAR(32) NOT NULL,
-    IsStub BIT NOT NULL CONSTRAINT DF_Invoices_IsStub DEFAULT (0),
-    IssueDate DATETIME2(0) NULL,
-    DueDate DATETIME2(0) NULL,
-    CreditDays INT NULL,
-    NetAmount DECIMAL(18,4) NOT NULL,
-    GrossAmount DECIMAL(18,4) NULL,
-    OutstandingAmount DECIMAL(18,4) NULL,
-    TaxAmount DECIMAL(18,4) NULL,
-    TotalDiscount DECIMAL(18,4) NULL,
-    ReturnGoodsCount INT NULL,
-    CustomerCode NVARCHAR(64) NULL,
-    CustomerName NVARCHAR(256) NOT NULL,
-    CustomerTaxNumber NVARCHAR(64) NULL,
-    CustomerLicenseNumber NVARCHAR(64) NULL,
-    PositionCode NVARCHAR(64) NOT NULL,
-    PositionDescription NVARCHAR(256) NULL,
-    SourceFileName NVARCHAR(260) NULL,
-    SourceFileDate DATE NULL,
-    SourceDepotCode NVARCHAR(32) NULL,
-    UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_Invoices_UpdatedAt DEFAULT (SYSUTCDATETIME())
-  );
-END
-
-IF COL_LENGTH('dbo.Invoices', 'IsEdos') IS NULL
-BEGIN
-  ALTER TABLE dbo.Invoices ADD IsEdos BIT NULL;
-END
-
-IF COL_LENGTH('dbo.Invoices', 'RawJson') IS NOT NULL
-BEGIN
-  ALTER TABLE dbo.Invoices DROP COLUMN RawJson;
-END
-IF COL_LENGTH('dbo.Invoices', 'ReturnGoodsJson') IS NOT NULL
-BEGIN
-  ALTER TABLE dbo.Invoices DROP COLUMN ReturnGoodsJson;
-END
-
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Invoices_SourceFileDate_Depot_Position' AND object_id = OBJECT_ID('dbo.Invoices'))
-BEGIN
-  CREATE INDEX IX_Invoices_SourceFileDate_Depot_Position ON dbo.Invoices (SourceFileDate, SourceDepotCode, PositionCode);
-END
-
-IF COL_LENGTH('dbo.Invoices', 'GrossAmount') IS NULL
-BEGIN
-  ALTER TABLE dbo.Invoices ADD GrossAmount DECIMAL(18,4) NULL;
-END
-
-IF COL_LENGTH('dbo.Invoices', 'ReturnGoodsCount') IS NULL
-BEGIN
-  ALTER TABLE dbo.Invoices ADD ReturnGoodsCount INT NULL;
-END
-
-IF COL_LENGTH('dbo.Invoices', 'IsStub') IS NULL
-BEGIN
-  ALTER TABLE dbo.Invoices ADD IsStub BIT NOT NULL CONSTRAINT DF_Invoices_IsStub DEFAULT (0);
-END
-EXEC(N'
-UPDATE dbo.Invoices
-SET IsStub = 1
-WHERE IsStub = 0
-  AND SalesType = ''UNKNOWN''
-  AND NetAmount = 0
-  AND LegalNumber IS NULL
-  AND IssueDate IS NULL
-  AND DueDate IS NULL;
-');
-
-IF OBJECT_ID('dbo.Payments', 'U') IS NULL
-BEGIN
-  CREATE TABLE dbo.Payments (
-    Id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
-    PaymentKey NVARCHAR(300) NOT NULL UNIQUE,
-    InvoiceCode NVARCHAR(64) NOT NULL,
-    Code NVARCHAR(64) NULL,
-    IssueDate DATETIME2(0) NULL,
-    Amount DECIMAL(18,4) NOT NULL,
-    PaymentFormCode NVARCHAR(32) NULL,
-    PaymentFormDescription NVARCHAR(64) NULL,
-    CustomerCode NVARCHAR(64) NULL,
-    CustomerName NVARCHAR(256) NULL,
-    CustomerTaxNumber NVARCHAR(64) NULL,
-    CustomerLicenseNumber NVARCHAR(64) NULL,
-    PositionCode NVARCHAR(64) NULL,
-    PositionDescription NVARCHAR(256) NULL,
-    SourceFileName NVARCHAR(260) NULL,
-    SourceFileDate DATE NULL,
-    SourceDepotCode NVARCHAR(32) NULL,
-    CONSTRAINT FK_Payments_Invoices FOREIGN KEY (InvoiceCode) REFERENCES dbo.Invoices(Code)
-  );
-END
-
-IF COL_LENGTH('dbo.Payments', 'RawJson') IS NOT NULL
-BEGIN
-  ALTER TABLE dbo.Payments DROP COLUMN RawJson;
-END
-
-IF COL_LENGTH('dbo.Payments', 'PaymentSource') IS NULL
-BEGIN
-  ALTER TABLE dbo.Payments ADD PaymentSource NVARCHAR(16) NOT NULL CONSTRAINT DF_Payments_PaymentSource DEFAULT ('COLLECTION');
-END
-
-IF COL_LENGTH('dbo.Payments', 'CustomerCode') IS NULL
-BEGIN
-  ALTER TABLE dbo.Payments ADD CustomerCode NVARCHAR(64) NULL;
-END
-IF COL_LENGTH('dbo.Payments', 'CustomerName') IS NULL
-BEGIN
-  ALTER TABLE dbo.Payments ADD CustomerName NVARCHAR(256) NULL;
-END
-IF COL_LENGTH('dbo.Payments', 'CustomerTaxNumber') IS NULL
-BEGIN
-  ALTER TABLE dbo.Payments ADD CustomerTaxNumber NVARCHAR(64) NULL;
-END
-IF COL_LENGTH('dbo.Payments', 'CustomerLicenseNumber') IS NULL
-BEGIN
-  ALTER TABLE dbo.Payments ADD CustomerLicenseNumber NVARCHAR(64) NULL;
-END
-IF COL_LENGTH('dbo.Payments', 'PositionCode') IS NULL
-BEGIN
-  ALTER TABLE dbo.Payments ADD PositionCode NVARCHAR(64) NULL;
-END
-IF COL_LENGTH('dbo.Payments', 'PositionDescription') IS NULL
-BEGIN
-  ALTER TABLE dbo.Payments ADD PositionDescription NVARCHAR(256) NULL;
-END
-IF COL_LENGTH('dbo.Payments', 'SourceFileDate') IS NULL
-BEGIN
-  ALTER TABLE dbo.Payments ADD SourceFileDate DATE NULL;
-END
-IF COL_LENGTH('dbo.Payments', 'SourceDepotCode') IS NULL
-BEGIN
-  ALTER TABLE dbo.Payments ADD SourceDepotCode NVARCHAR(32) NULL;
-END
-IF COL_LENGTH('dbo.Payments', 'UpdatedAt') IS NULL
-BEGIN
-  ALTER TABLE dbo.Payments ADD UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_Payments_UpdatedAt DEFAULT (SYSUTCDATETIME());
-END
-
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Payments_Invoice_Source' AND object_id = OBJECT_ID('dbo.Payments'))
-BEGIN
-  CREATE INDEX IX_Payments_Invoice_Source ON dbo.Payments (InvoiceCode, PaymentSource);
-END
-
 IF OBJECT_ID('dbo.InvoiceAllocations', 'U') IS NULL
 BEGIN
   CREATE TABLE dbo.InvoiceAllocations (
     InvoiceCode NVARCHAR(64) NOT NULL PRIMARY KEY,
     AllocationsJson NVARCHAR(MAX) NOT NULL,
     UpdatedBy NVARCHAR(64) NULL,
-    UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_InvoiceAllocations_UpdatedAt DEFAULT (SYSUTCDATETIME()),
-    CONSTRAINT FK_InvoiceAllocations_Invoices FOREIGN KEY (InvoiceCode) REFERENCES dbo.Invoices(Code)
+    UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_InvoiceAllocations_UpdatedAt DEFAULT (SYSUTCDATETIME())
   );
+END
+
+IF OBJECT_ID('dbo.InvoiceAllocations', 'U') IS NOT NULL
+   AND EXISTS (
+     SELECT 1
+     FROM sys.foreign_keys
+     WHERE name = 'FK_InvoiceAllocations_Invoices'
+       AND parent_object_id = OBJECT_ID('dbo.InvoiceAllocations')
+   )
+BEGIN
+  ALTER TABLE dbo.InvoiceAllocations DROP CONSTRAINT FK_InvoiceAllocations_Invoices;
 END
 
 IF OBJECT_ID('dbo.PaymentAllocations', 'U') IS NULL
@@ -661,124 +520,6 @@ BEGIN
     ChangedBy NVARCHAR(64) NULL,
     ChangedAt DATETIME2(0) NOT NULL CONSTRAINT DF_AllocationEdits_ChangedAt DEFAULT (SYSUTCDATETIME())
   );
-END
-
-IF OBJECT_ID('dbo.InvoiceDetails', 'U') IS NULL
-BEGIN
-  CREATE TABLE dbo.InvoiceDetails (
-    InvoiceCode NVARCHAR(64) NOT NULL,
-    LineNumber INT NOT NULL,
-    ProductSequence INT NULL,
-    ProductCode NVARCHAR(64) NULL,
-    ProductDescription NVARCHAR(256) NULL,
-    Quantity DECIMAL(18,4) NULL,
-    NetAmount DECIMAL(18,4) NULL,
-    GrossAmount DECIMAL(18,4) NULL,
-    Price DECIMAL(18,4) NULL,
-    Availability INT NULL,
-    CONSTRAINT PK_InvoiceDetails PRIMARY KEY (InvoiceCode, LineNumber),
-    CONSTRAINT FK_InvoiceDetails_Invoices FOREIGN KEY (InvoiceCode) REFERENCES dbo.Invoices(Code)
-  );
-END
-
-IF COL_LENGTH('dbo.InvoiceDetails', 'RawJson') IS NOT NULL
-BEGIN
-  ALTER TABLE dbo.InvoiceDetails DROP COLUMN RawJson;
-END
-
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Payments_SourceFileDate_Depot_Source' AND object_id = OBJECT_ID('dbo.Payments'))
-BEGIN
-  CREATE INDEX IX_Payments_SourceFileDate_Depot_Source ON dbo.Payments (SourceFileDate, SourceDepotCode, PaymentSource);
-END
-
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Payments_SourceFileDate_Depot_Position' AND object_id = OBJECT_ID('dbo.Payments'))
-BEGIN
-  CREATE INDEX IX_Payments_SourceFileDate_Depot_Position ON dbo.Payments (SourceFileDate, SourceDepotCode, PositionCode);
-END
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Payments_CustomerCode' AND object_id = OBJECT_ID('dbo.Payments'))
-BEGIN
-  CREATE INDEX IX_Payments_CustomerCode ON dbo.Payments (CustomerCode);
-END
-
-IF OBJECT_ID('dbo.InvoicePayments', 'U') IS NULL
-BEGIN
-  CREATE TABLE dbo.InvoicePayments (
-    PaymentKey NVARCHAR(300) NOT NULL PRIMARY KEY,
-    InvoiceCode NVARCHAR(64) NOT NULL,
-    Code NVARCHAR(64) NULL,
-    IssueDate DATETIME2(0) NULL,
-    Amount DECIMAL(18,4) NOT NULL,
-    PaymentFormCode NVARCHAR(32) NULL,
-    PaymentFormDescription NVARCHAR(64) NULL,
-    CustomerCode NVARCHAR(64) NULL,
-    CustomerName NVARCHAR(256) NULL,
-    CustomerTaxNumber NVARCHAR(64) NULL,
-    CustomerLicenseNumber NVARCHAR(64) NULL,
-    PositionCode NVARCHAR(64) NULL,
-    PositionDescription NVARCHAR(256) NULL,
-    SourceFileName NVARCHAR(260) NULL,
-    SourceFileDate DATE NULL,
-    SourceDepotCode NVARCHAR(32) NULL,
-    UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_InvoicePayments_UpdatedAt DEFAULT (SYSUTCDATETIME()),
-    CONSTRAINT FK_InvoicePayments_Invoices FOREIGN KEY (InvoiceCode) REFERENCES dbo.Invoices(Code)
-  );
-END
-
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_InvoicePayments_InvoiceCode' AND object_id = OBJECT_ID('dbo.InvoicePayments'))
-BEGIN
-  CREATE INDEX IX_InvoicePayments_InvoiceCode ON dbo.InvoicePayments (InvoiceCode);
-END
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_InvoicePayments_SourceFileDate_Depot_Position' AND object_id = OBJECT_ID('dbo.InvoicePayments'))
-BEGIN
-  CREATE INDEX IX_InvoicePayments_SourceFileDate_Depot_Position ON dbo.InvoicePayments (SourceFileDate, SourceDepotCode, PositionCode);
-END
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_InvoicePayments_CustomerCode' AND object_id = OBJECT_ID('dbo.InvoicePayments'))
-BEGIN
-  CREATE INDEX IX_InvoicePayments_CustomerCode ON dbo.InvoicePayments (CustomerCode);
-END
-
-IF OBJECT_ID('dbo.Collections', 'U') IS NULL
-BEGIN
-  CREATE TABLE dbo.Collections (
-    PaymentKey NVARCHAR(300) NOT NULL PRIMARY KEY,
-    InvoiceCode NVARCHAR(64) NOT NULL,
-    Code NVARCHAR(64) NULL,
-    IssueDate DATETIME2(0) NULL,
-    Amount DECIMAL(18,4) NOT NULL,
-    PaymentFormCode NVARCHAR(32) NULL,
-    PaymentFormDescription NVARCHAR(64) NULL,
-    CustomerCode NVARCHAR(64) NULL,
-    CustomerName NVARCHAR(256) NULL,
-    CustomerTaxNumber NVARCHAR(64) NULL,
-    CustomerLicenseNumber NVARCHAR(64) NULL,
-    PositionCode NVARCHAR(64) NULL,
-    PositionDescription NVARCHAR(256) NULL,
-    SourceFileName NVARCHAR(260) NULL,
-    SourceFileDate DATE NULL,
-    SourceDepotCode NVARCHAR(32) NULL,
-    UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_Collections_UpdatedAt DEFAULT (SYSUTCDATETIME()),
-    CONSTRAINT FK_Collections_Invoices FOREIGN KEY (InvoiceCode) REFERENCES dbo.Invoices(Code)
-  );
-END
-
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Collections_InvoiceCode' AND object_id = OBJECT_ID('dbo.Collections'))
-BEGIN
-  CREATE INDEX IX_Collections_InvoiceCode ON dbo.Collections (InvoiceCode);
-END
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Collections_SourceFileDate_Depot_Position' AND object_id = OBJECT_ID('dbo.Collections'))
-BEGIN
-  CREATE INDEX IX_Collections_SourceFileDate_Depot_Position ON dbo.Collections (SourceFileDate, SourceDepotCode, PositionCode);
-END
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Collections_CustomerCode' AND object_id = OBJECT_ID('dbo.Collections'))
-BEGIN
-  CREATE INDEX IX_Collections_CustomerCode ON dbo.Collections (CustomerCode);
-END
-
-IF OBJECT_ID('dbo.InvoiceDetails', 'U') IS NOT NULL
-   AND COL_LENGTH('dbo.InvoiceDetails', 'LineNo') IS NOT NULL
-   AND COL_LENGTH('dbo.InvoiceDetails', 'LineNumber') IS NULL
-BEGIN
-  EXEC sp_rename 'dbo.InvoiceDetails.LineNo', 'LineNumber', 'COLUMN';
 END
 
 IF OBJECT_ID('dbo.Mutabakat', 'U') IS NULL
@@ -826,6 +567,155 @@ BEGIN
     UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_PositionRepresentativeMap_UpdatedAt DEFAULT (SYSUTCDATETIME())
   );
 END
+
+IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'dist2k')
+BEGIN
+  EXEC('CREATE SCHEMA dist2k');
+END
+
+IF OBJECT_ID('dist2k.DIM_POSITION', 'U') IS NULL
+BEGIN
+  CREATE TABLE dist2k.DIM_POSITION (
+    position_code NVARCHAR(20) NOT NULL,
+    description NVARCHAR(100) NOT NULL,
+    CONSTRAINT PK_DIM_POSITION PRIMARY KEY (position_code)
+  );
+END
+
+IF OBJECT_ID('dist2k.DIM_CUSTOMER', 'U') IS NULL
+BEGIN
+  CREATE TABLE dist2k.DIM_CUSTOMER (
+    customer_code NVARCHAR(30) NOT NULL,
+    registered_name NVARCHAR(200) NOT NULL,
+    tax_number NVARCHAR(20) NULL,
+    license_number NVARCHAR(30) NULL,
+    CONSTRAINT PK_DIM_CUSTOMER PRIMARY KEY (customer_code)
+  );
+END
+
+IF OBJECT_ID('dist2k.DIM_PRODUCT', 'U') IS NULL
+BEGIN
+  CREATE TABLE dist2k.DIM_PRODUCT (
+    product_code NVARCHAR(20) NOT NULL,
+    sequence_no INT NOT NULL,
+    description NVARCHAR(100) NOT NULL,
+    CONSTRAINT PK_DIM_PRODUCT PRIMARY KEY (product_code)
+  );
+END
+
+IF OBJECT_ID('dist2k.FACT_INVOICE', 'U') IS NULL
+BEGIN
+  CREATE TABLE dist2k.FACT_INVOICE (
+    invoice_code NVARCHAR(60) NOT NULL,
+    is_edos BIT NOT NULL CONSTRAINT DF_FACT_INVOICE_is_edos DEFAULT (0),
+    legal_number NVARCHAR(30) NOT NULL,
+    status CHAR(1) NOT NULL,
+    sales_type NVARCHAR(20) NOT NULL,
+    issue_date DATETIME2(0) NOT NULL,
+    due_date DATETIME2(0) NULL,
+    credit_days INT NOT NULL CONSTRAINT DF_FACT_INVOICE_credit_days DEFAULT (0),
+    net_amount DECIMAL(18,4) NOT NULL CONSTRAINT DF_FACT_INVOICE_net_amount DEFAULT (0),
+    outstanding_amount DECIMAL(18,4) NOT NULL CONSTRAINT DF_FACT_INVOICE_outstanding_amount DEFAULT (0),
+    tax_amount DECIMAL(18,4) NOT NULL CONSTRAINT DF_FACT_INVOICE_tax_amount DEFAULT (0),
+    total_discount DECIMAL(18,4) NOT NULL CONSTRAINT DF_FACT_INVOICE_total_discount DEFAULT (0),
+    customer_code NVARCHAR(30) NOT NULL,
+    position_code NVARCHAR(20) NOT NULL,
+    source_file_name NVARCHAR(260) NULL,
+    source_file_date DATE NULL,
+    source_depot_code NVARCHAR(32) NULL,
+    CONSTRAINT PK_FACT_INVOICE PRIMARY KEY (invoice_code),
+    CONSTRAINT FK_INV_CUSTOMER FOREIGN KEY (customer_code) REFERENCES dist2k.DIM_CUSTOMER(customer_code),
+    CONSTRAINT FK_INV_POSITION FOREIGN KEY (position_code) REFERENCES dist2k.DIM_POSITION(position_code)
+  );
+END
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_INV_CUSTOMER' AND object_id = OBJECT_ID('dist2k.FACT_INVOICE'))
+  CREATE INDEX IX_INV_CUSTOMER ON dist2k.FACT_INVOICE (customer_code);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_INV_POSITION' AND object_id = OBJECT_ID('dist2k.FACT_INVOICE'))
+  CREATE INDEX IX_INV_POSITION ON dist2k.FACT_INVOICE (position_code);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_INV_ISSUEDATE' AND object_id = OBJECT_ID('dist2k.FACT_INVOICE'))
+  CREATE INDEX IX_INV_ISSUEDATE ON dist2k.FACT_INVOICE (issue_date);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_INV_STATUS' AND object_id = OBJECT_ID('dist2k.FACT_INVOICE'))
+  CREATE INDEX IX_INV_STATUS ON dist2k.FACT_INVOICE (status);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_INV_SOURCE_DATASET' AND object_id = OBJECT_ID('dist2k.FACT_INVOICE'))
+  CREATE INDEX IX_INV_SOURCE_DATASET ON dist2k.FACT_INVOICE (source_file_date, source_depot_code, position_code);
+
+IF OBJECT_ID('dist2k.FACT_INVOICE_LINE', 'U') IS NULL
+BEGIN
+  CREATE TABLE dist2k.FACT_INVOICE_LINE (
+    line_id BIGINT NOT NULL IDENTITY(1,1),
+    invoice_code NVARCHAR(60) NOT NULL,
+    line_no INT NOT NULL,
+    product_code NVARCHAR(20) NOT NULL,
+    quantity FLOAT NOT NULL CONSTRAINT DF_FACT_INVOICE_LINE_quantity DEFAULT (0),
+    net_amount DECIMAL(18,4) NOT NULL CONSTRAINT DF_FACT_INVOICE_LINE_net_amount DEFAULT (0),
+    gross_amount DECIMAL(18,4) NOT NULL CONSTRAINT DF_FACT_INVOICE_LINE_gross_amount DEFAULT (0),
+    price DECIMAL(18,4) NOT NULL CONSTRAINT DF_FACT_INVOICE_LINE_price DEFAULT (0),
+    availability BIT NOT NULL CONSTRAINT DF_FACT_INVOICE_LINE_availability DEFAULT (1),
+    CONSTRAINT PK_FACT_INVOICE_LINE PRIMARY KEY (line_id),
+    CONSTRAINT UQ_FACT_INVOICE_LINE UNIQUE (invoice_code, line_no),
+    CONSTRAINT FK_LINE_INVOICE FOREIGN KEY (invoice_code) REFERENCES dist2k.FACT_INVOICE(invoice_code),
+    CONSTRAINT FK_LINE_PRODUCT FOREIGN KEY (product_code) REFERENCES dist2k.DIM_PRODUCT(product_code)
+  );
+END
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_LINE_INVOICE' AND object_id = OBJECT_ID('dist2k.FACT_INVOICE_LINE'))
+  CREATE INDEX IX_LINE_INVOICE ON dist2k.FACT_INVOICE_LINE (invoice_code);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_LINE_PRODUCT' AND object_id = OBJECT_ID('dist2k.FACT_INVOICE_LINE'))
+  CREATE INDEX IX_LINE_PRODUCT ON dist2k.FACT_INVOICE_LINE (product_code);
+
+IF OBJECT_ID('dist2k.FACT_INVOICE_PAYMENT', 'U') IS NULL
+BEGIN
+  CREATE TABLE dist2k.FACT_INVOICE_PAYMENT (
+    payment_code NVARCHAR(300) NOT NULL,
+    invoice_code NVARCHAR(60) NOT NULL,
+    issue_date DATETIME2(0) NULL,
+    amount DECIMAL(18,4) NOT NULL,
+    paymentform_code NVARCHAR(20) NULL,
+    paymentform_desc NVARCHAR(50) NULL,
+    source_file_name NVARCHAR(260) NULL,
+    source_file_date DATE NULL,
+    source_depot_code NVARCHAR(32) NULL,
+    position_code NVARCHAR(20) NULL,
+    customer_code NVARCHAR(30) NULL,
+    CONSTRAINT PK_FACT_INVOICE_PAYMENT PRIMARY KEY (payment_code),
+    CONSTRAINT FK_PAY_INVOICE FOREIGN KEY (invoice_code) REFERENCES dist2k.FACT_INVOICE(invoice_code)
+  );
+END
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_FACT_INVOICE_PAYMENT_INVOICE' AND object_id = OBJECT_ID('dist2k.FACT_INVOICE_PAYMENT'))
+  CREATE INDEX IX_FACT_INVOICE_PAYMENT_INVOICE ON dist2k.FACT_INVOICE_PAYMENT (invoice_code);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_FACT_INVOICE_PAYMENT_DATASET' AND object_id = OBJECT_ID('dist2k.FACT_INVOICE_PAYMENT'))
+  CREATE INDEX IX_FACT_INVOICE_PAYMENT_DATASET ON dist2k.FACT_INVOICE_PAYMENT (source_file_date, source_depot_code, position_code);
+
+IF OBJECT_ID('dist2k.FACT_COLLECTION', 'U') IS NULL
+BEGIN
+  CREATE TABLE dist2k.FACT_COLLECTION (
+    collection_code NVARCHAR(300) NOT NULL,
+    invoice_code NVARCHAR(60) NULL,
+    position_code NVARCHAR(20) NOT NULL,
+    customer_code NVARCHAR(30) NOT NULL,
+    issue_date DATETIME2(0) NULL,
+    amount DECIMAL(18,4) NOT NULL,
+    paymentform_code NVARCHAR(20) NULL,
+    paymentform_desc NVARCHAR(50) NULL,
+    source_file_name NVARCHAR(260) NULL,
+    source_file_date DATE NULL,
+    source_depot_code NVARCHAR(32) NULL,
+    CONSTRAINT PK_FACT_COLLECTION PRIMARY KEY (collection_code),
+    CONSTRAINT FK_COLL_POSITION FOREIGN KEY (position_code) REFERENCES dist2k.DIM_POSITION(position_code),
+    CONSTRAINT FK_COLL_CUSTOMER FOREIGN KEY (customer_code) REFERENCES dist2k.DIM_CUSTOMER(customer_code)
+  );
+END
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_COLL_INVOICE' AND object_id = OBJECT_ID('dist2k.FACT_COLLECTION'))
+  CREATE INDEX IX_COLL_INVOICE ON dist2k.FACT_COLLECTION (invoice_code);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_COLL_CUSTOMER' AND object_id = OBJECT_ID('dist2k.FACT_COLLECTION'))
+  CREATE INDEX IX_COLL_CUSTOMER ON dist2k.FACT_COLLECTION (customer_code);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_COLL_DATE' AND object_id = OBJECT_ID('dist2k.FACT_COLLECTION'))
+  CREATE INDEX IX_COLL_DATE ON dist2k.FACT_COLLECTION (issue_date);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_COLL_DATASET' AND object_id = OBJECT_ID('dist2k.FACT_COLLECTION'))
+  CREATE INDEX IX_COLL_DATASET ON dist2k.FACT_COLLECTION (source_file_date, source_depot_code, position_code);
 `)
 }
 
@@ -848,6 +738,7 @@ SELECT
   if (needsModDate) parts.push('ALTER TABLE dbo.ImportFiles ADD JsonModDate DATETIME2(0) NULL;')
   await pool.request().batch(parts.join('\n'))
 }
+
 
 function hashPassword(password: string, salt: Buffer) {
   return crypto.pbkdf2Sync(password, salt, 120_000, 32, 'sha256')
@@ -881,435 +772,349 @@ async function createUser(pool: mssql.ConnectionPool, userName: string, password
     .query('INSERT INTO dbo.Users (UserName, PasswordSalt, PasswordHash, IsAdmin) VALUES (@UserName, @PasswordSalt, @PasswordHash, @IsAdmin)')
 }
 
-async function replaceInvoiceDetails(pool: mssql.ConnectionPool, invoiceCode: string, details: unknown) {
-  if (!Array.isArray(details)) return
+async function upsertDist2kInvoice(pool: mssql.ConnectionPool, inv: RawInvoice, source: SalesFileMeta) {
+  const invoiceCode = (toStringOrUndef(inv.CODE) ?? '').trim()
+  if (!invoiceCode) return { paymentCount: 0 }
 
-  await pool.request().input('InvoiceCode', mssql.NVarChar(64), invoiceCode).query('DELETE FROM dbo.InvoiceDetails WHERE InvoiceCode = @InvoiceCode')
+  const customerCode = ((toStringOrUndef(inv.CUSTOMER?.CODE) ?? '').trim() || 'UNKNOWN').slice(0, 30)
+  const customerName = ((toStringOrUndef(inv.CUSTOMER?.REGISTEREDNAME) ?? '').trim() || 'Unknown Customer').slice(0, 200)
+  const customerTaxNumber = (toStringOrUndef(inv.CUSTOMER?.TAXNUMBER) ?? '').trim() || null
+  const customerLicenseNumber = (toStringOrUndef(inv.CUSTOMER?.LICENSENUMBER) ?? '').trim() || null
 
-  if (details.length === 0) return
-
-  const table = new mssql.Table('dbo.InvoiceDetails')
-  table.create = false
-  table.columns.add('InvoiceCode', mssql.NVarChar(64), { nullable: false })
-  table.columns.add('LineNumber', mssql.Int, { nullable: false })
-  table.columns.add('ProductSequence', mssql.Int, { nullable: true })
-  table.columns.add('ProductCode', mssql.NVarChar(64), { nullable: true })
-  table.columns.add('ProductDescription', mssql.NVarChar(256), { nullable: true })
-  table.columns.add('Quantity', mssql.Decimal(18, 4), { nullable: true })
-  table.columns.add('NetAmount', mssql.Decimal(18, 4), { nullable: true })
-  table.columns.add('GrossAmount', mssql.Decimal(18, 4), { nullable: true })
-  table.columns.add('Price', mssql.Decimal(18, 4), { nullable: true })
-  table.columns.add('Availability', mssql.Int, { nullable: true })
-
-  let lineNumber = 1
-  for (const d of details as RawInvoiceDetail[]) {
-    if (!d || typeof d !== 'object') continue
-    const product = (d.PRODUCT ?? {}) as RawInvoiceDetailProduct
-    table.rows.add(
-      invoiceCode,
-      lineNumber,
-      (toNumberOrUndef(product.SEQUENCE) ?? null) as number | null,
-      (toStringOrUndef(product.CODE) ?? null) as string | null,
-      (toStringOrUndef(product.DESCRIPTION) ?? null) as string | null,
-      (toNumberFlexible(d.QUANTITY) ?? null) as number | null,
-      (toNumberFlexible(d.NETAMOUNT) ?? null) as number | null,
-      (toNumberFlexible(d.GROSSAMOUNT) ?? null) as number | null,
-      (toNumberFlexible(d.PRICE) ?? null) as number | null,
-      (toNumberOrUndef(d.AVAILABILITY) ?? null) as number | null,
-    )
-    lineNumber += 1
-  }
-
-  if (table.rows.length === 0) return
-  await pool.request().bulk(table)
-}
-
-async function upsertInvoice(pool: mssql.ConnectionPool, inv: RawInvoice, source: { fileName: string; fileDate?: string; depotCode?: string }) {
-  const code = toStringOrUndef(inv.CODE) ?? ''
-  if (!code) return { paymentCount: 0 }
-
-  const customerName = toStringOrUndef(inv.CUSTOMER?.REGISTEREDNAME) ?? ''
-  const positionCode = toStringOrUndef(inv.POSITION?.CODE) ?? ''
-  const customerCode = toStringOrUndef(inv.CUSTOMER?.CODE) ?? null
-  const customerTaxNumber = toStringOrUndef(inv.CUSTOMER?.TAXNUMBER) ?? null
-  const customerLicenseNumber = toStringOrUndef(inv.CUSTOMER?.LICENSENUMBER) ?? null
-  const positionDescription = toStringOrUndef(inv.POSITION?.DESCRIPTION) ?? null
-
-  const salesType = toStringOrUndef(inv.SALESTYPE) ?? ''
-  const issueDate = toStringOrUndef(inv.ISSUEDATE)
-  const dueDate = toStringOrUndef(inv.DUEDATE)
-
-  const isEdosRaw = toNumberOrUndef(inv.ISEDOS)
-  const isEdos = typeof isEdosRaw === 'number' ? isEdosRaw !== 0 : null
-
-  const rg = inv.RETURNGOODS
-  const returnGoodsCount =
-    rg === null || rg === undefined
-      ? null
-      : Array.isArray(rg)
-        ? rg.length
-        : typeof rg === 'object'
-          ? Object.keys(rg as Record<string, unknown>).length
-            ? 1
-            : 0
-          : 1
+  const positionCode = ((toStringOrUndef(inv.POSITION?.CODE) ?? '').trim() || 'UNKNOWN').slice(0, 20)
+  const positionDescription = ((toStringOrUndef(inv.POSITION?.DESCRIPTION) ?? '').trim() || 'Unknown Position').slice(0, 100)
 
   await pool
     .request()
-    .input('Code', mssql.NVarChar(64), code)
+    .input('PositionCode', mssql.NVarChar(20), positionCode)
+    .input('Description', mssql.NVarChar(100), positionDescription)
+    .query(`
+MERGE dist2k.DIM_POSITION WITH (HOLDLOCK) AS t
+USING (SELECT @PositionCode AS position_code, @Description AS description) AS s
+ON t.position_code = s.position_code
+WHEN MATCHED THEN UPDATE SET description = s.description
+WHEN NOT MATCHED THEN INSERT (position_code, description) VALUES (s.position_code, s.description);
+`)
+
+  await pool
+    .request()
+    .input('CustomerCode', mssql.NVarChar(30), customerCode)
+    .input('RegisteredName', mssql.NVarChar(200), customerName)
+    .input('TaxNumber', mssql.NVarChar(20), customerTaxNumber ? customerTaxNumber.slice(0, 20) : null)
+    .input('LicenseNumber', mssql.NVarChar(30), customerLicenseNumber ? customerLicenseNumber.slice(0, 30) : null)
+    .query(`
+MERGE dist2k.DIM_CUSTOMER WITH (HOLDLOCK) AS t
+USING (
+  SELECT @CustomerCode AS customer_code, @RegisteredName AS registered_name, @TaxNumber AS tax_number, @LicenseNumber AS license_number
+) AS s
+ON t.customer_code = s.customer_code
+WHEN MATCHED THEN UPDATE SET
+  registered_name = s.registered_name,
+  tax_number = s.tax_number,
+  license_number = s.license_number
+WHEN NOT MATCHED THEN
+  INSERT (customer_code, registered_name, tax_number, license_number)
+  VALUES (s.customer_code, s.registered_name, s.tax_number, s.license_number);
+`)
+
+  const legalNumber = ((toStringOrUndef(inv.LEGALNUMBER) ?? '').trim() || invoiceCode).slice(0, 30)
+  const status = ((toStringOrUndef(inv.STATUS) ?? '').trim() || 'I').slice(0, 1)
+  const salesType = ((toStringOrUndef(inv.SALESTYPE) ?? '').trim() || 'UNKNOWN').slice(0, 20)
+  const issueDate = safeDate(toStringOrUndef(inv.ISSUEDATE) ?? undefined) ?? safeDate(toStringOrUndef(inv.DUEDATE) ?? undefined) ?? new Date('1900-01-01T00:00:00Z')
+  const dueDate = safeDate(toStringOrUndef(inv.DUEDATE) ?? undefined)
+  const creditDays = toNumberOrUndef(inv.CREDITDAYS) ?? 0
+  const netAmount = toNumberFlexible(inv.NETAMOUNT) ?? toNumberOrUndef(inv.NETAMOUNT) ?? 0
+  const outstandingAmount = toNumberFlexible(inv.OUTSTANDINGAMOUNT) ?? toNumberOrUndef(inv.OUTSTANDINGAMOUNT) ?? 0
+  const taxAmount = toNumberFlexible(inv.TAXAMOUNT) ?? toNumberOrUndef(inv.TAXAMOUNT) ?? 0
+  const totalDiscount = toNumberFlexible(inv.TOTAL_DISCOUNT) ?? toNumberOrUndef(inv.TOTAL_DISCOUNT) ?? 0
+  const isEdosRaw = toNumberOrUndef(inv.ISEDOS)
+  const isEdos = typeof isEdosRaw === 'number' ? isEdosRaw !== 0 : false
+
+  await pool
+    .request()
+    .input('InvoiceCode', mssql.NVarChar(60), invoiceCode.slice(0, 60))
     .input('IsEdos', mssql.Bit, isEdos)
-    .input('LegalNumber', mssql.NVarChar(64), toStringOrUndef(inv.LEGALNUMBER))
-    .input('Status', mssql.NVarChar(32), toStringOrUndef(inv.STATUS))
-    .input('SalesType', mssql.NVarChar(32), salesType)
-    .input('IssueDate', mssql.DateTime2(0), safeDate(issueDate))
-    .input('DueDate', mssql.DateTime2(0), safeDate(dueDate))
-    .input('CreditDays', mssql.Int, toNumberOrUndef(inv.CREDITDAYS) ?? null)
-    .input('NetAmount', mssql.Decimal(18, 4), toNumberOrUndef(inv.NETAMOUNT) ?? 0)
-    .input('GrossAmount', mssql.Decimal(18, 4), toNumberOrUndef(inv.GROSSAMOUNT) ?? null)
-    .input('OutstandingAmount', mssql.Decimal(18, 4), toNumberOrUndef(inv.OUTSTANDINGAMOUNT) ?? null)
-    .input('TaxAmount', mssql.Decimal(18, 4), toNumberOrUndef(inv.TAXAMOUNT) ?? null)
-    .input('TotalDiscount', mssql.Decimal(18, 4), toNumberOrUndef(inv.TOTAL_DISCOUNT) ?? null)
-    .input('ReturnGoodsCount', mssql.Int, returnGoodsCount)
-    .input('CustomerCode', mssql.NVarChar(64), customerCode)
-    .input('CustomerName', mssql.NVarChar(256), customerName)
-    .input('CustomerTaxNumber', mssql.NVarChar(64), customerTaxNumber)
-    .input('CustomerLicenseNumber', mssql.NVarChar(64), customerLicenseNumber)
-    .input('PositionCode', mssql.NVarChar(64), positionCode)
-    .input('PositionDescription', mssql.NVarChar(256), positionDescription)
+    .input('LegalNumber', mssql.NVarChar(30), legalNumber)
+    .input('Status', mssql.NVarChar(1), status)
+    .input('SalesType', mssql.NVarChar(20), salesType)
+    .input('IssueDate', mssql.DateTime2(0), issueDate)
+    .input('DueDate', mssql.DateTime2(0), dueDate)
+    .input('CreditDays', mssql.Int, creditDays)
+    .input('NetAmount', mssql.Decimal(18, 4), netAmount)
+    .input('OutstandingAmount', mssql.Decimal(18, 4), outstandingAmount)
+    .input('TaxAmount', mssql.Decimal(18, 4), taxAmount)
+    .input('TotalDiscount', mssql.Decimal(18, 4), totalDiscount)
+    .input('CustomerCode', mssql.NVarChar(30), customerCode)
+    .input('PositionCode', mssql.NVarChar(20), positionCode)
     .input('SourceFileName', mssql.NVarChar(260), source.fileName)
     .input('SourceFileDate', mssql.Date, source.fileDate ? new Date(source.fileDate) : null)
     .input('SourceDepotCode', mssql.NVarChar(32), source.depotCode ?? null)
     .query(`
-MERGE dbo.Invoices WITH (HOLDLOCK) AS t
+MERGE dist2k.FACT_INVOICE WITH (HOLDLOCK) AS t
 USING (SELECT
-  @Code AS Code,
-  @IsEdos AS IsEdos,
-  @LegalNumber AS LegalNumber,
-  @Status AS Status,
-  @SalesType AS SalesType,
-  @IssueDate AS IssueDate,
-  @DueDate AS DueDate,
-  @CreditDays AS CreditDays,
-  @NetAmount AS NetAmount,
-  @GrossAmount AS GrossAmount,
-  @OutstandingAmount AS OutstandingAmount,
-  @TaxAmount AS TaxAmount,
-  @TotalDiscount AS TotalDiscount,
-  @ReturnGoodsCount AS ReturnGoodsCount,
-  @CustomerCode AS CustomerCode,
-  @CustomerName AS CustomerName,
-  @CustomerTaxNumber AS CustomerTaxNumber,
-  @CustomerLicenseNumber AS CustomerLicenseNumber,
-  @PositionCode AS PositionCode,
-  @PositionDescription AS PositionDescription,
-  @SourceFileName AS SourceFileName,
-  @SourceFileDate AS SourceFileDate,
-  @SourceDepotCode AS SourceDepotCode
+  @InvoiceCode AS invoice_code,
+  @IsEdos AS is_edos,
+  @LegalNumber AS legal_number,
+  @Status AS status,
+  @SalesType AS sales_type,
+  @IssueDate AS issue_date,
+  @DueDate AS due_date,
+  @CreditDays AS credit_days,
+  @NetAmount AS net_amount,
+  @OutstandingAmount AS outstanding_amount,
+  @TaxAmount AS tax_amount,
+  @TotalDiscount AS total_discount,
+  @CustomerCode AS customer_code,
+  @PositionCode AS position_code,
+  @SourceFileName AS source_file_name,
+  @SourceFileDate AS source_file_date,
+  @SourceDepotCode AS source_depot_code
 ) AS s
-ON t.Code = s.Code
+ON t.invoice_code = s.invoice_code
 WHEN MATCHED THEN UPDATE SET
-  IsEdos = s.IsEdos,
-  LegalNumber = s.LegalNumber,
-  Status = s.Status,
-  SalesType = s.SalesType,
-  IsStub = 0,
-  IssueDate = s.IssueDate,
-  DueDate = s.DueDate,
-  CreditDays = s.CreditDays,
-  NetAmount = s.NetAmount,
-  GrossAmount = s.GrossAmount,
-  OutstandingAmount = s.OutstandingAmount,
-  TaxAmount = s.TaxAmount,
-  TotalDiscount = s.TotalDiscount,
-  ReturnGoodsCount = s.ReturnGoodsCount,
-  CustomerCode = s.CustomerCode,
-  CustomerName = s.CustomerName,
-  CustomerTaxNumber = s.CustomerTaxNumber,
-  CustomerLicenseNumber = s.CustomerLicenseNumber,
-  PositionCode = s.PositionCode,
-  PositionDescription = s.PositionDescription,
-  SourceFileName = s.SourceFileName,
-  SourceFileDate = s.SourceFileDate,
-  SourceDepotCode = s.SourceDepotCode,
-  UpdatedAt = SYSUTCDATETIME()
+  is_edos = s.is_edos,
+  legal_number = s.legal_number,
+  status = s.status,
+  sales_type = s.sales_type,
+  issue_date = s.issue_date,
+  due_date = s.due_date,
+  credit_days = s.credit_days,
+  net_amount = s.net_amount,
+  outstanding_amount = s.outstanding_amount,
+  tax_amount = s.tax_amount,
+  total_discount = s.total_discount,
+  customer_code = s.customer_code,
+  position_code = s.position_code,
+  source_file_name = s.source_file_name,
+  source_file_date = s.source_file_date,
+  source_depot_code = s.source_depot_code
 WHEN NOT MATCHED THEN INSERT (
-  Code, IsEdos, LegalNumber, Status, SalesType, IsStub, IssueDate, DueDate, CreditDays, NetAmount, OutstandingAmount, TaxAmount, TotalDiscount, ReturnGoodsCount,
-  GrossAmount,
-  CustomerCode, CustomerName, CustomerTaxNumber, CustomerLicenseNumber,
-  PositionCode, PositionDescription,
-  SourceFileName, SourceFileDate, SourceDepotCode
-) VALUES (
-  s.Code, s.IsEdos, s.LegalNumber, s.Status, s.SalesType, 0, s.IssueDate, s.DueDate, s.CreditDays, s.NetAmount, s.OutstandingAmount, s.TaxAmount, s.TotalDiscount, s.ReturnGoodsCount,
-  s.GrossAmount,
-  s.CustomerCode, s.CustomerName, s.CustomerTaxNumber, s.CustomerLicenseNumber,
-  s.PositionCode, s.PositionDescription,
-  s.SourceFileName, s.SourceFileDate, s.SourceDepotCode
+  invoice_code, is_edos, legal_number, status, sales_type, issue_date, due_date, credit_days,
+  net_amount, outstanding_amount, tax_amount, total_discount, customer_code, position_code,
+  source_file_name, source_file_date, source_depot_code
+)
+VALUES (
+  s.invoice_code, s.is_edos, s.legal_number, s.status, s.sales_type, s.issue_date, s.due_date, s.credit_days,
+  s.net_amount, s.outstanding_amount, s.tax_amount, s.total_discount, s.customer_code, s.position_code,
+  s.source_file_name, s.source_file_date, s.source_depot_code
 );
 `)
 
-  await replaceInvoiceDetails(pool, code, inv.DETAILS)
+  await pool.request().input('InvoiceCode', mssql.NVarChar(60), invoiceCode.slice(0, 60)).query('DELETE FROM dist2k.FACT_INVOICE_LINE WHERE invoice_code = @InvoiceCode')
+  let lineNo = 1
+  for (const d of Array.isArray(inv.DETAILS) ? (inv.DETAILS as RawInvoiceDetail[]) : []) {
+    if (!d || typeof d !== 'object') continue
+    const product = (d.PRODUCT ?? {}) as RawInvoiceDetailProduct
+    const productCode = ((toStringOrUndef(product.CODE) ?? '').trim() || 'UNKNOWN_PRODUCT').slice(0, 20)
+    const productDescription = ((toStringOrUndef(product.DESCRIPTION) ?? '').trim() || 'Unknown Product').slice(0, 100)
+    const productSequence = toNumberOrUndef(product.SEQUENCE) ?? 0
 
-  let paymentCount = 0
-  if (Array.isArray(inv.PAYMENTS)) {
-    for (const raw of inv.PAYMENTS as RawInvoicePayment[]) {
-      if (!raw || typeof raw !== 'object') continue
-      const pCode = toStringOrUndef(raw.CODE)
-      const pIssueDate = toStringOrUndef(raw.ISSUEDATE)
-      const pAmount = toNumberFlexible(raw.AMOUNT) ?? 0
-      if (pAmount <= 0) continue
-
-      const form = (raw.PAYMENTFORM ?? raw.PAYMENT_FORM) as { CODE?: unknown; DESCRIPTION?: unknown } | undefined
-      const rawFormCode = toStringOrUndef(form?.CODE)
-      const rawFormDesc = toStringOrUndef(form?.DESCRIPTION)
-      const isVadeli = !rawFormDesc || !rawFormDesc.trim()
-      const formCode = isVadeli ? 'VADELI' : rawFormCode
-      const formDesc = isVadeli ? 'Vadeli Ödeme' : rawFormDesc
-
-      const paymentKey = computeInvoicePaymentKey(code, { code: pCode ?? undefined, issueDate: pIssueDate ?? undefined, amount: pAmount, formCode })
-
-      const insertRes = await pool
-        .request()
-        .input('PaymentKey', mssql.NVarChar(300), paymentKey)
-        .input('InvoiceCode', mssql.NVarChar(64), code)
-        .input('Code', mssql.NVarChar(64), pCode ?? null)
-        .input('IssueDate', mssql.DateTime2(0), safeDate(pIssueDate ?? undefined))
-        .input('Amount', mssql.Decimal(18, 4), pAmount)
-        .input('PaymentFormCode', mssql.NVarChar(32), formCode ?? null)
-        .input('PaymentFormDescription', mssql.NVarChar(64), formDesc ?? null)
-        .input('CustomerCode', mssql.NVarChar(64), customerCode)
-        .input('CustomerName', mssql.NVarChar(256), customerName || null)
-        .input('CustomerTaxNumber', mssql.NVarChar(64), customerTaxNumber)
-        .input('CustomerLicenseNumber', mssql.NVarChar(64), customerLicenseNumber)
-        .input('PositionCode', mssql.NVarChar(64), positionCode || null)
-        .input('PositionDescription', mssql.NVarChar(256), positionDescription)
-        .input('SourceFileName', mssql.NVarChar(260), source.fileName)
-        .input('SourceFileDate', mssql.Date, source.fileDate ? new Date(source.fileDate) : null)
-        .input('SourceDepotCode', mssql.NVarChar(32), source.depotCode ?? null)
-        .query(`
-MERGE dbo.InvoicePayments WITH (HOLDLOCK) AS t
-USING (SELECT
-  @PaymentKey AS PaymentKey,
-  @InvoiceCode AS InvoiceCode,
-  @Code AS Code,
-  @IssueDate AS IssueDate,
-  @Amount AS Amount,
-  @PaymentFormCode AS PaymentFormCode,
-  @PaymentFormDescription AS PaymentFormDescription,
-  @CustomerCode AS CustomerCode,
-  @CustomerName AS CustomerName,
-  @CustomerTaxNumber AS CustomerTaxNumber,
-  @CustomerLicenseNumber AS CustomerLicenseNumber,
-  @PositionCode AS PositionCode,
-  @PositionDescription AS PositionDescription,
-  @SourceFileName AS SourceFileName,
-  @SourceFileDate AS SourceFileDate,
-  @SourceDepotCode AS SourceDepotCode
-) AS s
-ON t.PaymentKey = s.PaymentKey
+    await pool
+      .request()
+      .input('ProductCode', mssql.NVarChar(20), productCode)
+      .input('SequenceNo', mssql.Int, productSequence)
+      .input('Description', mssql.NVarChar(100), productDescription)
+      .query(`
+MERGE dist2k.DIM_PRODUCT WITH (HOLDLOCK) AS t
+USING (SELECT @ProductCode AS product_code, @SequenceNo AS sequence_no, @Description AS description) AS s
+ON t.product_code = s.product_code
 WHEN MATCHED THEN UPDATE SET
-  InvoiceCode = s.InvoiceCode,
-  Code = s.Code,
-  IssueDate = s.IssueDate,
-  Amount = s.Amount,
-  PaymentFormCode = s.PaymentFormCode,
-  PaymentFormDescription = s.PaymentFormDescription,
-  CustomerCode = s.CustomerCode,
-  CustomerName = s.CustomerName,
-  CustomerTaxNumber = s.CustomerTaxNumber,
-  CustomerLicenseNumber = s.CustomerLicenseNumber,
-  PositionCode = s.PositionCode,
-  PositionDescription = s.PositionDescription,
-  SourceFileName = s.SourceFileName,
-  SourceFileDate = s.SourceFileDate,
-  SourceDepotCode = s.SourceDepotCode,
-  UpdatedAt = SYSUTCDATETIME()
-WHEN NOT MATCHED THEN INSERT (
-  PaymentKey, InvoiceCode, Code, IssueDate, Amount,
-  PaymentFormCode, PaymentFormDescription,
-  CustomerCode, CustomerName, CustomerTaxNumber, CustomerLicenseNumber,
-  PositionCode, PositionDescription,
-  SourceFileName, SourceFileDate, SourceDepotCode,
-  UpdatedAt
-)
-VALUES (
-  s.PaymentKey, s.InvoiceCode, s.Code, s.IssueDate, s.Amount,
-  s.PaymentFormCode, s.PaymentFormDescription,
-  s.CustomerCode, s.CustomerName, s.CustomerTaxNumber, s.CustomerLicenseNumber,
-  s.PositionCode, s.PositionDescription,
-  s.SourceFileName, s.SourceFileDate, s.SourceDepotCode,
-  SYSUTCDATETIME()
-)
-OUTPUT $action AS MergeAction;
+  sequence_no = CASE WHEN s.sequence_no > t.sequence_no THEN s.sequence_no ELSE t.sequence_no END,
+  description = CASE WHEN NULLIF(LTRIM(RTRIM(s.description)), '') IS NULL THEN t.description ELSE s.description END
+WHEN NOT MATCHED THEN INSERT (product_code, sequence_no, description) VALUES (s.product_code, s.sequence_no, s.description);
 `)
 
-      const action = String((insertRes.recordset?.[0] as { MergeAction?: unknown } | undefined)?.MergeAction ?? '')
-      const inserted = action.toUpperCase() === 'INSERT'
-      if (inserted) paymentCount += 1
-    }
+    await pool
+      .request()
+      .input('InvoiceCode', mssql.NVarChar(60), invoiceCode.slice(0, 60))
+      .input('LineNo', mssql.Int, lineNo)
+      .input('ProductCode', mssql.NVarChar(20), productCode)
+      .input('Quantity', mssql.Float, toNumberFlexible(d.QUANTITY) ?? 0)
+      .input('NetAmount', mssql.Decimal(18, 4), toNumberFlexible(d.NETAMOUNT) ?? 0)
+      .input('GrossAmount', mssql.Decimal(18, 4), toNumberFlexible(d.GROSSAMOUNT) ?? 0)
+      .input('Price', mssql.Decimal(18, 4), toNumberFlexible(d.PRICE) ?? 0)
+      .input('Availability', mssql.Bit, (toNumberOrUndef(d.AVAILABILITY) ?? 1) !== 0)
+      .query(`
+INSERT INTO dist2k.FACT_INVOICE_LINE (invoice_code, line_no, product_code, quantity, net_amount, gross_amount, price, availability)
+VALUES (@InvoiceCode, @LineNo, @ProductCode, @Quantity, @NetAmount, @GrossAmount, @Price, @Availability);
+`)
+    lineNo += 1
+  }
+
+  await pool.request().input('InvoiceCode', mssql.NVarChar(60), invoiceCode.slice(0, 60)).query('DELETE FROM dist2k.FACT_INVOICE_PAYMENT WHERE invoice_code = @InvoiceCode')
+  let paymentCount = 0
+  for (const raw of Array.isArray(inv.PAYMENTS) ? (inv.PAYMENTS as RawInvoicePayment[]) : []) {
+    if (!raw || typeof raw !== 'object') continue
+    const pCode = toStringOrUndef(raw.CODE)
+    const pIssueDate = toStringOrUndef(raw.ISSUEDATE)
+    const pAmount = toNumberFlexible(raw.AMOUNT) ?? 0
+    if (pAmount <= 0) continue
+
+    const form = (raw.PAYMENTFORM ?? raw.PAYMENT_FORM) as { CODE?: unknown; DESCRIPTION?: unknown } | undefined
+    const rawFormCode = toStringOrUndef(form?.CODE)
+    const rawFormDesc = toStringOrUndef(form?.DESCRIPTION)
+    const isVadeli = !rawFormDesc || !rawFormDesc.trim()
+    const formCode = isVadeli ? 'VADELI' : rawFormCode
+    const formDesc = isVadeli ? 'Vadeli Ödeme' : rawFormDesc
+    const paymentCode = computeInvoicePaymentKey(invoiceCode, { code: pCode ?? undefined, issueDate: pIssueDate ?? undefined, amount: pAmount, formCode }).slice(0, 300)
+
+    await pool
+      .request()
+      .input('PaymentCode', mssql.NVarChar(300), paymentCode)
+      .input('InvoiceCode', mssql.NVarChar(60), invoiceCode.slice(0, 60))
+      .input('IssueDate', mssql.DateTime2(0), safeDate(pIssueDate ?? undefined))
+      .input('Amount', mssql.Decimal(18, 4), pAmount)
+      .input('PaymentFormCode', mssql.NVarChar(20), formCode ? formCode.slice(0, 20) : null)
+      .input('PaymentFormDesc', mssql.NVarChar(50), formDesc ? formDesc.slice(0, 50) : null)
+      .input('SourceFileName', mssql.NVarChar(260), source.fileName)
+      .input('SourceFileDate', mssql.Date, source.fileDate ? new Date(source.fileDate) : null)
+      .input('SourceDepotCode', mssql.NVarChar(32), source.depotCode ?? null)
+      .input('PositionCode', mssql.NVarChar(20), positionCode)
+      .input('CustomerCode', mssql.NVarChar(30), customerCode)
+      .query(`
+INSERT INTO dist2k.FACT_INVOICE_PAYMENT (
+  payment_code, invoice_code, issue_date, amount, paymentform_code, paymentform_desc,
+  source_file_name, source_file_date, source_depot_code, position_code, customer_code
+)
+VALUES (
+  @PaymentCode, @InvoiceCode, @IssueDate, @Amount, @PaymentFormCode, @PaymentFormDesc,
+  @SourceFileName, @SourceFileDate, @SourceDepotCode, @PositionCode, @CustomerCode
+);
+`)
+    paymentCount += 1
   }
 
   return { paymentCount }
 }
 
-async function ensureInvoiceStub(pool: mssql.ConnectionPool, args: {
-  invoiceCode: string
-  positionCode?: string
-  positionDescription?: string
-  customerCode?: string
-  customerName?: string
-  customerTaxNumber?: string
-  customerLicenseNumber?: string
-  source: SalesFileMeta
-}) {
-  const invoiceCode = args.invoiceCode.trim()
-  if (!invoiceCode) return
+async function upsertDist2kCollection(pool: mssql.ConnectionPool, c: RawCollection, source: SalesFileMeta) {
+  const invoiceCode = (toStringOrUndef(c.INVOICE_CODE) ?? '').trim()
+  if (!invoiceCode) return false
 
-  const positionCode = (args.positionCode ?? '').trim() || 'Bilinmeyen'
-  const customerName = (args.customerName ?? '').trim() || '-'
+  const customerCode = ((toStringOrUndef(c.CUSTOMER?.CODE) ?? '').trim() || 'UNKNOWN').slice(0, 30)
+  const customerName = ((toStringOrUndef(c.CUSTOMER?.REGISTEREDNAME) ?? '').trim() || 'Unknown Customer').slice(0, 200)
+  const customerTaxNumber = (toStringOrUndef(c.CUSTOMER?.TAXNUMBER) ?? '').trim() || null
+  const customerLicenseNumber = (toStringOrUndef(c.CUSTOMER?.LICENSENUMBER) ?? '').trim() || null
+  const positionCode = ((toStringOrUndef(c.POSITION?.CODE) ?? '').trim() || 'UNKNOWN').slice(0, 20)
+  const positionDescription = ((toStringOrUndef(c.POSITION?.DESCRIPTION) ?? '').trim() || 'Unknown Position').slice(0, 100)
 
   await pool
     .request()
-    .input('Code', mssql.NVarChar(64), invoiceCode)
-    .input('SalesType', mssql.NVarChar(32), 'UNKNOWN')
-    .input('IsStub', mssql.Bit, true)
-    .input('NetAmount', mssql.Decimal(18, 4), 0)
-    .input('CustomerCode', mssql.NVarChar(64), args.customerCode ?? null)
-    .input('CustomerName', mssql.NVarChar(256), customerName)
-    .input('CustomerTaxNumber', mssql.NVarChar(64), args.customerTaxNumber ?? null)
-    .input('CustomerLicenseNumber', mssql.NVarChar(64), args.customerLicenseNumber ?? null)
-    .input('PositionCode', mssql.NVarChar(64), positionCode)
-    .input('PositionDescription', mssql.NVarChar(256), args.positionDescription ?? null)
-    .input('SourceFileName', mssql.NVarChar(260), args.source.fileName)
-    .input('SourceFileDate', mssql.Date, args.source.fileDate ? new Date(args.source.fileDate) : null)
-    .input('SourceDepotCode', mssql.NVarChar(32), args.source.depotCode ?? null)
+    .input('PositionCode', mssql.NVarChar(20), positionCode)
+    .input('Description', mssql.NVarChar(100), positionDescription)
+    .query(`
+MERGE dist2k.DIM_POSITION WITH (HOLDLOCK) AS t
+USING (SELECT @PositionCode AS position_code, @Description AS description) AS s
+ON t.position_code = s.position_code
+WHEN MATCHED THEN UPDATE SET description = s.description
+WHEN NOT MATCHED THEN INSERT (position_code, description) VALUES (s.position_code, s.description);
+`)
+
+  await pool
+    .request()
+    .input('CustomerCode', mssql.NVarChar(30), customerCode)
+    .input('RegisteredName', mssql.NVarChar(200), customerName)
+    .input('TaxNumber', mssql.NVarChar(20), customerTaxNumber ? customerTaxNumber.slice(0, 20) : null)
+    .input('LicenseNumber', mssql.NVarChar(30), customerLicenseNumber ? customerLicenseNumber.slice(0, 30) : null)
+    .query(`
+MERGE dist2k.DIM_CUSTOMER WITH (HOLDLOCK) AS t
+USING (
+  SELECT @CustomerCode AS customer_code, @RegisteredName AS registered_name, @TaxNumber AS tax_number, @LicenseNumber AS license_number
+) AS s
+ON t.customer_code = s.customer_code
+WHEN MATCHED THEN UPDATE SET
+  registered_name = s.registered_name,
+  tax_number = s.tax_number,
+  license_number = s.license_number
+WHEN NOT MATCHED THEN
+  INSERT (customer_code, registered_name, tax_number, license_number)
+  VALUES (s.customer_code, s.registered_name, s.tax_number, s.license_number);
+`)
+
+  await pool
+    .request()
+    .input('InvoiceCode', mssql.NVarChar(60), invoiceCode.slice(0, 60))
+    .input('CustomerCode', mssql.NVarChar(30), customerCode)
+    .input('PositionCode', mssql.NVarChar(20), positionCode)
+    .input('SourceFileName', mssql.NVarChar(260), source.fileName)
+    .input('SourceFileDate', mssql.Date, source.fileDate ? new Date(source.fileDate) : null)
+    .input('SourceDepotCode', mssql.NVarChar(32), source.depotCode ?? null)
     .query(
       `
-IF NOT EXISTS (SELECT 1 FROM dbo.Invoices WHERE Code = @Code)
+IF NOT EXISTS (SELECT 1 FROM dist2k.FACT_INVOICE WHERE invoice_code = @InvoiceCode)
 BEGIN
-  INSERT INTO dbo.Invoices (
-    Code, SalesType, IsStub, NetAmount,
-    CustomerCode, CustomerName, CustomerTaxNumber, CustomerLicenseNumber,
-    PositionCode, PositionDescription,
-    SourceFileName, SourceFileDate, SourceDepotCode
+  INSERT INTO dist2k.FACT_INVOICE (
+    invoice_code, is_edos, legal_number, status, sales_type, issue_date, due_date, credit_days,
+    net_amount, outstanding_amount, tax_amount, total_discount, customer_code, position_code,
+    source_file_name, source_file_date, source_depot_code
   ) VALUES (
-    @Code, @SalesType, @IsStub, @NetAmount,
-    @CustomerCode, @CustomerName, @CustomerTaxNumber, @CustomerLicenseNumber,
-    @PositionCode, @PositionDescription,
+    @InvoiceCode, 0, @InvoiceCode, 'I', 'UNKNOWN', CONVERT(DATETIME2(0), '1900-01-01'), NULL, 0,
+    0, 0, 0, 0, @CustomerCode, @PositionCode,
     @SourceFileName, @SourceFileDate, @SourceDepotCode
   );
 END
 `,
     )
-}
-
-async function insertCollection(pool: mssql.ConnectionPool, c: RawCollection, source: SalesFileMeta) {
-  const invoiceCode = toStringOrUndef(c.INVOICE_CODE) ?? ''
-  if (!invoiceCode) return false
-
-  const customerCode = toStringOrUndef(c.CUSTOMER?.CODE) ?? null
-  const customerName = toStringOrUndef(c.CUSTOMER?.REGISTEREDNAME) ?? null
-  const customerTaxNumber = toStringOrUndef(c.CUSTOMER?.TAXNUMBER) ?? null
-  const customerLicenseNumber = toStringOrUndef(c.CUSTOMER?.LICENSENUMBER) ?? null
-  const positionCode = toStringOrUndef(c.POSITION?.CODE) ?? null
-  const positionDescription = toStringOrUndef(c.POSITION?.DESCRIPTION) ?? null
-
-  await ensureInvoiceStub(pool, {
-    invoiceCode,
-    positionCode: positionCode ?? undefined,
-    positionDescription: positionDescription ?? undefined,
-    customerCode: customerCode ?? undefined,
-    customerName: customerName ?? undefined,
-    customerTaxNumber: customerTaxNumber ?? undefined,
-    customerLicenseNumber: customerLicenseNumber ?? undefined,
-    source,
-  })
 
   const code = toStringOrUndef(c.CODE)
   const issueDate = toStringOrUndef(c.ISSUEDATE)
-  const amount = toNumberOrUndef(c.AMOUNT) ?? 0
+  const amount = toNumberFlexible(c.AMOUNT) ?? toNumberOrUndef(c.AMOUNT) ?? 0
   const formCode = toStringOrUndef(c.PAYMENTFORM?.CODE)
   const formDesc = toStringOrUndef(c.PAYMENTFORM?.DESCRIPTION)
   if (amount <= 0) return false
+  const collectionCode = computePaymentKey(invoiceCode, { code: code ?? undefined, issueDate: issueDate ?? undefined, amount, formCode }).slice(0, 300)
 
-  const paymentKey = computePaymentKey(invoiceCode, { code, issueDate, amount, formCode })
-
-  const insertRes = await pool
+  await pool
     .request()
-    .input('PaymentKey', mssql.NVarChar(300), paymentKey)
-    .input('InvoiceCode', mssql.NVarChar(64), invoiceCode)
-    .input('Code', mssql.NVarChar(64), code ?? null)
-    .input('IssueDate', mssql.DateTime2(0), safeDate(issueDate))
+    .input('CollectionCode', mssql.NVarChar(300), collectionCode)
+    .input('InvoiceCode', mssql.NVarChar(60), invoiceCode.slice(0, 60))
+    .input('PositionCode', mssql.NVarChar(20), positionCode)
+    .input('CustomerCode', mssql.NVarChar(30), customerCode)
+    .input('IssueDate', mssql.DateTime2(0), safeDate(issueDate ?? undefined))
     .input('Amount', mssql.Decimal(18, 4), amount)
-    .input('PaymentFormCode', mssql.NVarChar(32), formCode ?? null)
-    .input('PaymentFormDescription', mssql.NVarChar(64), formDesc ?? null)
-    .input('CustomerCode', mssql.NVarChar(64), customerCode)
-    .input('CustomerName', mssql.NVarChar(256), customerName)
-    .input('CustomerTaxNumber', mssql.NVarChar(64), customerTaxNumber)
-    .input('CustomerLicenseNumber', mssql.NVarChar(64), customerLicenseNumber)
-    .input('PositionCode', mssql.NVarChar(64), positionCode)
-    .input('PositionDescription', mssql.NVarChar(256), positionDescription)
+    .input('PaymentFormCode', mssql.NVarChar(20), formCode ? formCode.slice(0, 20) : null)
+    .input('PaymentFormDesc', mssql.NVarChar(50), formDesc ? formDesc.slice(0, 50) : null)
     .input('SourceFileName', mssql.NVarChar(260), source.fileName)
     .input('SourceFileDate', mssql.Date, source.fileDate ? new Date(source.fileDate) : null)
     .input('SourceDepotCode', mssql.NVarChar(32), source.depotCode ?? null)
     .query(`
-MERGE dbo.Collections WITH (HOLDLOCK) AS t
+MERGE dist2k.FACT_COLLECTION WITH (HOLDLOCK) AS t
 USING (SELECT
-  @PaymentKey AS PaymentKey,
-  @InvoiceCode AS InvoiceCode,
-  @Code AS Code,
-  @IssueDate AS IssueDate,
-  @Amount AS Amount,
-  @PaymentFormCode AS PaymentFormCode,
-  @PaymentFormDescription AS PaymentFormDescription,
-  @CustomerCode AS CustomerCode,
-  @CustomerName AS CustomerName,
-  @CustomerTaxNumber AS CustomerTaxNumber,
-  @CustomerLicenseNumber AS CustomerLicenseNumber,
-  @PositionCode AS PositionCode,
-  @PositionDescription AS PositionDescription,
-  @SourceFileName AS SourceFileName,
-  @SourceFileDate AS SourceFileDate,
-  @SourceDepotCode AS SourceDepotCode
+  @CollectionCode AS collection_code,
+  @InvoiceCode AS invoice_code,
+  @PositionCode AS position_code,
+  @CustomerCode AS customer_code,
+  @IssueDate AS issue_date,
+  @Amount AS amount,
+  @PaymentFormCode AS paymentform_code,
+  @PaymentFormDesc AS paymentform_desc,
+  @SourceFileName AS source_file_name,
+  @SourceFileDate AS source_file_date,
+  @SourceDepotCode AS source_depot_code
 ) AS s
-ON t.PaymentKey = s.PaymentKey
+ON t.collection_code = s.collection_code
 WHEN MATCHED THEN UPDATE SET
-  InvoiceCode = s.InvoiceCode,
-  Code = s.Code,
-  IssueDate = s.IssueDate,
-  Amount = s.Amount,
-  PaymentFormCode = s.PaymentFormCode,
-  PaymentFormDescription = s.PaymentFormDescription,
-  CustomerCode = s.CustomerCode,
-  CustomerName = s.CustomerName,
-  CustomerTaxNumber = s.CustomerTaxNumber,
-  CustomerLicenseNumber = s.CustomerLicenseNumber,
-  PositionCode = s.PositionCode,
-  PositionDescription = s.PositionDescription,
-  SourceFileName = s.SourceFileName,
-  SourceFileDate = s.SourceFileDate,
-  SourceDepotCode = s.SourceDepotCode,
-  UpdatedAt = SYSUTCDATETIME()
+  invoice_code = s.invoice_code,
+  position_code = s.position_code,
+  customer_code = s.customer_code,
+  issue_date = s.issue_date,
+  amount = s.amount,
+  paymentform_code = s.paymentform_code,
+  paymentform_desc = s.paymentform_desc,
+  source_file_name = s.source_file_name,
+  source_file_date = s.source_file_date,
+  source_depot_code = s.source_depot_code
 WHEN NOT MATCHED THEN INSERT (
-  PaymentKey, InvoiceCode, Code, IssueDate, Amount,
-  PaymentFormCode, PaymentFormDescription,
-  CustomerCode, CustomerName, CustomerTaxNumber, CustomerLicenseNumber,
-  PositionCode, PositionDescription,
-  SourceFileName, SourceFileDate, SourceDepotCode
+  collection_code, invoice_code, position_code, customer_code, issue_date, amount,
+  paymentform_code, paymentform_desc, source_file_name, source_file_date, source_depot_code
 )
 VALUES (
-  s.PaymentKey, s.InvoiceCode, s.Code, s.IssueDate, s.Amount,
-  s.PaymentFormCode, s.PaymentFormDescription,
-  s.CustomerCode, s.CustomerName, s.CustomerTaxNumber, s.CustomerLicenseNumber,
-  s.PositionCode, s.PositionDescription,
-  s.SourceFileName, s.SourceFileDate, s.SourceDepotCode
-)
-OUTPUT $action AS MergeAction;
+  s.collection_code, s.invoice_code, s.position_code, s.customer_code, s.issue_date, s.amount,
+  s.paymentform_code, s.paymentform_desc, s.source_file_name, s.source_file_date, s.source_depot_code
+);
 `)
 
-  const action = String((insertRes.recordset?.[0] as { MergeAction?: unknown } | undefined)?.MergeAction ?? '')
-  const inserted = action.toUpperCase() === 'INSERT'
-
-  return inserted
+  return true
 }
 
 async function importFile(pool: mssql.ConnectionPool, fileName: string, content: string, selectedDepotCode: string | null) {
@@ -1350,10 +1155,13 @@ async function importFile(pool: mssql.ConnectionPool, fileName: string, content:
       .query(
         `
 SELECT DISTINCT PositionCode
-FROM dbo.Invoices
-WHERE SourceFileDate = @SourceFileDate
-  AND (@SourceDepotCode IS NULL OR SourceDepotCode = @SourceDepotCode)
-  AND PositionCode IS NOT NULL AND LTRIM(RTRIM(PositionCode)) <> ''
+FROM (
+  SELECT i.position_code AS PositionCode
+  FROM dist2k.FACT_INVOICE i
+  WHERE i.source_file_date = @SourceFileDate
+    AND (@SourceDepotCode IS NULL OR i.source_depot_code = @SourceDepotCode)
+) x
+WHERE x.PositionCode IS NOT NULL AND LTRIM(RTRIM(x.PositionCode)) <> ''
 `,
       )
     skippedPositions = (r.recordset ?? [])
@@ -1368,7 +1176,7 @@ WHERE SourceFileDate = @SourceFileDate
   for (const inv of invoices) {
     const pos = toStringOrUndef(inv.POSITION?.CODE)?.trim()
     if (pos && skipPosSet.has(pos)) continue
-    const r = await upsertInvoice(pool, inv, meta)
+    const r = await upsertDist2kInvoice(pool, inv, meta)
     paymentCount += r.paymentCount
     invoiceCount += 1
   }
@@ -1376,7 +1184,7 @@ WHERE SourceFileDate = @SourceFileDate
   for (const c of collections) {
     const pos = toStringOrUndef(c.POSITION?.CODE)?.trim()
     if (pos && skipPosSet.has(pos)) continue
-    const inserted = await insertCollection(pool, c, meta)
+    const inserted = await upsertDist2kCollection(pool, c, meta)
     if (inserted) paymentCount += 1
   }
 
@@ -1563,17 +1371,19 @@ async function cleanupDatabase(pool: mssql.ConnectionPool) {
   const deletedCounts: Record<string, number> = {}
 
   const deleteInOrder = [
-    'dbo.InvoiceDetails',
-    'dbo.InvoicePayments',
-    'dbo.Payments',
-    'dbo.Collections',
+    'dist2k.FACT_INVOICE_PAYMENT',
+    'dist2k.FACT_INVOICE_LINE',
+    'dist2k.FACT_COLLECTION',
+    'dist2k.FACT_INVOICE',
+    'dist2k.DIM_PRODUCT',
+    'dist2k.DIM_CUSTOMER',
+    'dist2k.DIM_POSITION',
     'dbo.InvoiceAllocations',
     'dbo.PaymentAllocations',
     'dbo.AllocationEdits',
     'dbo.Mutabakat',
     'dbo.PositionRepresentativeMap',
     'dbo.ImportFiles',
-    'dbo.Invoices',
   ]
 
   for (const fullName of deleteInOrder) {
@@ -1585,14 +1395,9 @@ async function cleanupDatabase(pool: mssql.ConnectionPool) {
   const keepTables = new Set([
     'Users',
     'ImportFiles',
-    'Invoices',
-    'InvoicePayments',
-    'Payments',
-    'Collections',
     'InvoiceAllocations',
     'PaymentAllocations',
     'AllocationEdits',
-    'InvoiceDetails',
     'Mutabakat',
     'PositionRepresentativeMap',
   ])
@@ -1653,6 +1458,25 @@ app.post('/api/admin/cleanup', async (req, res) => {
   }
 })
 
+app.post('/api/admin/rebuild-dist2k', async (req, res) => {
+  try {
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const ok = await isAdminAuthorized(req, pool)
+    if (!ok) {
+      res.status(403).send('Yetkisiz')
+      return
+    }
+    res.status(410).json({
+      ok: false,
+      message: 'Bu endpoint devre disi. Dist2k artik birincil veri kaynagi olarak dogrudan import edilmektedir.',
+    })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
 async function isAdminAuthorized(req: express.Request, pool: mssql.ConnectionPool) {
   const secret = String(req.header('x-admin-secret') ?? '')
   if (env.adminSecret && secret === env.adminSecret) return true
@@ -1692,16 +1516,17 @@ BEGIN TRAN;
 
 DECLARE @Inv TABLE (Code NVARCHAR(64) PRIMARY KEY);
 INSERT INTO @Inv (Code)
-SELECT Code
-FROM dbo.Invoices
-WHERE SourceFileDate = @SourceFileDate
-  AND SourceDepotCode = @DepotCode;
+SELECT i.invoice_code
+FROM dist2k.FACT_INVOICE i
+WHERE i.source_file_date = @SourceFileDate
+  AND i.source_depot_code = @DepotCode;
 
 DECLARE @Pay TABLE (PaymentKey NVARCHAR(300) PRIMARY KEY);
 INSERT INTO @Pay (PaymentKey)
-SELECT c.PaymentKey
-FROM dbo.Collections c
-JOIN @Inv i ON i.Code = c.InvoiceCode;
+SELECT c.collection_code
+FROM dist2k.FACT_COLLECTION c
+WHERE c.source_file_date = @SourceFileDate
+  AND c.source_depot_code = @DepotCode;
 
 DECLARE @cPaymentAlloc INT = 0;
 DECLARE @cInvoiceAlloc INT = 0;
@@ -1719,19 +1544,20 @@ SET @cPaymentAlloc = @@ROWCOUNT;
 DELETE ia FROM dbo.InvoiceAllocations ia JOIN @Inv i ON i.Code = ia.InvoiceCode;
 SET @cInvoiceAlloc = @@ROWCOUNT;
 
-DELETE d FROM dbo.InvoiceDetails d JOIN @Inv i ON i.Code = d.InvoiceCode;
+DELETE d FROM dist2k.FACT_INVOICE_LINE d JOIN @Inv i ON i.Code = d.invoice_code;
 SET @cInvoiceDetails = @@ROWCOUNT;
 
-DELETE ip FROM dbo.InvoicePayments ip JOIN @Inv i ON i.Code = ip.InvoiceCode;
+DELETE ip FROM dist2k.FACT_INVOICE_PAYMENT ip JOIN @Inv i ON i.Code = ip.invoice_code;
 SET @cPayments = @@ROWCOUNT;
 
-DELETE p FROM dbo.Payments p JOIN @Inv i ON i.Code = p.InvoiceCode;
-SET @cPayments = @cPayments + @@ROWCOUNT;
-
-DELETE c FROM dbo.Collections c JOIN @Inv i ON i.Code = c.InvoiceCode;
+DELETE c FROM dist2k.FACT_COLLECTION c
+WHERE c.source_file_date = @SourceFileDate
+  AND c.source_depot_code = @DepotCode;
 SET @cCollections = @@ROWCOUNT;
 
-DELETE i FROM dbo.Invoices i JOIN @Inv x ON x.Code = i.Code;
+DELETE i FROM dist2k.FACT_INVOICE i
+WHERE i.source_file_date = @SourceFileDate
+  AND i.source_depot_code = @DepotCode;
 SET @cInvoices = @@ROWCOUNT;
 
 DELETE e
@@ -1797,31 +1623,37 @@ BEGIN TRAN;
 
 DECLARE @Inv TABLE (Code NVARCHAR(64) PRIMARY KEY);
 INSERT INTO @Inv (Code)
-SELECT Code
-FROM dbo.Invoices
-WHERE SourceFileName = @FileName;
+SELECT i.invoice_code
+FROM dist2k.FACT_INVOICE i
+WHERE i.source_file_name = @FileName;
 
 DECLARE @Dataset TABLE (SourceFileDate DATE NOT NULL, SourceDepotCode NVARCHAR(32) NOT NULL, PRIMARY KEY (SourceFileDate, SourceDepotCode));
 INSERT INTO @Dataset (SourceFileDate, SourceDepotCode)
-SELECT DISTINCT SourceFileDate, SourceDepotCode
-FROM dbo.Invoices
-WHERE SourceFileName = @FileName
-  AND SourceFileDate IS NOT NULL
-  AND SourceDepotCode IS NOT NULL;
+SELECT DISTINCT i.source_file_date, i.source_depot_code
+FROM dist2k.FACT_INVOICE i
+WHERE i.source_file_name = @FileName
+  AND i.source_file_date IS NOT NULL
+  AND i.source_depot_code IS NOT NULL
+UNION
+SELECT DISTINCT c.source_file_date, c.source_depot_code
+FROM dist2k.FACT_COLLECTION c
+WHERE c.source_file_name = @FileName
+  AND c.source_file_date IS NOT NULL
+  AND c.source_depot_code IS NOT NULL;
 
 DECLARE @Pay TABLE (PaymentKey NVARCHAR(300) PRIMARY KEY);
 INSERT INTO @Pay (PaymentKey)
-SELECT DISTINCT c.PaymentKey
-FROM dbo.Collections c
-LEFT JOIN @Inv i ON i.Code = c.InvoiceCode
-WHERE c.SourceFileName = @FileName OR i.Code IS NOT NULL;
+SELECT DISTINCT c.collection_code
+FROM dist2k.FACT_COLLECTION c
+LEFT JOIN @Inv i ON i.Code = c.invoice_code
+WHERE c.source_file_name = @FileName OR i.Code IS NOT NULL;
 
 DECLARE @Col TABLE (PaymentKey NVARCHAR(300) PRIMARY KEY);
 INSERT INTO @Col (PaymentKey)
-SELECT DISTINCT c.PaymentKey
-FROM dbo.Collections c
-LEFT JOIN @Inv i ON i.Code = c.InvoiceCode
-WHERE c.SourceFileName = @FileName OR i.Code IS NOT NULL;
+SELECT DISTINCT c.collection_code
+FROM dist2k.FACT_COLLECTION c
+LEFT JOIN @Inv i ON i.Code = c.invoice_code
+WHERE c.source_file_name = @FileName OR i.Code IS NOT NULL;
 
 DECLARE @cPaymentAlloc INT = 0;
 DECLARE @cInvoiceAlloc INT = 0;
@@ -1839,19 +1671,16 @@ SET @cPaymentAlloc = @@ROWCOUNT;
 DELETE ia FROM dbo.InvoiceAllocations ia JOIN @Inv i ON i.Code = ia.InvoiceCode;
 SET @cInvoiceAlloc = @@ROWCOUNT;
 
-DELETE d FROM dbo.InvoiceDetails d JOIN @Inv i ON i.Code = d.InvoiceCode;
+DELETE d FROM dist2k.FACT_INVOICE_LINE d JOIN @Inv i ON i.Code = d.invoice_code;
 SET @cInvoiceDetails = @@ROWCOUNT;
 
-DELETE ip FROM dbo.InvoicePayments ip WHERE EXISTS (SELECT 1 FROM @Inv i WHERE i.Code = ip.InvoiceCode);
+DELETE ip FROM dist2k.FACT_INVOICE_PAYMENT ip WHERE EXISTS (SELECT 1 FROM @Inv i WHERE i.Code = ip.invoice_code);
 SET @cPayments = @@ROWCOUNT;
 
-DELETE p FROM dbo.Payments p WHERE EXISTS (SELECT 1 FROM @Inv i WHERE i.Code = p.InvoiceCode);
-SET @cPayments = @cPayments + @@ROWCOUNT;
-
-DELETE c FROM dbo.Collections c WHERE EXISTS (SELECT 1 FROM @Col k WHERE k.PaymentKey = c.PaymentKey);
+DELETE c FROM dist2k.FACT_COLLECTION c WHERE EXISTS (SELECT 1 FROM @Col k WHERE k.PaymentKey = c.collection_code);
 SET @cCollections = @@ROWCOUNT;
 
-DELETE i FROM dbo.Invoices i JOIN @Inv x ON x.Code = i.Code;
+DELETE i FROM dist2k.FACT_INVOICE i JOIN @Inv x ON x.Code = i.invoice_code;
 SET @cInvoices = @@ROWCOUNT;
 
 DELETE e
@@ -2364,21 +2193,22 @@ app.get('/api/positions', async (req, res) => {
       .input('SourceDepotCode', mssql.NVarChar(32), sourceDepotCode)
       .query(`
 SELECT
-  i.PositionCode AS code,
-  MAX(i.PositionDescription) AS description,
+  i.position_code AS code,
+  MAX(dp.description) AS description,
   COUNT(1) AS invoiceCount,
   MAX(m.Status) AS mutabakatStatus
-FROM dbo.Invoices i
+FROM dist2k.FACT_INVOICE i
+LEFT JOIN dist2k.DIM_POSITION dp
+  ON dp.position_code = i.position_code
 LEFT JOIN dbo.Mutabakat m
-  ON m.PositionCode = i.PositionCode
+  ON m.PositionCode = i.position_code
   AND @SourceFileDate IS NOT NULL AND m.SourceFileDate = @SourceFileDate
   AND @SourceDepotCode IS NOT NULL AND m.DepotCode = @SourceDepotCode
-WHERE i.PositionCode IS NOT NULL AND LTRIM(RTRIM(i.PositionCode)) <> ''
-  AND i.IsStub = 0
-  AND (@SourceFileDate IS NULL OR i.SourceFileDate = @SourceFileDate)
-  AND (@SourceDepotCode IS NULL OR i.SourceDepotCode = @SourceDepotCode)
-GROUP BY i.PositionCode
-ORDER BY i.PositionCode
+WHERE i.position_code IS NOT NULL AND LTRIM(RTRIM(i.position_code)) <> ''
+  AND (@SourceFileDate IS NULL OR i.source_file_date = @SourceFileDate)
+  AND (@SourceDepotCode IS NULL OR i.source_depot_code = @SourceDepotCode)
+GROUP BY i.position_code
+ORDER BY i.position_code
 `)
     res.json({ ok: true, positions: r.recordset ?? [] })
   } catch (e) {
@@ -2415,16 +2245,36 @@ app.get('/api/positions/:code', async (req, res) => {
       .query(
         `
 SELECT
-  Code, IsEdos, ReturnGoodsCount, LegalNumber, Status, SalesType, IssueDate, DueDate, CreditDays, NetAmount, GrossAmount, OutstandingAmount, TaxAmount, TotalDiscount,
-  CustomerCode, CustomerName, CustomerTaxNumber, CustomerLicenseNumber,
-  PositionCode, PositionDescription,
-  SourceFileName, SourceFileDate, SourceDepotCode
-FROM dbo.Invoices
-WHERE PositionCode = @PositionCode
-  AND IsStub = 0
-  AND (@SourceFileDate IS NULL OR SourceFileDate = @SourceFileDate)
-  AND (@SourceDepotCode IS NULL OR SourceDepotCode = @SourceDepotCode)
-ORDER BY Code
+  i.invoice_code AS Code,
+  i.is_edos AS IsEdos,
+  CAST(NULL AS INT) AS ReturnGoodsCount,
+  i.legal_number AS LegalNumber,
+  i.status AS Status,
+  i.sales_type AS SalesType,
+  i.issue_date AS IssueDate,
+  i.due_date AS DueDate,
+  i.credit_days AS CreditDays,
+  i.net_amount AS NetAmount,
+  CAST(NULL AS DECIMAL(18,4)) AS GrossAmount,
+  i.outstanding_amount AS OutstandingAmount,
+  i.tax_amount AS TaxAmount,
+  i.total_discount AS TotalDiscount,
+  i.customer_code AS CustomerCode,
+  c.registered_name AS CustomerName,
+  c.tax_number AS CustomerTaxNumber,
+  c.license_number AS CustomerLicenseNumber,
+  i.position_code AS PositionCode,
+  p.description AS PositionDescription,
+  i.source_file_name AS SourceFileName,
+  i.source_file_date AS SourceFileDate,
+  i.source_depot_code AS SourceDepotCode
+FROM dist2k.FACT_INVOICE i
+LEFT JOIN dist2k.DIM_CUSTOMER c ON c.customer_code = i.customer_code
+LEFT JOIN dist2k.DIM_POSITION p ON p.position_code = i.position_code
+WHERE i.position_code = @PositionCode
+  AND (@SourceFileDate IS NULL OR i.source_file_date = @SourceFileDate)
+  AND (@SourceDepotCode IS NULL OR i.source_depot_code = @SourceDepotCode)
+ORDER BY i.invoice_code
 `,
       )
 
@@ -2436,23 +2286,23 @@ ORDER BY Code
       .query(
         `
 SELECT
-  d.InvoiceCode,
-  d.LineNumber,
-  d.ProductSequence,
-  d.ProductCode,
-  d.ProductDescription,
-  d.Quantity,
-  d.NetAmount,
-  d.GrossAmount,
-  d.Price,
-  d.Availability
-FROM dbo.InvoiceDetails d
-JOIN dbo.Invoices i ON i.Code = d.InvoiceCode
-WHERE i.PositionCode = @PositionCode
-  AND i.IsStub = 0
-  AND (@SourceFileDate IS NULL OR i.SourceFileDate = @SourceFileDate)
-  AND (@SourceDepotCode IS NULL OR i.SourceDepotCode = @SourceDepotCode)
-ORDER BY d.InvoiceCode, d.LineNumber
+  d.invoice_code AS InvoiceCode,
+  d.line_no AS LineNumber,
+  pr.sequence_no AS ProductSequence,
+  d.product_code AS ProductCode,
+  pr.description AS ProductDescription,
+  d.quantity AS Quantity,
+  d.net_amount AS NetAmount,
+  d.gross_amount AS GrossAmount,
+  d.price AS Price,
+  d.availability AS Availability
+FROM dist2k.FACT_INVOICE_LINE d
+JOIN dist2k.FACT_INVOICE i ON i.invoice_code = d.invoice_code
+LEFT JOIN dist2k.DIM_PRODUCT pr ON pr.product_code = d.product_code
+WHERE i.position_code = @PositionCode
+  AND (@SourceFileDate IS NULL OR i.source_file_date = @SourceFileDate)
+  AND (@SourceDepotCode IS NULL OR i.source_depot_code = @SourceDepotCode)
+ORDER BY d.invoice_code, d.line_no
 `,
       )
 
@@ -2464,27 +2314,29 @@ ORDER BY d.InvoiceCode, d.LineNumber
       .query(
         `
 SELECT
-  c.PaymentKey,
-  c.InvoiceCode,
-  c.Code,
-  c.IssueDate,
-  c.Amount,
-  c.PaymentFormCode,
-  c.PaymentFormDescription,
-  c.CustomerCode,
-  c.CustomerName,
-  c.CustomerTaxNumber,
-  c.CustomerLicenseNumber,
-  c.PositionCode,
-  c.PositionDescription,
-  c.SourceFileName,
-  c.SourceFileDate,
-  c.SourceDepotCode
-FROM dbo.Collections c
-WHERE c.PositionCode = @PositionCode
-  AND (@SourceFileDate IS NULL OR c.SourceFileDate = @SourceFileDate)
-  AND (@SourceDepotCode IS NULL OR c.SourceDepotCode = @SourceDepotCode)
-ORDER BY c.PaymentKey
+  c.collection_code AS PaymentKey,
+  c.invoice_code AS InvoiceCode,
+  c.collection_code AS Code,
+  c.issue_date AS IssueDate,
+  c.amount AS Amount,
+  c.paymentform_code AS PaymentFormCode,
+  c.paymentform_desc AS PaymentFormDescription,
+  c.customer_code AS CustomerCode,
+  cu.registered_name AS CustomerName,
+  cu.tax_number AS CustomerTaxNumber,
+  cu.license_number AS CustomerLicenseNumber,
+  c.position_code AS PositionCode,
+  p.description AS PositionDescription,
+  c.source_file_name AS SourceFileName,
+  c.source_file_date AS SourceFileDate,
+  c.source_depot_code AS SourceDepotCode
+FROM dist2k.FACT_COLLECTION c
+LEFT JOIN dist2k.DIM_CUSTOMER cu ON cu.customer_code = c.customer_code
+LEFT JOIN dist2k.DIM_POSITION p ON p.position_code = c.position_code
+WHERE c.position_code = @PositionCode
+  AND (@SourceFileDate IS NULL OR c.source_file_date = @SourceFileDate)
+  AND (@SourceDepotCode IS NULL OR c.source_depot_code = @SourceDepotCode)
+ORDER BY c.collection_code
 `,
       )
 
@@ -2496,18 +2348,18 @@ ORDER BY c.PaymentKey
       .query(
         `
 SELECT
-  p.InvoiceCode,
-  p.Code,
-  p.IssueDate,
-  p.Amount,
-  p.PaymentFormCode,
-  p.PaymentFormDescription
-FROM dbo.InvoicePayments p
-JOIN dbo.Invoices i ON i.Code = p.InvoiceCode
-WHERE i.PositionCode = @PositionCode
-  AND (@SourceFileDate IS NULL OR i.SourceFileDate = @SourceFileDate)
-  AND (@SourceDepotCode IS NULL OR i.SourceDepotCode = @SourceDepotCode)
-ORDER BY p.PaymentKey
+  p.invoice_code AS InvoiceCode,
+  p.payment_code AS Code,
+  p.issue_date AS IssueDate,
+  p.amount AS Amount,
+  p.paymentform_code AS PaymentFormCode,
+  p.paymentform_desc AS PaymentFormDescription
+FROM dist2k.FACT_INVOICE_PAYMENT p
+JOIN dist2k.FACT_INVOICE i ON i.invoice_code = p.invoice_code
+WHERE i.position_code = @PositionCode
+  AND (@SourceFileDate IS NULL OR i.source_file_date = @SourceFileDate)
+  AND (@SourceDepotCode IS NULL OR i.source_depot_code = @SourceDepotCode)
+ORDER BY p.payment_code
 `,
       )
 
@@ -2520,10 +2372,10 @@ ORDER BY p.PaymentKey
         `
 SELECT ia.InvoiceCode, ia.AllocationsJson
 FROM dbo.InvoiceAllocations ia
-JOIN dbo.Invoices i ON i.Code = ia.InvoiceCode
-WHERE i.PositionCode = @PositionCode
-  AND (@SourceFileDate IS NULL OR i.SourceFileDate = @SourceFileDate)
-  AND (@SourceDepotCode IS NULL OR i.SourceDepotCode = @SourceDepotCode)
+JOIN dist2k.FACT_INVOICE i ON i.invoice_code = ia.InvoiceCode
+WHERE i.position_code = @PositionCode
+  AND (@SourceFileDate IS NULL OR i.source_file_date = @SourceFileDate)
+  AND (@SourceDepotCode IS NULL OR i.source_depot_code = @SourceDepotCode)
 `,
       )
 
@@ -2536,11 +2388,10 @@ WHERE i.PositionCode = @PositionCode
         `
 SELECT pa.PaymentKey, pa.AllocationsJson
 FROM dbo.PaymentAllocations pa
-JOIN dbo.Collections p ON p.PaymentKey = pa.PaymentKey
-JOIN dbo.Invoices i ON i.Code = p.InvoiceCode
-WHERE i.PositionCode = @PositionCode
-  AND (@SourceFileDate IS NULL OR i.SourceFileDate = @SourceFileDate)
-  AND (@SourceDepotCode IS NULL OR i.SourceDepotCode = @SourceDepotCode)
+JOIN dist2k.FACT_COLLECTION c ON c.collection_code = pa.PaymentKey
+WHERE c.position_code = @PositionCode
+  AND (@SourceFileDate IS NULL OR c.source_file_date = @SourceFileDate)
+  AND (@SourceDepotCode IS NULL OR c.source_depot_code = @SourceDepotCode)
 `,
       )
 
