@@ -46,20 +46,30 @@ const env = {
   importUploadDir: process.env.IMPORT_UPLOAD_DIR?.trim() || path.resolve(moduleDir, '../uploads/import-jobs'),
 }
 
-const manimEnvFileCandidates = [
-  path.resolve(moduleDir, '../.env'),
-  path.resolve(moduleDir, '../.env.local'),
-  path.resolve(moduleDir, '../.env.production'),
-  path.resolve(moduleDir, '../.env.development'),
-  path.resolve(moduleDir, '../../.env'),
-  path.resolve(moduleDir, '../../.env.local'),
-  path.resolve(moduleDir, '../../.env.production'),
-  path.resolve(moduleDir, '../../.env.development'),
-  path.resolve(process.cwd(), '.env'),
-  path.resolve(process.cwd(), '.env.local'),
-  path.resolve(process.cwd(), '.env.production'),
-  path.resolve(process.cwd(), '.env.development'),
-]
+const manimEnvFileCandidates = Array.from(
+  new Set([
+    path.resolve(moduleDir, '../.env'),
+    path.resolve(moduleDir, '../.env.local'),
+    path.resolve(moduleDir, '../.env.production'),
+    path.resolve(moduleDir, '../.env.development'),
+    path.resolve(moduleDir, '../../.env'),
+    path.resolve(moduleDir, '../../.env.local'),
+    path.resolve(moduleDir, '../../.env.production'),
+    path.resolve(moduleDir, '../../.env.development'),
+    path.resolve(moduleDir, 'server/.env'),
+    path.resolve(moduleDir, 'server/.env.local'),
+    path.resolve(moduleDir, 'server/.env.production'),
+    path.resolve(moduleDir, 'server/.env.development'),
+    path.resolve(process.cwd(), '.env'),
+    path.resolve(process.cwd(), '.env.local'),
+    path.resolve(process.cwd(), '.env.production'),
+    path.resolve(process.cwd(), '.env.development'),
+    path.resolve(process.cwd(), 'server/.env'),
+    path.resolve(process.cwd(), 'server/.env.local'),
+    path.resolve(process.cwd(), 'server/.env.production'),
+    path.resolve(process.cwd(), 'server/.env.development'),
+  ]),
+)
 let manimEnvLastSyncDebug = 'sync-calismadi'
 
 function firstNonEmpty(values: Array<unknown>) {
