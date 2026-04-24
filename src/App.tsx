@@ -717,9 +717,10 @@ export default function App() {
   const invoiceNakitGrossTotal = useMemo(() => {
     let total = 0
     for (const inv of positionInvoices) {
-      const hasNakitPayment = (inv.payments ?? []).some((p) => normalizePaymentType(p.paymentFormCode, p.paymentFormDescription) === 'NAKIT')
-      if (!hasNakitPayment) continue
-      total += inv.grossAmount ?? invoiceTotalAmount(inv)
+      for (const p of inv.payments ?? []) {
+        if (normalizePaymentType(p.paymentFormCode, p.paymentFormDescription) !== 'NAKIT') continue
+        total += Number(p.amount) || 0
+      }
     }
     return total
   }, [positionInvoices])
