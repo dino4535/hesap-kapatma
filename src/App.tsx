@@ -25,6 +25,7 @@ import {
   type MutabakatMode,
   type MutabakatRecord,
   type ImportFileRow,
+  type ImportResultFile,
   type PositionRow,
   type PositionRepresentativeRow,
   type UserRow,
@@ -232,6 +233,7 @@ export default function App() {
   const [fileInputKey, setFileInputKey] = useState(0)
   const [uploadDepotMap, setUploadDepotMap] = useState<Record<string, string>>({})
   const [uploadBulkDepot, setUploadBulkDepot] = useState('')
+  const [importJobFiles, setImportJobFiles] = useState<ImportResultFile[]>([])
   const [page, setPage] = useState<'main' | 'mutabakat' | 'position-representative' | 'user-admin'>('main')
   const [selectedPosition, setSelectedPosition] = useState<string | null>(null)
   const [detailSearch, setDetailSearch] = useState('')
@@ -590,6 +592,7 @@ export default function App() {
     }
 
     setStatus({ type: 'info', message: `Yükleme kuyruğa alınıyor: ${selectedFiles.length} dosya` })
+    setImportJobFiles([])
     try {
       const started = await importSalesFiles(selectedFiles, uploadDepotMap)
       if (!started.ok || !started.jobId) throw new Error(started.message || 'Import kuyruğa alınamadı')
@@ -599,11 +602,19 @@ export default function App() {
         const statusRes = await fetchImportJobStatus(started.jobId)
         if (!statusRes.ok || !statusRes.job) throw new Error(statusRes.message || 'Import durumu alınamadı')
         const job = statusRes.job
+        setImportJobFiles(job.files ?? [])
         if (job.status === 'queued' || job.status === 'running') {
+          const done = (job.files ?? []).reduce((s, f) => {
+            return s + (f.positions ?? []).reduce((p, x) => p + x.processedInvoices + x.processedCollections, 0)
+          }, 0)
+          const total = (job.files ?? []).reduce((s, f) => {
+            return s + (f.positions ?? []).reduce((p, x) => p + x.totalInvoices + x.totalCollections, 0)
+          }, 0)
+          const percent = total > 0 ? Math.round((done * 100) / total) : 0
           const current = job.currentFileName ? ` (${job.currentFileName})` : ''
           setStatus({
             type: 'info',
-            message: `Import çalışıyor: ${job.processedFiles}/${job.totalFiles} dosya${current}`,
+            message: `Import çalışıyor: ${percent}% - ${job.processedFiles}/${job.totalFiles} dosya${current}`,
           })
           await new Promise((resolve) => window.setTimeout(resolve, 1500))
           continue
@@ -2648,6 +2659,53 @@ export default function App() {
                     </option>
                   ))}
                 </datalist>
+              </div>
+            ) : null}
+            {importJobFiles.length > 0 ? (
+              <div style={{ marginTop: 10, border: '1px solid #e2e8f0', borderRadius: 10, padding: 10, background: '#fff' }}>
+                <div style={{ fontWeight: 700, color: '#2d3748', marginBottom: 8 }}>Import Pozisyon Durumu</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {importJobFiles.map((f) => (
+                    <div key={f.fileName} style={{ border: '1px solid #edf2f7', borderRadius: 8, padding: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                        <div style={{ fontWeight: 700, color: '#2d3748' }}>{f.fileName}</div>
+                        <div style={{ color: '#4a5568', fontWeight: 700 }}>%{f.progressPercent ?? 0}</div>
+                      </div>
+                      <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {(f.positions ?? []).map((p) => {
+                          const done = p.processedInvoices + p.processedCollections
+                          const total = p.totalInvoices + p.totalCollections
+                          const isDone = p.status === 'imported'
+                          const isSkipped = p.status === 'skipped'
+                          return (
+                            <div
+                              key={`${f.fileName}-${p.positionCode}`}
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                gap: 10,
+                                flexWrap: 'wrap',
+                                padding: '4px 6px',
+                                borderRadius: 6,
+                                background: isDone ? '#f0fff4' : isSkipped ? '#fffaf0' : '#f7fafc',
+                                color: '#2d3748',
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span>{p.positionCode}</span>
+                                {isDone ? <span style={{ color: '#2f855a', fontWeight: 700 }}>✓</span> : null}
+                                {isSkipped ? <span style={{ color: '#b7791f', fontWeight: 700 }}>⏭</span> : null}
+                              </div>
+                              <div style={{ color: '#4a5568', fontSize: 12 }}>
+                                %{p.progressPercent} ({done}/{total})
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : null}
             <div className={`upload-status ${status?.type ?? ''}`}>{status?.message ?? ''}</div>

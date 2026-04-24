@@ -1,11 +1,24 @@
 export interface ImportResultFile {
   fileName: string
+  status?: 'pending' | 'running' | 'completed' | 'failed'
+  errorMessage?: string
+  progressPercent?: number
   invoiceCount: number
   paymentCount: number
   depotCode?: string
   fileDate?: string
   skipped?: boolean
   skippedPositions?: string[]
+  positions?: Array<{
+    positionCode: string
+    totalInvoices: number
+    totalCollections: number
+    processedInvoices: number
+    processedCollections: number
+    status: 'pending' | 'processing' | 'imported' | 'skipped'
+    progressPercent: number
+    message?: string
+  }>
 }
 
 export interface ImportResult {

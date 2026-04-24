@@ -4,6 +4,7 @@ import express from 'express'
 import multer from 'multer'
 import mssql from 'mssql'
 import crypto from 'node:crypto'
+import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import http from 'node:http'
 import path from 'node:path'
@@ -38,6 +39,7 @@ const env = {
   httpHeadersTimeoutMs: readEnvMs('HTTP_HEADERS_TIMEOUT_MS', 2 * 60 * 1000),
   httpKeepAliveTimeoutMs: readEnvMs('HTTP_KEEPALIVE_TIMEOUT_MS', 75 * 1000),
   importJobTtlMs: readEnvMs('IMPORT_JOB_TTL_MS', 6 * 60 * 60 * 1000),
+  importUploadDir: process.env.IMPORT_UPLOAD_DIR?.trim() || path.resolve(moduleDir, '../uploads/import-jobs'),
 }
 
 type SalesFileMeta = { fileName: string; fileDate?: string; depotCode?: string }
@@ -47,21 +49,40 @@ type ImportRuntimeState = {
   upsertedProducts: Set<string>
   knownInvoices: Set<string>
 }
-type QueuedImportFile = { fileName: string; content: string; selectedDepot: string | null }
+type ImportPositionProgress = {
+  positionCode: string
+  totalInvoices: number
+  totalCollections: number
+  processedInvoices: number
+  processedCollections: number
+  status: 'pending' | 'processing' | 'imported' | 'skipped'
+  progressPercent: number
+  message?: string
+}
+type ImportResultFile = {
+  fileName: string
+  invoiceCount: number
+  paymentCount: number
+  depotCode?: string
+  fileDate?: string
+  skipped?: boolean
+  skippedPositions?: string[]
+  positions?: ImportPositionProgress[]
+}
+type QueuedImportFile = {
+  fileName: string
+  serverFilePath: string
+  selectedDepot: string | null
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  errorMessage?: string
+  positions: ImportPositionProgress[]
+}
 type ImportJobStatus = 'queued' | 'running' | 'completed' | 'failed'
 type ImportJob = {
   id: string
   status: ImportJobStatus
   files: QueuedImportFile[]
-  results: Array<{
-    fileName: string
-    invoiceCount: number
-    paymentCount: number
-    depotCode?: string
-    fileDate?: string
-    skipped?: boolean
-    skippedPositions?: string[]
-  }>
+  results: ImportResultFile[]
   totalFiles: number
   processedFiles: number
   currentFileName?: string
@@ -69,6 +90,53 @@ type ImportJob = {
   createdAt: string
   startedAt?: string
   finishedAt?: string
+}
+
+function sanitizeUploadFileName(fileName: string) {
+  const safe = fileName.replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_').trim()
+  return safe || 'upload.json'
+}
+
+function normalizePositionCode(raw: unknown) {
+  const code = (toStringOrUndef(raw) ?? '').trim()
+  return code || 'UNKNOWN'
+}
+
+function buildPositionSkeleton(parsed: RawSalesFile): ImportPositionProgress[] {
+  const counters = new Map<string, { invoices: number; collections: number }>()
+  const invoices = Array.isArray(parsed.INVOICES) ? (parsed.INVOICES as RawInvoice[]) : []
+  const collections = Array.isArray(parsed.COLLECTIONS) ? (parsed.COLLECTIONS as RawCollection[]) : []
+
+  for (const inv of invoices) {
+    const pos = normalizePositionCode(inv?.POSITION?.CODE)
+    const c = counters.get(pos) ?? { invoices: 0, collections: 0 }
+    c.invoices += 1
+    counters.set(pos, c)
+  }
+  for (const col of collections) {
+    const pos = normalizePositionCode(col?.POSITION?.CODE)
+    const c = counters.get(pos) ?? { invoices: 0, collections: 0 }
+    c.collections += 1
+    counters.set(pos, c)
+  }
+  return Array.from(counters.entries()).map(([positionCode, c]) => ({
+    positionCode,
+    totalInvoices: c.invoices,
+    totalCollections: c.collections,
+    processedInvoices: 0,
+    processedCollections: 0,
+    status: 'pending',
+    progressPercent: 0,
+  }))
+}
+
+async function safeDeleteFile(filePath: string) {
+  try {
+    await fs.unlink(filePath)
+  } catch (e) {
+    const code = typeof e === 'object' && e ? String((e as { code?: unknown }).code ?? '') : ''
+    if (code !== 'ENOENT') throw e
+  }
 }
 
 function parseSalesFileName(fileName: string): SalesFileMeta {
@@ -1204,7 +1272,13 @@ VALUES (
   return true
 }
 
-async function importFile(pool: mssql.ConnectionPool, fileName: string, content: string, selectedDepotCode: string | null) {
+async function importFile(
+  pool: mssql.ConnectionPool,
+  fileName: string,
+  content: string,
+  selectedDepotCode: string | null,
+  onPositionProgress?: (positions: ImportPositionProgress[]) => void,
+) {
   const parsedMeta = parseSalesFileName(fileName)
   const parsedDepotCode = normalizeDepotCode(parsedMeta.depotCode)
   const depotCodeSelected = normalizeDepotCode(selectedDepotCode)
@@ -1223,7 +1297,6 @@ async function importFile(pool: mssql.ConnectionPool, fileName: string, content:
   const existingRow = existing.recordset?.[0] as
     | { FileName: string; FileDate: Date | null; DepotCode: string | null; InvoiceCount: number; PaymentCount: number }
     | undefined
-  const isReprocess = !!existingRow
 
   const parsed = JSON.parse(content) as RawSalesFile
   if (!parsed || !Array.isArray(parsed.INVOICES)) {
@@ -1233,8 +1306,22 @@ async function importFile(pool: mssql.ConnectionPool, fileName: string, content:
   const invoices = parsed.INVOICES as RawInvoice[]
   const collections = Array.isArray(parsed.COLLECTIONS) ? (parsed.COLLECTIONS as RawCollection[]) : []
 
+  const positionGroups = new Map<string, { invoices: RawInvoice[]; collections: RawCollection[] }>()
+  for (const inv of invoices) {
+    const pos = normalizePositionCode(inv.POSITION?.CODE)
+    const g = positionGroups.get(pos) ?? { invoices: [], collections: [] }
+    g.invoices.push(inv)
+    positionGroups.set(pos, g)
+  }
+  for (const c of collections) {
+    const pos = normalizePositionCode(c.POSITION?.CODE)
+    const g = positionGroups.get(pos) ?? { invoices: [], collections: [] }
+    g.collections.push(c)
+    positionGroups.set(pos, g)
+  }
+
   let skippedPositions: string[] = []
-  if (meta.fileDate && !isReprocess) {
+  if (meta.fileDate) {
     const r = await pool
       .request()
       .input('SourceFileDate', mssql.Date, new Date(meta.fileDate))
@@ -1256,6 +1343,26 @@ WHERE x.PositionCode IS NOT NULL AND LTRIM(RTRIM(x.PositionCode)) <> ''
       .filter((x) => !!x)
   }
   const skipPosSet = new Set(skippedPositions)
+  const positionProgress: ImportPositionProgress[] = Array.from(positionGroups.entries()).map(([positionCode, group]) => ({
+    positionCode,
+    totalInvoices: group.invoices.length,
+    totalCollections: group.collections.length,
+    processedInvoices: 0,
+    processedCollections: 0,
+    status: skipPosSet.has(positionCode) ? ('skipped' as const) : ('pending' as const),
+    progressPercent: skipPosSet.has(positionCode) ? 100 : 0,
+    message: skipPosSet.has(positionCode) ? 'Aynı tarih/depo verisi mevcut, atlandı' : undefined,
+  }))
+  const updateProgress = () => {
+    if (!onPositionProgress) return
+    onPositionProgress(positionProgress.map((x) => ({ ...x })))
+  }
+  updateProgress()
+
+  if (positionProgress.length === 0) {
+    throw new Error(`${fileName}: İşlenecek pozisyon bulunamadı`)
+  }
+
   const state: ImportRuntimeState = {
     upsertedPositions: new Set<string>(),
     upsertedCustomers: new Set<string>(),
@@ -1266,19 +1373,37 @@ WHERE x.PositionCode IS NOT NULL AND LTRIM(RTRIM(x.PositionCode)) <> ''
   let paymentCount = 0
   let invoiceCount = 0
 
-  for (const inv of invoices) {
-    const pos = toStringOrUndef(inv.POSITION?.CODE)?.trim()
-    if (pos && skipPosSet.has(pos)) continue
-    const r = await upsertDist2kInvoice(pool, state, inv, meta)
-    paymentCount += r.paymentCount
-    invoiceCount += 1
-  }
+  for (const p of positionProgress) {
+    if (p.status === 'skipped') continue
+    p.status = 'processing'
+    p.message = undefined
+    updateProgress()
 
-  for (const c of collections) {
-    const pos = toStringOrUndef(c.POSITION?.CODE)?.trim()
-    if (pos && skipPosSet.has(pos)) continue
-    const inserted = await upsertDist2kCollection(pool, state, c, meta)
-    if (inserted) paymentCount += 1
+    const group = positionGroups.get(p.positionCode) ?? { invoices: [], collections: [] }
+
+    for (const inv of group.invoices) {
+      const r = await upsertDist2kInvoice(pool, state, inv, meta)
+      paymentCount += r.paymentCount
+      invoiceCount += 1
+      p.processedInvoices += 1
+      const done = p.processedInvoices + p.processedCollections
+      const total = p.totalInvoices + p.totalCollections
+      p.progressPercent = total > 0 ? Math.round((done * 100) / total) : 100
+      updateProgress()
+    }
+
+    for (const c of group.collections) {
+      const inserted = await upsertDist2kCollection(pool, state, c, meta)
+      if (inserted) paymentCount += 1
+      p.processedCollections += 1
+      const done = p.processedInvoices + p.processedCollections
+      const total = p.totalInvoices + p.totalCollections
+      p.progressPercent = total > 0 ? Math.round((done * 100) / total) : 100
+      updateProgress()
+    }
+    p.status = 'imported'
+    p.progressPercent = 100
+    updateProgress()
   }
 
   const jsonId = toStringOrUndef(parsed.Id) ?? null
@@ -1336,6 +1461,7 @@ VALUES (s.FileName, s.FileDate, s.DepotCode, s.DepotCodeParsed, s.DepotCodeSelec
     paymentCount,
     skipped: false,
     skippedPositions,
+    positions: positionProgress.map((x) => ({ ...x })),
   }
 }
 
@@ -1958,8 +2084,18 @@ app.delete('/api/position-representatives/:positionCode', async (req, res) => {
   }
 })
 
+fsSync.mkdirSync(env.importUploadDir, { recursive: true })
+
 const upload = multer({
-  storage: multer.memoryStorage(),
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, env.importUploadDir),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname || '').toLowerCase() || '.json'
+      const base = path.basename(file.originalname || 'upload', ext)
+      const safeBase = sanitizeUploadFileName(base).slice(0, 120)
+      cb(null, `${Date.now()}-${crypto.randomUUID()}-${safeBase}${ext}`)
+    },
+  }),
   limits: { files: 20, fileSize: 300 * 1024 * 1024 },
 })
 
@@ -2000,13 +2136,24 @@ function enqueueImportJob(files: QueuedImportFile[]) {
       await ensureSchema(pool)
       for (const f of current.files) {
         current.currentFileName = f.fileName
+        f.status = 'running'
         try {
-          const result = await importFile(pool, f.fileName, f.content, f.selectedDepot)
+          const content = await fs.readFile(f.serverFilePath, 'utf8')
+          const result = await importFile(pool, f.fileName, content, f.selectedDepot, (positions) => {
+            f.positions = positions
+          })
+          f.positions = result.positions ?? f.positions
+          f.status = 'completed'
+          f.errorMessage = undefined
           current.results.push(result)
           current.processedFiles += 1
+          await safeDeleteFile(f.serverFilePath)
         } catch (e) {
+          await safeDeleteFile(f.serverFilePath)
+          f.status = 'failed'
+          f.errorMessage = e instanceof Error ? e.message : 'Import sırasında hata oluştu'
           current.status = 'failed'
-          current.errorMessage = e instanceof Error ? e.message : 'Import sırasında hata oluştu'
+          current.errorMessage = f.errorMessage
           current.finishedAt = new Date().toISOString()
           current.currentFileName = undefined
           return
@@ -2047,6 +2194,7 @@ app.post('/api/import', upload.array('files'), async (req, res) => {
           Object.entries(parsed ?? {}).map(([k, v]) => [k, typeof v === 'string' ? v : String(v ?? '')]),
         )
       } catch {
+        await Promise.all(files.map((f) => safeDeleteFile(f.path)))
         res.status(400).send('Geçersiz depotMap')
         return
       }
@@ -2054,17 +2202,39 @@ app.post('/api/import', upload.array('files'), async (req, res) => {
 
     for (const f of files) {
       if (!f.originalname.toLowerCase().endsWith('.json')) {
+        await Promise.all(files.map((x) => safeDeleteFile(x.path)))
         res.status(400).send(`${f.originalname}: Sadece .json dosyaları yüklenebilir`)
         return
       }
     }
 
-    const job = enqueueImportJob(
-      files.map((f) => ({
+    const queuedFiles: QueuedImportFile[] = []
+    for (const f of files) {
+      const content = await fs.readFile(f.path, 'utf8')
+      let parsed: RawSalesFile
+      try {
+        parsed = JSON.parse(content) as RawSalesFile
+      } catch {
+        await Promise.all(files.map((x) => safeDeleteFile(x.path)))
+        res.status(400).send(`${f.originalname}: Geçersiz JSON`)
+        return
+      }
+      if (!parsed || !Array.isArray(parsed.INVOICES)) {
+        await Promise.all(files.map((x) => safeDeleteFile(x.path)))
+        res.status(400).send(`${f.originalname}: Geçersiz JSON formatı (INVOICES array bekleniyor)`)
+        return
+      }
+      queuedFiles.push({
         fileName: f.originalname,
-        content: f.buffer.toString('utf8'),
+        serverFilePath: f.path,
         selectedDepot: normalizeDepotCode(depotMap[f.originalname] ?? null),
-      })),
+        status: 'pending',
+        positions: buildPositionSkeleton(parsed),
+      })
+    }
+
+    const job = enqueueImportJob(
+      queuedFiles,
     )
     res.status(202).json({
       ok: true,
@@ -2103,7 +2273,25 @@ app.get('/api/import/jobs/:jobId', (req, res) => {
       startedAt: job.startedAt,
       finishedAt: job.finishedAt,
       errorMessage: job.errorMessage,
-      files: job.results,
+      files: job.files.map((f) => {
+        const done = f.positions.reduce((s, x) => s + x.processedInvoices + x.processedCollections, 0)
+        const total = f.positions.reduce((s, x) => s + x.totalInvoices + x.totalCollections, 0)
+        const progressPercent = total > 0 ? Math.round((done * 100) / total) : 0
+        const result = job.results.find((r) => r.fileName === f.fileName)
+        return {
+          fileName: f.fileName,
+          status: f.status,
+          errorMessage: f.errorMessage,
+          progressPercent,
+          positions: f.positions,
+          invoiceCount: result?.invoiceCount ?? 0,
+          paymentCount: result?.paymentCount ?? 0,
+          depotCode: result?.depotCode,
+          fileDate: result?.fileDate,
+          skipped: result?.skipped ?? false,
+          skippedPositions: result?.skippedPositions ?? [],
+        }
+      }),
     },
   })
 })
