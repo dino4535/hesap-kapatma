@@ -697,18 +697,25 @@ export default function App() {
     }, 0)
 
     const havaleTutari = havaleIskonto > 0 ? Math.max(0, invoiceHavale - havaleIskonto) : invoiceHavale
-    const nakitTutari = invoiceNakit
+    const nakitIskonto = positionInvoices.reduce((s, inv) => {
+      const allocs = getInvoiceAllocations(inv, invoiceAllocations)
+      const nakitPart = allocationAmountForType(allocs, 'NAKIT')
+      if (nakitPart <= 0) return s
+      return s + (inv.totalDiscount ?? 0)
+    }, 0)
+
+    const nakitTutari = nakitIskonto > 0 ? Math.max(0, invoiceNakit - nakitIskonto) : invoiceNakit
     const rutToplam = havaleTutari + nakitTutari
 
     const vadeliSatisTutari = totalsByTypeInvoices.VADELI
     const genelToplam = rutToplam + vadeliSatisTutari
 
-    const torbaTutari = invoiceNakit + collectionVadeliTahsilat
+    const torbaTutari = nakitTutari + collectionVadeliTahsilat
 
     return {
       havaleTutari,
       nakitTutari,
-      nakitToplam: invoiceNakit,
+      nakitToplam: nakitTutari,
       vadeliTahsilatHavale: collectionVadeliTahsilatHavale,
       toplam: rutToplam,
       iskontoToplam: discountTotalAll,
