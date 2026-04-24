@@ -650,15 +650,7 @@ export default function App() {
   }, [positionCollections, paymentAllocations])
 
   const invoiceTotal = useMemo(() => positionInvoices.reduce((s, i) => s + invoiceTotalAmount(i), 0), [positionInvoices])
-  const discountTotalAll = useMemo(() => {
-    return positionInvoices.reduce((s, i) => {
-      const gross = i.grossAmount ?? 0
-      const net = i.netAmount ?? 0
-      const explicit = i.totalDiscount ?? 0
-      const inferred = gross > 0 && net > 0 && gross > net ? gross - net : 0
-      return s + (explicit > 0 ? explicit : inferred)
-    }, 0)
-  }, [positionInvoices])
+  const discountTotalAll = useMemo(() => positionInvoices.reduce((s, i) => s + (i.totalDiscount ?? 0), 0), [positionInvoices])
   const paymentTotal = useMemo(() => positionCollections.reduce((s, c) => s + (c.amount ?? 0), 0), [positionCollections])
 
   const havaleInvoicesByBayi = useMemo(() => {

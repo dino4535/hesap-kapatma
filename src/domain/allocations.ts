@@ -8,14 +8,7 @@ export interface Allocation {
 }
 
 export function invoiceTotalAmount(inv: Invoice) {
-  const net = Number(inv.netAmount) || 0
-  const gross = Number(inv.grossAmount) || 0
-  if (gross <= 0) return net
-
-  const explicitDiscount = Number(inv.totalDiscount) || 0
-  const inferredDiscount = net > 0 && gross > net ? gross - net : 0
-  const discount = explicitDiscount > 0 ? explicitDiscount : inferredDiscount
-  return Math.max(0, gross - discount)
+  return Number(inv.netAmount) || 0
 }
 
 export function computePaymentKey(invoiceCode: string, p: Payment) {
