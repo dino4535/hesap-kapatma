@@ -33,7 +33,8 @@ const env = {
   port: process.env.PORT ? Number(process.env.PORT) : 3001,
   adminSecret: process.env.ADMIN_SECRET ?? '',
   manimDir: process.env.MANIM_DIR ?? '',
-  manimBaseUrl: process.env.MANIM_BASE_URL ?? '',
+  manimBaseUrl: process.env.MANIM_BASE_URL ?? process.env.MANIM_API_BASE ?? '',
+  manimLoginUrl: process.env.MANIM_LOGIN_URL ?? process.env.LOGIN_URL ?? '',
   manimToken: process.env.MANIM_TOKEN ?? '',
   manimAuthPath: process.env.MANIM_AUTH_PATH ?? '/auth/login',
   manimUser: process.env.MANIM_USER ?? process.env.MANIM_USERNAME ?? process.env.MANIM_EMAIL ?? '',
@@ -100,7 +101,20 @@ async function syncManimConfigFromEnvironment() {
     }
   }
 
-  const nextBaseUrl = firstNonEmpty([process.env.MANIM_BASE_URL, parsedFromFiles.MANIM_BASE_URL, env.manimBaseUrl])
+  const nextBaseUrl = firstNonEmpty([
+    process.env.MANIM_BASE_URL,
+    process.env.MANIM_API_BASE,
+    parsedFromFiles.MANIM_BASE_URL,
+    parsedFromFiles.MANIM_API_BASE,
+    env.manimBaseUrl,
+  ])
+  const nextLoginUrl = firstNonEmpty([
+    process.env.MANIM_LOGIN_URL,
+    process.env.LOGIN_URL,
+    parsedFromFiles.MANIM_LOGIN_URL,
+    parsedFromFiles.LOGIN_URL,
+    env.manimLoginUrl,
+  ])
   const nextAuthPath = firstNonEmpty([process.env.MANIM_AUTH_PATH, parsedFromFiles.MANIM_AUTH_PATH, env.manimAuthPath, '/auth/login'])
   const nextUser = firstNonEmpty([
     process.env.MANIM_USER,
@@ -117,6 +131,7 @@ async function syncManimConfigFromEnvironment() {
   const skew = Number(skewRaw)
 
   env.manimBaseUrl = nextBaseUrl
+  env.manimLoginUrl = nextLoginUrl
   env.manimAuthPath = nextAuthPath
   env.manimUser = nextUser
   env.manimPassword = nextPassword
@@ -580,12 +595,16 @@ async function refreshManimToken(): Promise<string> {
     '/users/login',
     '/login',
   ])
-  const authUrls = manimBaseUrlCandidates().flatMap((base) => authPaths.map((p) => combineManimUrl(base, p)))
+  const authUrls = uniqueStrings([
+    env.manimLoginUrl.trim(),
+    ...manimBaseUrlCandidates().flatMap((base) => authPaths.map((p) => combineManimUrl(base, p))),
+  ])
 
   const payloads = [
+    { email: env.manimUser, password: env.manimPassword, rememberMe: true },
+    { email: env.manimUser, password: env.manimPassword },
     { userName: env.manimUser, password: env.manimPassword },
     { username: env.manimUser, password: env.manimPassword },
-    { email: env.manimUser, password: env.manimPassword },
   ]
 
   let lastError = ''
