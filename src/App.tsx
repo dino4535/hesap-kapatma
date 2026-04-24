@@ -65,6 +65,12 @@ function formatDateTimeTr(value?: string) {
   return d.toLocaleString('tr-TR')
 }
 
+function isPlainVadeliTahsilat(formCode?: string, formDescription?: string) {
+  const code = (formCode ?? '').trim().toUpperCase()
+  const desc = (formDescription ?? '').trim().toLocaleLowerCase('tr-TR')
+  return code === 'VADETAH' || desc === 'vadeli tahsilat'
+}
+
 type SqlCollectionRow = Collection & { paymentKey?: string }
 
 function depotLabel(depotCode?: string) {
@@ -728,7 +734,7 @@ export default function App() {
   const collectionVadeliTahsilatAmountTotal = useMemo(() => {
     let total = 0
     for (const c of positionCollections) {
-      if (normalizePaymentType(c.paymentFormCode, c.paymentFormDescription) !== 'VADETAH') continue
+      if (!isPlainVadeliTahsilat(c.paymentFormCode, c.paymentFormDescription)) continue
       total += c.amount ?? 0
     }
     return total

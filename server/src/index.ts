@@ -2620,12 +2620,8 @@ vadetah_by_pos AS (
     AND (@SourceFileDate IS NULL OR c.source_file_date = @SourceFileDate)
     AND (@SourceDepotCode IS NULL OR c.source_depot_code = @SourceDepotCode)
     AND (
-      UPPER(LTRIM(RTRIM(ISNULL(c.paymentform_code, '')))) LIKE 'VADETAH%'
-      OR LOWER(LTRIM(RTRIM(ISNULL(c.paymentform_desc, '')))) LIKE '%vadeli tahsilat%'
-    )
-    AND NOT (
-      UPPER(LTRIM(RTRIM(ISNULL(c.paymentform_code, '')))) = 'VADETAHHAV'
-      OR LOWER(LTRIM(RTRIM(ISNULL(c.paymentform_desc, '')))) LIKE '%vadeli tahsilat havale%'
+      UPPER(LTRIM(RTRIM(ISNULL(c.paymentform_code, '')))) = 'VADETAH'
+      OR LOWER(LTRIM(RTRIM(ISNULL(c.paymentform_desc, '')))) = 'vadeli tahsilat'
     )
   GROUP BY c.position_code
 )
