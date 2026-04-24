@@ -34,7 +34,7 @@ import { clearSessionUser, loadSessionUser, saveSessionUser, type SessionUser } 
 import { transferAmount, type Allocation, allocationAmountForType, computePaymentKey, getInvoiceAllocations, getPaymentAllocations, invoiceTotalAmount } from './domain/allocations'
 import { formatDateTr, formatMoney } from './domain/format'
 import type { Collection, Invoice } from './domain/models'
-import { PAYMENT_TYPES, normalizePaymentType, type PaymentType, paymentTypeLabel } from './domain/paymentTypes'
+import { PAYMENT_TYPES, type PaymentType, paymentTypeLabel } from './domain/paymentTypes'
 
 type StatusType = 'success' | 'error' | 'info'
 
@@ -63,12 +63,6 @@ function formatDateTimeTr(value?: string) {
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return value
   return d.toLocaleString('tr-TR')
-}
-
-function isPlainVadeliTahsilat(formCode?: string, formDescription?: string) {
-  const code = (formCode ?? '').trim().toUpperCase()
-  const desc = (formDescription ?? '').trim().toLocaleLowerCase('tr-TR')
-  return code === 'VADETAH' || desc === 'vadeli tahsilat'
 }
 
 type SqlCollectionRow = Collection & { paymentKey?: string }
@@ -732,32 +726,12 @@ export default function App() {
       .sort((a, b) => a.bayi.localeCompare(b.bayi, 'tr', { sensitivity: 'base' }))
   }, [positionCollections, paymentAllocations])
 
-  const invoiceNakitGrossTotal = useMemo(() => {
-    let total = 0
-    for (const inv of positionInvoices) {
-      for (const p of inv.payments ?? []) {
-        if (normalizePaymentType(p.paymentFormCode, p.paymentFormDescription) !== 'NAKIT') continue
-        total += Number(p.amount) || 0
-      }
-    }
-    return total
-  }, [positionInvoices])
-
-  const collectionVadeliTahsilatAmountTotal = useMemo(() => {
-    let total = 0
-    for (const c of positionCollections) {
-      if (!isPlainVadeliTahsilat(c.paymentFormCode, c.paymentFormDescription)) continue
-      total += c.amount ?? 0
-    }
-    return total
-  }, [positionCollections])
-
   const summaryTotals = useMemo(() => {
     if (!selectedPosition) return null
 
-    const invoiceNakit = invoiceNakitGrossTotal
+    const invoiceNakit = totalsByTypeInvoices.NAKIT
     const invoiceHavale = totalsByTypeInvoices.HAVALE
-    const collectionVadeliTahsilat = collectionVadeliTahsilatAmountTotal
+    const collectionVadeliTahsilat = totalsByTypePayments.VADETAH
     const collectionVadeliTahsilatHavale = totalsByTypePayments.VADETAHHAV
 
     const havaleTutari = invoiceHavale
@@ -784,8 +758,6 @@ export default function App() {
     }
   }, [
     selectedPosition,
-    invoiceNakitGrossTotal,
-    collectionVadeliTahsilatAmountTotal,
     totalsByTypeInvoices,
     totalsByTypePayments,
     discountTotalAll,
