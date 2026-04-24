@@ -718,7 +718,7 @@ BEGIN
   CREATE TABLE dist2k.FACT_INVOICE (
     invoice_code NVARCHAR(60) NOT NULL,
     is_edos BIT NOT NULL CONSTRAINT DF_FACT_INVOICE_is_edos DEFAULT (0),
-    legal_number NVARCHAR(30) NOT NULL,
+    legal_number NVARCHAR(64) NOT NULL,
     status CHAR(1) NOT NULL,
     sales_type NVARCHAR(20) NOT NULL,
     issue_date DATETIME2(0) NOT NULL,
@@ -737,6 +737,13 @@ BEGIN
     CONSTRAINT FK_INV_CUSTOMER FOREIGN KEY (customer_code) REFERENCES dist2k.DIM_CUSTOMER(customer_code),
     CONSTRAINT FK_INV_POSITION FOREIGN KEY (position_code) REFERENCES dist2k.DIM_POSITION(position_code)
   );
+END
+
+IF OBJECT_ID('dist2k.FACT_INVOICE', 'U') IS NOT NULL
+   AND COL_LENGTH('dist2k.FACT_INVOICE', 'legal_number') IS NOT NULL
+   AND COL_LENGTH('dist2k.FACT_INVOICE', 'legal_number') < 128
+BEGIN
+  ALTER TABLE dist2k.FACT_INVOICE ALTER COLUMN legal_number NVARCHAR(64) NOT NULL;
 END
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_INV_CUSTOMER' AND object_id = OBJECT_ID('dist2k.FACT_INVOICE'))
@@ -970,7 +977,7 @@ async function upsertDist2kInvoice(pool: mssql.ConnectionPool, state: ImportRunt
   await ensureDist2kPosition(pool, state, positionCode, positionDescription)
   await ensureDist2kCustomer(pool, state, customerCode, customerName, customerTaxNumber, customerLicenseNumber)
 
-  const legalNumber = ((toStringOrUndef(inv.LEGALNUMBER) ?? '').trim() || invoiceCode).slice(0, 30)
+  const legalNumber = ((toStringOrUndef(inv.LEGALNUMBER) ?? '').trim() || invoiceCode).slice(0, 64)
   const status = ((toStringOrUndef(inv.STATUS) ?? '').trim() || 'I').slice(0, 1)
   const salesType = ((toStringOrUndef(inv.SALESTYPE) ?? '').trim() || 'UNKNOWN').slice(0, 20)
   const issueDate = safeDate(toStringOrUndef(inv.ISSUEDATE) ?? undefined) ?? safeDate(toStringOrUndef(inv.DUEDATE) ?? undefined) ?? new Date('1900-01-01T00:00:00Z')
@@ -987,7 +994,7 @@ async function upsertDist2kInvoice(pool: mssql.ConnectionPool, state: ImportRunt
     .request()
     .input('InvoiceCode', mssql.NVarChar(60), invoiceCode.slice(0, 60))
     .input('IsEdos', mssql.Bit, isEdos)
-    .input('LegalNumber', mssql.NVarChar(30), legalNumber)
+    .input('LegalNumber', mssql.NVarChar(64), legalNumber)
     .input('Status', mssql.NVarChar(1), status)
     .input('SalesType', mssql.NVarChar(20), salesType)
     .input('IssueDate', mssql.DateTime2(0), issueDate)
