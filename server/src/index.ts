@@ -572,7 +572,14 @@ async function refreshManimToken(): Promise<string> {
     )
   }
 
-  const authPaths = uniqueStrings([env.manimAuthPath.trim(), '/auth/login'])
+  const authPaths = uniqueStrings([
+    env.manimAuthPath.trim(),
+    '/auth/login',
+    '/auth/signin',
+    '/user/login',
+    '/users/login',
+    '/login',
+  ])
   const authUrls = manimBaseUrlCandidates().flatMap((base) => authPaths.map((p) => combineManimUrl(base, p)))
 
   const payloads = [
@@ -582,6 +589,7 @@ async function refreshManimToken(): Promise<string> {
   ]
 
   let lastError = ''
+  const tried: string[] = []
   for (const url of authUrls) {
     for (const body of payloads) {
       const res = await fetch(url, {
@@ -590,9 +598,10 @@ async function refreshManimToken(): Promise<string> {
         body: JSON.stringify(body),
       })
       const text = await res.text().catch(() => '')
+      tried.push(`${res.status} ${url}`)
       if (!res.ok) {
         lastError = text || `Manim auth HTTP ${res.status}`
-        if (res.status === 404) break
+        if (res.status === 404 || res.status === 405) break
         continue
       }
       const parsed = (() => {
@@ -613,7 +622,8 @@ async function refreshManimToken(): Promise<string> {
     }
   }
 
-  throw new Error(lastError || 'Manim token yenilenemedi')
+  const triedText = tried.length ? ` Denenen auth URL'leri: ${tried.join(' | ')}` : ''
+  throw new Error((lastError || 'Manim token yenilenemedi') + triedText)
 }
 
 async function getManimToken(forceRefresh = false): Promise<string> {
