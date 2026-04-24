@@ -5,6 +5,7 @@ import multer from 'multer'
 import mssql from 'mssql'
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
+import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -12,6 +13,14 @@ const moduleDir = path.dirname(fileURLToPath(import.meta.url))
 dotenv.config({ path: path.resolve(moduleDir, '../.env') })
 dotenv.config({ path: path.resolve(moduleDir, '../../.env') })
 dotenv.config()
+
+function readEnvMs(name: string, fallback: number) {
+  const raw = process.env[name]
+  if (!raw) return fallback
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return fallback
+  return Math.floor(n)
+}
 
 const env = {
   sqlServer: process.env.SQL_SERVER ?? '',
@@ -25,9 +34,42 @@ const env = {
   manimDir: process.env.MANIM_DIR ?? '',
   manimBaseUrl: process.env.MANIM_BASE_URL ?? '',
   manimToken: process.env.MANIM_TOKEN ?? '',
+  httpRequestTimeoutMs: readEnvMs('HTTP_REQUEST_TIMEOUT_MS', 15 * 60 * 1000),
+  httpHeadersTimeoutMs: readEnvMs('HTTP_HEADERS_TIMEOUT_MS', 2 * 60 * 1000),
+  httpKeepAliveTimeoutMs: readEnvMs('HTTP_KEEPALIVE_TIMEOUT_MS', 75 * 1000),
+  importJobTtlMs: readEnvMs('IMPORT_JOB_TTL_MS', 6 * 60 * 60 * 1000),
 }
 
 type SalesFileMeta = { fileName: string; fileDate?: string; depotCode?: string }
+type ImportRuntimeState = {
+  upsertedPositions: Set<string>
+  upsertedCustomers: Set<string>
+  upsertedProducts: Set<string>
+  knownInvoices: Set<string>
+}
+type QueuedImportFile = { fileName: string; content: string; selectedDepot: string | null }
+type ImportJobStatus = 'queued' | 'running' | 'completed' | 'failed'
+type ImportJob = {
+  id: string
+  status: ImportJobStatus
+  files: QueuedImportFile[]
+  results: Array<{
+    fileName: string
+    invoiceCount: number
+    paymentCount: number
+    depotCode?: string
+    fileDate?: string
+    skipped?: boolean
+    skippedPositions?: string[]
+  }>
+  totalFiles: number
+  processedFiles: number
+  currentFileName?: string
+  errorMessage?: string
+  createdAt: string
+  startedAt?: string
+  finishedAt?: string
+}
 
 function parseSalesFileName(fileName: string): SalesFileMeta {
   const base = fileName.replace(/\.json$/i, '')
@@ -772,18 +814,8 @@ async function createUser(pool: mssql.ConnectionPool, userName: string, password
     .query('INSERT INTO dbo.Users (UserName, PasswordSalt, PasswordHash, IsAdmin) VALUES (@UserName, @PasswordSalt, @PasswordHash, @IsAdmin)')
 }
 
-async function upsertDist2kInvoice(pool: mssql.ConnectionPool, inv: RawInvoice, source: SalesFileMeta) {
-  const invoiceCode = (toStringOrUndef(inv.CODE) ?? '').trim()
-  if (!invoiceCode) return { paymentCount: 0 }
-
-  const customerCode = ((toStringOrUndef(inv.CUSTOMER?.CODE) ?? '').trim() || 'UNKNOWN').slice(0, 30)
-  const customerName = ((toStringOrUndef(inv.CUSTOMER?.REGISTEREDNAME) ?? '').trim() || 'Unknown Customer').slice(0, 200)
-  const customerTaxNumber = (toStringOrUndef(inv.CUSTOMER?.TAXNUMBER) ?? '').trim() || null
-  const customerLicenseNumber = (toStringOrUndef(inv.CUSTOMER?.LICENSENUMBER) ?? '').trim() || null
-
-  const positionCode = ((toStringOrUndef(inv.POSITION?.CODE) ?? '').trim() || 'UNKNOWN').slice(0, 20)
-  const positionDescription = ((toStringOrUndef(inv.POSITION?.DESCRIPTION) ?? '').trim() || 'Unknown Position').slice(0, 100)
-
+async function ensureDist2kPosition(pool: mssql.ConnectionPool, state: ImportRuntimeState, positionCode: string, positionDescription: string) {
+  if (state.upsertedPositions.has(positionCode)) return
   await pool
     .request()
     .input('PositionCode', mssql.NVarChar(20), positionCode)
@@ -795,7 +827,18 @@ ON t.position_code = s.position_code
 WHEN MATCHED THEN UPDATE SET description = s.description
 WHEN NOT MATCHED THEN INSERT (position_code, description) VALUES (s.position_code, s.description);
 `)
+  state.upsertedPositions.add(positionCode)
+}
 
+async function ensureDist2kCustomer(
+  pool: mssql.ConnectionPool,
+  state: ImportRuntimeState,
+  customerCode: string,
+  customerName: string,
+  customerTaxNumber: string | null,
+  customerLicenseNumber: string | null,
+) {
+  if (state.upsertedCustomers.has(customerCode)) return
   await pool
     .request()
     .input('CustomerCode', mssql.NVarChar(30), customerCode)
@@ -816,6 +859,48 @@ WHEN NOT MATCHED THEN
   INSERT (customer_code, registered_name, tax_number, license_number)
   VALUES (s.customer_code, s.registered_name, s.tax_number, s.license_number);
 `)
+  state.upsertedCustomers.add(customerCode)
+}
+
+async function ensureDist2kProduct(
+  pool: mssql.ConnectionPool,
+  state: ImportRuntimeState,
+  productCode: string,
+  productSequence: number,
+  productDescription: string,
+) {
+  if (state.upsertedProducts.has(productCode)) return
+  await pool
+    .request()
+    .input('ProductCode', mssql.NVarChar(20), productCode)
+    .input('SequenceNo', mssql.Int, productSequence)
+    .input('Description', mssql.NVarChar(100), productDescription)
+    .query(`
+MERGE dist2k.DIM_PRODUCT WITH (HOLDLOCK) AS t
+USING (SELECT @ProductCode AS product_code, @SequenceNo AS sequence_no, @Description AS description) AS s
+ON t.product_code = s.product_code
+WHEN MATCHED THEN UPDATE SET
+  sequence_no = CASE WHEN s.sequence_no > t.sequence_no THEN s.sequence_no ELSE t.sequence_no END,
+  description = CASE WHEN NULLIF(LTRIM(RTRIM(s.description)), '') IS NULL THEN t.description ELSE s.description END
+WHEN NOT MATCHED THEN INSERT (product_code, sequence_no, description) VALUES (s.product_code, s.sequence_no, s.description);
+`)
+  state.upsertedProducts.add(productCode)
+}
+
+async function upsertDist2kInvoice(pool: mssql.ConnectionPool, state: ImportRuntimeState, inv: RawInvoice, source: SalesFileMeta) {
+  const invoiceCode = (toStringOrUndef(inv.CODE) ?? '').trim()
+  if (!invoiceCode) return { paymentCount: 0 }
+
+  const customerCode = ((toStringOrUndef(inv.CUSTOMER?.CODE) ?? '').trim() || 'UNKNOWN').slice(0, 30)
+  const customerName = ((toStringOrUndef(inv.CUSTOMER?.REGISTEREDNAME) ?? '').trim() || 'Unknown Customer').slice(0, 200)
+  const customerTaxNumber = (toStringOrUndef(inv.CUSTOMER?.TAXNUMBER) ?? '').trim() || null
+  const customerLicenseNumber = (toStringOrUndef(inv.CUSTOMER?.LICENSENUMBER) ?? '').trim() || null
+
+  const positionCode = ((toStringOrUndef(inv.POSITION?.CODE) ?? '').trim() || 'UNKNOWN').slice(0, 20)
+  const positionDescription = ((toStringOrUndef(inv.POSITION?.DESCRIPTION) ?? '').trim() || 'Unknown Position').slice(0, 100)
+
+  await ensureDist2kPosition(pool, state, positionCode, positionDescription)
+  await ensureDist2kCustomer(pool, state, customerCode, customerName, customerTaxNumber, customerLicenseNumber)
 
   const legalNumber = ((toStringOrUndef(inv.LEGALNUMBER) ?? '').trim() || invoiceCode).slice(0, 30)
   const status = ((toStringOrUndef(inv.STATUS) ?? '').trim() || 'I').slice(0, 1)
@@ -899,8 +984,18 @@ VALUES (
   s.source_file_name, s.source_file_date, s.source_depot_code
 );
 `)
+  state.knownInvoices.add(invoiceCode.slice(0, 60))
 
   await pool.request().input('InvoiceCode', mssql.NVarChar(60), invoiceCode.slice(0, 60)).query('DELETE FROM dist2k.FACT_INVOICE_LINE WHERE invoice_code = @InvoiceCode')
+  const invoiceLineRows: Array<{
+    lineNo: number
+    productCode: string
+    quantity: number
+    netAmount: number
+    grossAmount: number
+    price: number
+    availability: boolean
+  }> = []
   let lineNo = 1
   for (const d of Array.isArray(inv.DETAILS) ? (inv.DETAILS as RawInvoiceDetail[]) : []) {
     if (!d || typeof d !== 'object') continue
@@ -909,40 +1004,43 @@ VALUES (
     const productDescription = ((toStringOrUndef(product.DESCRIPTION) ?? '').trim() || 'Unknown Product').slice(0, 100)
     const productSequence = toNumberOrUndef(product.SEQUENCE) ?? 0
 
-    await pool
-      .request()
-      .input('ProductCode', mssql.NVarChar(20), productCode)
-      .input('SequenceNo', mssql.Int, productSequence)
-      .input('Description', mssql.NVarChar(100), productDescription)
-      .query(`
-MERGE dist2k.DIM_PRODUCT WITH (HOLDLOCK) AS t
-USING (SELECT @ProductCode AS product_code, @SequenceNo AS sequence_no, @Description AS description) AS s
-ON t.product_code = s.product_code
-WHEN MATCHED THEN UPDATE SET
-  sequence_no = CASE WHEN s.sequence_no > t.sequence_no THEN s.sequence_no ELSE t.sequence_no END,
-  description = CASE WHEN NULLIF(LTRIM(RTRIM(s.description)), '') IS NULL THEN t.description ELSE s.description END
-WHEN NOT MATCHED THEN INSERT (product_code, sequence_no, description) VALUES (s.product_code, s.sequence_no, s.description);
-`)
-
-    await pool
-      .request()
-      .input('InvoiceCode', mssql.NVarChar(60), invoiceCode.slice(0, 60))
-      .input('LineNo', mssql.Int, lineNo)
-      .input('ProductCode', mssql.NVarChar(20), productCode)
-      .input('Quantity', mssql.Float, toNumberFlexible(d.QUANTITY) ?? 0)
-      .input('NetAmount', mssql.Decimal(18, 4), toNumberFlexible(d.NETAMOUNT) ?? 0)
-      .input('GrossAmount', mssql.Decimal(18, 4), toNumberFlexible(d.GROSSAMOUNT) ?? 0)
-      .input('Price', mssql.Decimal(18, 4), toNumberFlexible(d.PRICE) ?? 0)
-      .input('Availability', mssql.Bit, (toNumberOrUndef(d.AVAILABILITY) ?? 1) !== 0)
-      .query(`
-INSERT INTO dist2k.FACT_INVOICE_LINE (invoice_code, line_no, product_code, quantity, net_amount, gross_amount, price, availability)
-VALUES (@InvoiceCode, @LineNo, @ProductCode, @Quantity, @NetAmount, @GrossAmount, @Price, @Availability);
-`)
+    await ensureDist2kProduct(pool, state, productCode, productSequence, productDescription)
+    invoiceLineRows.push({
+      lineNo,
+      productCode,
+      quantity: toNumberFlexible(d.QUANTITY) ?? 0,
+      netAmount: toNumberFlexible(d.NETAMOUNT) ?? 0,
+      grossAmount: toNumberFlexible(d.GROSSAMOUNT) ?? 0,
+      price: toNumberFlexible(d.PRICE) ?? 0,
+      availability: (toNumberOrUndef(d.AVAILABILITY) ?? 1) !== 0,
+    })
     lineNo += 1
+  }
+  if (invoiceLineRows.length > 0) {
+    const lineTable = new mssql.Table('dist2k.FACT_INVOICE_LINE')
+    lineTable.create = false
+    lineTable.columns.add('invoice_code', mssql.NVarChar(60), { nullable: false })
+    lineTable.columns.add('line_no', mssql.Int, { nullable: false })
+    lineTable.columns.add('product_code', mssql.NVarChar(20), { nullable: false })
+    lineTable.columns.add('quantity', mssql.Float, { nullable: false })
+    lineTable.columns.add('net_amount', mssql.Decimal(18, 4), { nullable: false })
+    lineTable.columns.add('gross_amount', mssql.Decimal(18, 4), { nullable: false })
+    lineTable.columns.add('price', mssql.Decimal(18, 4), { nullable: false })
+    lineTable.columns.add('availability', mssql.Bit, { nullable: false })
+    for (const row of invoiceLineRows) {
+      lineTable.rows.add(invoiceCode.slice(0, 60), row.lineNo, row.productCode, row.quantity, row.netAmount, row.grossAmount, row.price, row.availability)
+    }
+    await pool.request().bulk(lineTable)
   }
 
   await pool.request().input('InvoiceCode', mssql.NVarChar(60), invoiceCode.slice(0, 60)).query('DELETE FROM dist2k.FACT_INVOICE_PAYMENT WHERE invoice_code = @InvoiceCode')
-  let paymentCount = 0
+  const paymentRows: Array<{
+    paymentCode: string
+    issueDate: Date | null
+    amount: number
+    paymentFormCode: string | null
+    paymentFormDesc: string | null
+  }> = []
   for (const raw of Array.isArray(inv.PAYMENTS) ? (inv.PAYMENTS as RawInvoicePayment[]) : []) {
     if (!raw || typeof raw !== 'object') continue
     const pCode = toStringOrUndef(raw.CODE)
@@ -958,36 +1056,51 @@ VALUES (@InvoiceCode, @LineNo, @ProductCode, @Quantity, @NetAmount, @GrossAmount
     const formDesc = isVadeli ? 'Vadeli Ödeme' : rawFormDesc
     const paymentCode = computeInvoicePaymentKey(invoiceCode, { code: pCode ?? undefined, issueDate: pIssueDate ?? undefined, amount: pAmount, formCode }).slice(0, 300)
 
-    await pool
-      .request()
-      .input('PaymentCode', mssql.NVarChar(300), paymentCode)
-      .input('InvoiceCode', mssql.NVarChar(60), invoiceCode.slice(0, 60))
-      .input('IssueDate', mssql.DateTime2(0), safeDate(pIssueDate ?? undefined))
-      .input('Amount', mssql.Decimal(18, 4), pAmount)
-      .input('PaymentFormCode', mssql.NVarChar(20), formCode ? formCode.slice(0, 20) : null)
-      .input('PaymentFormDesc', mssql.NVarChar(50), formDesc ? formDesc.slice(0, 50) : null)
-      .input('SourceFileName', mssql.NVarChar(260), source.fileName)
-      .input('SourceFileDate', mssql.Date, source.fileDate ? new Date(source.fileDate) : null)
-      .input('SourceDepotCode', mssql.NVarChar(32), source.depotCode ?? null)
-      .input('PositionCode', mssql.NVarChar(20), positionCode)
-      .input('CustomerCode', mssql.NVarChar(30), customerCode)
-      .query(`
-INSERT INTO dist2k.FACT_INVOICE_PAYMENT (
-  payment_code, invoice_code, issue_date, amount, paymentform_code, paymentform_desc,
-  source_file_name, source_file_date, source_depot_code, position_code, customer_code
-)
-VALUES (
-  @PaymentCode, @InvoiceCode, @IssueDate, @Amount, @PaymentFormCode, @PaymentFormDesc,
-  @SourceFileName, @SourceFileDate, @SourceDepotCode, @PositionCode, @CustomerCode
-);
-`)
-    paymentCount += 1
+    paymentRows.push({
+      paymentCode,
+      issueDate: safeDate(pIssueDate ?? undefined),
+      amount: pAmount,
+      paymentFormCode: formCode ? formCode.slice(0, 20) : null,
+      paymentFormDesc: formDesc ? formDesc.slice(0, 50) : null,
+    })
   }
+  if (paymentRows.length > 0) {
+    const payTable = new mssql.Table('dist2k.FACT_INVOICE_PAYMENT')
+    payTable.create = false
+    payTable.columns.add('payment_code', mssql.NVarChar(300), { nullable: false })
+    payTable.columns.add('invoice_code', mssql.NVarChar(60), { nullable: false })
+    payTable.columns.add('issue_date', mssql.DateTime2(0), { nullable: true })
+    payTable.columns.add('amount', mssql.Decimal(18, 4), { nullable: false })
+    payTable.columns.add('paymentform_code', mssql.NVarChar(20), { nullable: true })
+    payTable.columns.add('paymentform_desc', mssql.NVarChar(50), { nullable: true })
+    payTable.columns.add('source_file_name', mssql.NVarChar(260), { nullable: true })
+    payTable.columns.add('source_file_date', mssql.Date, { nullable: true })
+    payTable.columns.add('source_depot_code', mssql.NVarChar(32), { nullable: true })
+    payTable.columns.add('position_code', mssql.NVarChar(20), { nullable: true })
+    payTable.columns.add('customer_code', mssql.NVarChar(30), { nullable: true })
+    for (const row of paymentRows) {
+      payTable.rows.add(
+        row.paymentCode,
+        invoiceCode.slice(0, 60),
+        row.issueDate,
+        row.amount,
+        row.paymentFormCode,
+        row.paymentFormDesc,
+        source.fileName,
+        source.fileDate ? new Date(source.fileDate) : null,
+        source.depotCode ?? null,
+        positionCode,
+        customerCode,
+      )
+    }
+    await pool.request().bulk(payTable)
+  }
+  const paymentCount = paymentRows.length
 
   return { paymentCount }
 }
 
-async function upsertDist2kCollection(pool: mssql.ConnectionPool, c: RawCollection, source: SalesFileMeta) {
+async function upsertDist2kCollection(pool: mssql.ConnectionPool, state: ImportRuntimeState, c: RawCollection, source: SalesFileMeta) {
   const invoiceCode = (toStringOrUndef(c.INVOICE_CODE) ?? '').trim()
   if (!invoiceCode) return false
 
@@ -998,49 +1111,21 @@ async function upsertDist2kCollection(pool: mssql.ConnectionPool, c: RawCollecti
   const positionCode = ((toStringOrUndef(c.POSITION?.CODE) ?? '').trim() || 'UNKNOWN').slice(0, 20)
   const positionDescription = ((toStringOrUndef(c.POSITION?.DESCRIPTION) ?? '').trim() || 'Unknown Position').slice(0, 100)
 
-  await pool
-    .request()
-    .input('PositionCode', mssql.NVarChar(20), positionCode)
-    .input('Description', mssql.NVarChar(100), positionDescription)
-    .query(`
-MERGE dist2k.DIM_POSITION WITH (HOLDLOCK) AS t
-USING (SELECT @PositionCode AS position_code, @Description AS description) AS s
-ON t.position_code = s.position_code
-WHEN MATCHED THEN UPDATE SET description = s.description
-WHEN NOT MATCHED THEN INSERT (position_code, description) VALUES (s.position_code, s.description);
-`)
+  await ensureDist2kPosition(pool, state, positionCode, positionDescription)
+  await ensureDist2kCustomer(pool, state, customerCode, customerName, customerTaxNumber, customerLicenseNumber)
 
-  await pool
-    .request()
-    .input('CustomerCode', mssql.NVarChar(30), customerCode)
-    .input('RegisteredName', mssql.NVarChar(200), customerName)
-    .input('TaxNumber', mssql.NVarChar(20), customerTaxNumber ? customerTaxNumber.slice(0, 20) : null)
-    .input('LicenseNumber', mssql.NVarChar(30), customerLicenseNumber ? customerLicenseNumber.slice(0, 30) : null)
-    .query(`
-MERGE dist2k.DIM_CUSTOMER WITH (HOLDLOCK) AS t
-USING (
-  SELECT @CustomerCode AS customer_code, @RegisteredName AS registered_name, @TaxNumber AS tax_number, @LicenseNumber AS license_number
-) AS s
-ON t.customer_code = s.customer_code
-WHEN MATCHED THEN UPDATE SET
-  registered_name = s.registered_name,
-  tax_number = s.tax_number,
-  license_number = s.license_number
-WHEN NOT MATCHED THEN
-  INSERT (customer_code, registered_name, tax_number, license_number)
-  VALUES (s.customer_code, s.registered_name, s.tax_number, s.license_number);
-`)
-
-  await pool
-    .request()
-    .input('InvoiceCode', mssql.NVarChar(60), invoiceCode.slice(0, 60))
-    .input('CustomerCode', mssql.NVarChar(30), customerCode)
-    .input('PositionCode', mssql.NVarChar(20), positionCode)
-    .input('SourceFileName', mssql.NVarChar(260), source.fileName)
-    .input('SourceFileDate', mssql.Date, source.fileDate ? new Date(source.fileDate) : null)
-    .input('SourceDepotCode', mssql.NVarChar(32), source.depotCode ?? null)
-    .query(
-      `
+  const invoiceCodeNormalized = invoiceCode.slice(0, 60)
+  if (!state.knownInvoices.has(invoiceCodeNormalized)) {
+    await pool
+      .request()
+      .input('InvoiceCode', mssql.NVarChar(60), invoiceCodeNormalized)
+      .input('CustomerCode', mssql.NVarChar(30), customerCode)
+      .input('PositionCode', mssql.NVarChar(20), positionCode)
+      .input('SourceFileName', mssql.NVarChar(260), source.fileName)
+      .input('SourceFileDate', mssql.Date, source.fileDate ? new Date(source.fileDate) : null)
+      .input('SourceDepotCode', mssql.NVarChar(32), source.depotCode ?? null)
+      .query(
+        `
 IF NOT EXISTS (SELECT 1 FROM dist2k.FACT_INVOICE WHERE invoice_code = @InvoiceCode)
 BEGIN
   INSERT INTO dist2k.FACT_INVOICE (
@@ -1054,7 +1139,9 @@ BEGIN
   );
 END
 `,
-    )
+      )
+    state.knownInvoices.add(invoiceCodeNormalized)
+  }
 
   const code = toStringOrUndef(c.CODE)
   const issueDate = toStringOrUndef(c.ISSUEDATE)
@@ -1067,7 +1154,7 @@ END
   await pool
     .request()
     .input('CollectionCode', mssql.NVarChar(300), collectionCode)
-    .input('InvoiceCode', mssql.NVarChar(60), invoiceCode.slice(0, 60))
+    .input('InvoiceCode', mssql.NVarChar(60), invoiceCodeNormalized)
     .input('PositionCode', mssql.NVarChar(20), positionCode)
     .input('CustomerCode', mssql.NVarChar(30), customerCode)
     .input('IssueDate', mssql.DateTime2(0), safeDate(issueDate ?? undefined))
@@ -1169,6 +1256,12 @@ WHERE x.PositionCode IS NOT NULL AND LTRIM(RTRIM(x.PositionCode)) <> ''
       .filter((x) => !!x)
   }
   const skipPosSet = new Set(skippedPositions)
+  const state: ImportRuntimeState = {
+    upsertedPositions: new Set<string>(),
+    upsertedCustomers: new Set<string>(),
+    upsertedProducts: new Set<string>(),
+    knownInvoices: new Set<string>(),
+  }
 
   let paymentCount = 0
   let invoiceCount = 0
@@ -1176,7 +1269,7 @@ WHERE x.PositionCode IS NOT NULL AND LTRIM(RTRIM(x.PositionCode)) <> ''
   for (const inv of invoices) {
     const pos = toStringOrUndef(inv.POSITION?.CODE)?.trim()
     if (pos && skipPosSet.has(pos)) continue
-    const r = await upsertDist2kInvoice(pool, inv, meta)
+    const r = await upsertDist2kInvoice(pool, state, inv, meta)
     paymentCount += r.paymentCount
     invoiceCount += 1
   }
@@ -1184,7 +1277,7 @@ WHERE x.PositionCode IS NOT NULL AND LTRIM(RTRIM(x.PositionCode)) <> ''
   for (const c of collections) {
     const pos = toStringOrUndef(c.POSITION?.CODE)?.trim()
     if (pos && skipPosSet.has(pos)) continue
-    const inserted = await upsertDist2kCollection(pool, c, meta)
+    const inserted = await upsertDist2kCollection(pool, state, c, meta)
     if (inserted) paymentCount += 1
   }
 
@@ -1870,6 +1963,73 @@ const upload = multer({
   limits: { files: 20, fileSize: 300 * 1024 * 1024 },
 })
 
+const importJobs = new Map<string, ImportJob>()
+let importJobQueue: Promise<void> = Promise.resolve()
+
+function pruneImportJobs() {
+  const now = Date.now()
+  for (const [jobId, job] of importJobs.entries()) {
+    if (job.status === 'queued' || job.status === 'running') continue
+    const endTime = job.finishedAt ? new Date(job.finishedAt).getTime() : new Date(job.createdAt).getTime()
+    if (Number.isFinite(endTime) && now - endTime > env.importJobTtlMs) {
+      importJobs.delete(jobId)
+    }
+  }
+}
+
+function enqueueImportJob(files: QueuedImportFile[]) {
+  pruneImportJobs()
+  const jobId = crypto.randomUUID()
+  const job: ImportJob = {
+    id: jobId,
+    status: 'queued',
+    files,
+    results: [],
+    totalFiles: files.length,
+    processedFiles: 0,
+    createdAt: new Date().toISOString(),
+  }
+  importJobs.set(jobId, job)
+  importJobQueue = importJobQueue
+    .then(async () => {
+      const current = importJobs.get(jobId)
+      if (!current) return
+      current.status = 'running'
+      current.startedAt = new Date().toISOString()
+      const pool = await getPool()
+      await ensureSchema(pool)
+      for (const f of current.files) {
+        current.currentFileName = f.fileName
+        try {
+          const result = await importFile(pool, f.fileName, f.content, f.selectedDepot)
+          current.results.push(result)
+          current.processedFiles += 1
+        } catch (e) {
+          current.status = 'failed'
+          current.errorMessage = e instanceof Error ? e.message : 'Import sırasında hata oluştu'
+          current.finishedAt = new Date().toISOString()
+          current.currentFileName = undefined
+          return
+        }
+      }
+      current.status = 'completed'
+      current.finishedAt = new Date().toISOString()
+      current.currentFileName = undefined
+    })
+    .catch((e) => {
+      const current = importJobs.get(jobId)
+      if (!current) return
+      current.status = 'failed'
+      current.errorMessage = e instanceof Error ? e.message : 'Import kuyruğunda beklenmeyen hata'
+      current.finishedAt = new Date().toISOString()
+      current.currentFileName = undefined
+    })
+    .finally(() => {
+      pruneImportJobs()
+    })
+  return job
+}
+
 app.post('/api/import', upload.array('files'), async (req, res) => {
   try {
     const files = (req.files as Express.Multer.File[] | undefined) ?? []
@@ -1892,28 +2052,60 @@ app.post('/api/import', upload.array('files'), async (req, res) => {
       }
     }
 
-    const pool = await getPool()
-    await ensureSchema(pool)
-
-    const results = []
     for (const f of files) {
-      const content = f.buffer.toString('utf8')
-      const selectedDepot = normalizeDepotCode(depotMap[f.originalname] ?? null)
-      try {
-        const r = await importFile(pool, f.originalname, content, selectedDepot)
-        results.push(r)
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : 'Import sırasında hata oluştu'
-        res.status(400).send(msg)
+      if (!f.originalname.toLowerCase().endsWith('.json')) {
+        res.status(400).send(`${f.originalname}: Sadece .json dosyaları yüklenebilir`)
         return
       }
     }
 
-    res.json({ ok: true, files: results })
+    const job = enqueueImportJob(
+      files.map((f) => ({
+        fileName: f.originalname,
+        content: f.buffer.toString('utf8'),
+        selectedDepot: normalizeDepotCode(depotMap[f.originalname] ?? null),
+      })),
+    )
+    res.status(202).json({
+      ok: true,
+      accepted: true,
+      jobId: job.id,
+      totalFiles: job.totalFiles,
+      statusUrl: `/api/import/jobs/${encodeURIComponent(job.id)}`,
+    })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
     res.status(500).send(msg)
   }
+})
+
+app.get('/api/import/jobs/:jobId', (req, res) => {
+  pruneImportJobs()
+  const jobId = String(req.params.jobId ?? '').trim()
+  if (!jobId) {
+    res.status(400).send('jobId zorunlu')
+    return
+  }
+  const job = importJobs.get(jobId)
+  if (!job) {
+    res.status(404).send('Import job bulunamadı')
+    return
+  }
+  res.json({
+    ok: true,
+    job: {
+      id: job.id,
+      status: job.status,
+      totalFiles: job.totalFiles,
+      processedFiles: job.processedFiles,
+      currentFileName: job.currentFileName,
+      createdAt: job.createdAt,
+      startedAt: job.startedAt,
+      finishedAt: job.finishedAt,
+      errorMessage: job.errorMessage,
+      files: job.results,
+    },
+  })
 })
 
 app.get('/api/import-files', async (_req, res) => {
@@ -3235,6 +3427,11 @@ ORDER BY Id DESC
   }
 })
 
-app.listen(env.port, () => {
+const server = http.createServer(app)
+server.requestTimeout = env.httpRequestTimeoutMs
+server.headersTimeout = env.httpHeadersTimeoutMs
+server.keepAliveTimeout = env.httpKeepAliveTimeoutMs
+
+server.listen(env.port, () => {
   process.stdout.write(`API listening on http://localhost:${env.port}\n`)
 })

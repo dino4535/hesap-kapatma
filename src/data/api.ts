@@ -13,6 +13,31 @@ export interface ImportResult {
   files: ImportResultFile[]
   message?: string
 }
+export interface ImportJobStartResult {
+  ok: boolean
+  accepted?: boolean
+  jobId?: string
+  totalFiles?: number
+  statusUrl?: string
+  message?: string
+}
+export interface ImportJobState {
+  id: string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  totalFiles: number
+  processedFiles: number
+  currentFileName?: string
+  createdAt: string
+  startedAt?: string
+  finishedAt?: string
+  errorMessage?: string
+  files: ImportResultFile[]
+}
+export interface ImportJobStatusResult {
+  ok: boolean
+  job?: ImportJobState
+  message?: string
+}
 
 export interface ImportFileRow {
   fileName: string
@@ -23,7 +48,7 @@ export interface ImportFileRow {
   paymentCount: number
 }
 
-export async function importSalesFiles(files: File[], depotMap: Record<string, string>): Promise<ImportResult> {
+export async function importSalesFiles(files: File[], depotMap: Record<string, string>): Promise<ImportJobStartResult> {
   const form = new FormData()
   for (const f of files) form.append('files', f, f.name)
   form.append('depotMap', JSON.stringify(depotMap ?? {}))
@@ -31,9 +56,20 @@ export async function importSalesFiles(files: File[], depotMap: Record<string, s
   const res = await fetch('/api/import', { method: 'POST', body: form })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
-    return { ok: false, files: [], message: text || `HTTP ${res.status}` }
+    return { ok: false, message: text || `HTTP ${res.status}` }
   }
-  return (await res.json()) as ImportResult
+  return (await res.json()) as ImportJobStartResult
+}
+
+export async function fetchImportJobStatus(jobId: string): Promise<ImportJobStatusResult> {
+  const id = String(jobId ?? '').trim()
+  if (!id) return { ok: false, message: 'jobId zorunlu' }
+  const res = await fetch(`/api/import/jobs/${encodeURIComponent(id)}`)
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as ImportJobStatusResult
 }
 
 export async function fetchImportFiles(): Promise<{ ok: boolean; files: ImportFileRow[]; message?: string }> {

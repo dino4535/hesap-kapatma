@@ -6,6 +6,7 @@ import {
   deleteDataByImportFile,
   findManimDekont,
   fetchManimReceipts,
+  fetchImportJobStatus,
   fetchImportFiles,
   fetchMutabakat,
   fetchPositionData,
@@ -588,13 +589,34 @@ export default function App() {
       return
     }
 
-    setStatus({ type: 'info', message: `Dosyalar işleniyor: ${selectedFiles.length} adet` })
+    setStatus({ type: 'info', message: `Yükleme kuyruğa alınıyor: ${selectedFiles.length} dosya` })
     try {
-      const result = await importSalesFiles(selectedFiles, uploadDepotMap)
-      if (!result.ok) throw new Error(result.message || 'Import başarısız')
-      const imported = result.files.filter((f) => !f.skipped)
-      const skippedFileCount = result.files.length - imported.length
-      const skippedPositionsCount = result.files.reduce((s, f) => s + (f.skippedPositions?.length ?? 0), 0)
+      const started = await importSalesFiles(selectedFiles, uploadDepotMap)
+      if (!started.ok || !started.jobId) throw new Error(started.message || 'Import kuyruğa alınamadı')
+
+      let finished: Awaited<ReturnType<typeof fetchImportJobStatus>>['job'] | undefined
+      for (let i = 0; i < 2400; i += 1) {
+        const statusRes = await fetchImportJobStatus(started.jobId)
+        if (!statusRes.ok || !statusRes.job) throw new Error(statusRes.message || 'Import durumu alınamadı')
+        const job = statusRes.job
+        if (job.status === 'queued' || job.status === 'running') {
+          const current = job.currentFileName ? ` (${job.currentFileName})` : ''
+          setStatus({
+            type: 'info',
+            message: `Import çalışıyor: ${job.processedFiles}/${job.totalFiles} dosya${current}`,
+          })
+          await new Promise((resolve) => window.setTimeout(resolve, 1500))
+          continue
+        }
+        finished = job
+        break
+      }
+      if (!finished) throw new Error('Import zaman aşımına uğradı, lütfen job durumunu kontrol edin')
+      if (finished.status === 'failed') throw new Error(finished.errorMessage || 'Import başarısız')
+
+      const imported = finished.files.filter((f) => !f.skipped)
+      const skippedFileCount = finished.files.length - imported.length
+      const skippedPositionsCount = finished.files.reduce((s, f) => s + (f.skippedPositions?.length ?? 0), 0)
       const invoiceCount = imported.reduce((a, f) => a + f.invoiceCount, 0)
       const paymentCount = imported.reduce((a, f) => a + f.paymentCount, 0)
       setStatus({
