@@ -130,6 +130,10 @@ function banknoteLabel(value: Banknote) {
   return value === 1 ? 'Nikel' : String(value)
 }
 
+function bayiCodeOf(customer: { code?: string }) {
+  return (customer.code ?? '').trim() || '-'
+}
+
 const BANKS = ['Ziraat', 'İş Bankası', 'Garanti', 'Yapı Kredi', 'Akbank', 'VakıfBank', 'Halkbank', 'QNB', 'DenizBank'] as const
 
 function LoginPage(props: { onLogin: (user: SessionUser) => void }) {
@@ -757,31 +761,49 @@ export default function App() {
   const paymentTotal = useMemo(() => positionCollections.reduce((s, c) => s + (c.amount ?? 0), 0), [positionCollections])
 
   const havaleInvoicesByBayi = useMemo(() => {
-    const totals = new Map<string, number>()
+    const totals = new Map<string, { bayi: string; bayiKodu: string; total: number }>()
     for (const inv of positionInvoices) {
       const amount = allocationAmountForType(getInvoiceAllocations(inv, invoiceAllocations), 'HAVALE')
       if (amount <= 0) continue
       const name = (inv.customer.registeredName ?? '').trim() || '-'
-      totals.set(name, (totals.get(name) ?? 0) + amount)
+      const bayiKodu = bayiCodeOf(inv.customer)
+      const key = `${bayiKodu}__${name}`
+      const prev = totals.get(key)
+      if (!prev) {
+        totals.set(key, { bayi: name, bayiKodu, total: amount })
+      } else {
+        totals.set(key, { ...prev, total: prev.total + amount })
+      }
     }
-    return Array.from(totals.entries())
-      .map(([bayi, total]) => ({ bayi, total }))
-      .sort((a, b) => a.bayi.localeCompare(b.bayi, 'tr', { sensitivity: 'base' }))
+    return Array.from(totals.values()).sort((a, b) => {
+      const byName = a.bayi.localeCompare(b.bayi, 'tr', { sensitivity: 'base' })
+      if (byName !== 0) return byName
+      return a.bayiKodu.localeCompare(b.bayiKodu, 'tr', { sensitivity: 'base' })
+    })
   }, [positionInvoices, invoiceAllocations])
 
   const vadeliTahsilatHavaleleriByBayi = useMemo(() => {
-    const totals = new Map<string, number>()
+    const totals = new Map<string, { bayi: string; bayiKodu: string; total: number }>()
     for (const c of positionCollections) {
       const key = c.paymentKey ?? computePaymentKey(c.invoiceCode ?? '', c)
       const allocs = getPaymentAllocations(key, c, paymentAllocations)
       const amount = allocationAmountForType(allocs, 'VADETAHHAV')
       if (amount <= 0) continue
       const name = (c.customer.registeredName ?? '').trim() || '-'
-      totals.set(name, (totals.get(name) ?? 0) + amount)
+      const bayiKodu = bayiCodeOf(c.customer)
+      const rowKey = `${bayiKodu}__${name}`
+      const prev = totals.get(rowKey)
+      if (!prev) {
+        totals.set(rowKey, { bayi: name, bayiKodu, total: amount })
+      } else {
+        totals.set(rowKey, { ...prev, total: prev.total + amount })
+      }
     }
-    return Array.from(totals.entries())
-      .map(([bayi, total]) => ({ bayi, total }))
-      .sort((a, b) => a.bayi.localeCompare(b.bayi, 'tr', { sensitivity: 'base' }))
+    return Array.from(totals.values()).sort((a, b) => {
+      const byName = a.bayi.localeCompare(b.bayi, 'tr', { sensitivity: 'base' })
+      if (byName !== 0) return byName
+      return a.bayiKodu.localeCompare(b.bayiKodu, 'tr', { sensitivity: 'base' })
+    })
   }, [positionCollections, paymentAllocations])
 
   const invoiceNakitGrossTotal = useMemo(() => {
@@ -1248,15 +1270,15 @@ export default function App() {
     const modeLabel = hasCash && hasBank ? 'Karma' : hasBank ? 'Bankaya Yatan' : 'Nakit'
     const money = (n: number | null | undefined) => formatMoney(Number(n) || 0)
 
-    const limitByOther = (rows: { bayi: string; total: number }[], maxRows: number) => {
-      if (rows.length <= maxRows) return { rows, other: null as null | { bayi: string; total: number } }
+    const limitByOther = (rows: { bayi: string; bayiKodu: string; total: number }[], maxRows: number) => {
+      if (rows.length <= maxRows) return { rows, other: null as null | { bayi: string; bayiKodu: string; total: number } }
       const keep = Math.max(1, maxRows - 1)
       const head = rows.slice(0, keep)
       const rest = rows.slice(keep)
       const restTotal = rest.reduce((s, r) => s + (Number(r.total) || 0), 0)
       return {
         rows: head,
-        other: { bayi: `Diğer (${rest.length} bayi)`, total: restTotal },
+        other: { bayi: `Diğer (${rest.length} bayi)`, bayiKodu: '-', total: restTotal },
       }
     }
 
@@ -1265,23 +1287,23 @@ export default function App() {
 
     const havaleRowsHtml =
       havaleInvoicesByBayi.length === 0
-        ? `<tr><td colspan="2" class="empty">Kayıt yok</td></tr>`
+        ? `<tr><td colspan="3" class="empty">Kayıt yok</td></tr>`
         : `${limitedHavale.rows
-            .map((r) => `<tr><td>${escapeHtml(r.bayi)}</td><td class="num">${escapeHtml(money(r.total))}</td></tr>`)
+            .map((r) => `<tr><td>${escapeHtml(r.bayi)}</td><td>${escapeHtml(r.bayiKodu)}</td><td class="num">${escapeHtml(money(r.total))}</td></tr>`)
             .join('')}${
             limitedHavale.other
-              ? `<tr><td>${escapeHtml(limitedHavale.other.bayi)}</td><td class="num">${escapeHtml(money(limitedHavale.other.total))}</td></tr>`
+              ? `<tr><td>${escapeHtml(limitedHavale.other.bayi)}</td><td>${escapeHtml(limitedHavale.other.bayiKodu)}</td><td class="num">${escapeHtml(money(limitedHavale.other.total))}</td></tr>`
               : ''
           }`
 
     const vadeliRowsHtml =
       vadeliTahsilatHavaleleriByBayi.length === 0
-        ? `<tr><td colspan="2" class="empty">Kayıt yok</td></tr>`
+        ? `<tr><td colspan="3" class="empty">Kayıt yok</td></tr>`
         : `${limitedVadeli.rows
-            .map((r) => `<tr><td>${escapeHtml(r.bayi)}</td><td class="num">${escapeHtml(money(r.total))}</td></tr>`)
+            .map((r) => `<tr><td>${escapeHtml(r.bayi)}</td><td>${escapeHtml(r.bayiKodu)}</td><td class="num">${escapeHtml(money(r.total))}</td></tr>`)
             .join('')}${
             limitedVadeli.other
-              ? `<tr><td>${escapeHtml(limitedVadeli.other.bayi)}</td><td class="num">${escapeHtml(money(limitedVadeli.other.total))}</td></tr>`
+              ? `<tr><td>${escapeHtml(limitedVadeli.other.bayi)}</td><td>${escapeHtml(limitedVadeli.other.bayiKodu)}</td><td class="num">${escapeHtml(money(limitedVadeli.other.total))}</td></tr>`
               : ''
           }`
 
@@ -1304,6 +1326,7 @@ export default function App() {
         const after = getInvoiceAllocations(inv, invoiceAllocations)
         return {
           bayi: (inv.customer.registeredName ?? '').trim() || '-',
+          bayiKodu: bayiCodeOf(inv.customer),
           fatura: inv.code,
           onceki: allocationSummary(before),
           yeni: allocationSummary(after),
@@ -1312,11 +1335,11 @@ export default function App() {
 
     const changedInvoicesRowsHtml =
       changedInvoiceRows.length === 0
-        ? `<tr><td colspan="4" class="empty">Kayıt yok</td></tr>`
+        ? `<tr><td colspan="5" class="empty">Kayıt yok</td></tr>`
         : changedInvoiceRows
             .map(
               (r) =>
-                `<tr><td>${escapeHtml(r.bayi)}</td><td>${escapeHtml(r.fatura)}</td><td>${escapeHtml(r.onceki)}</td><td>${escapeHtml(r.yeni)}</td></tr>`,
+                `<tr><td>${escapeHtml(r.bayi)}</td><td>${escapeHtml(r.bayiKodu)}</td><td>${escapeHtml(r.fatura)}</td><td>${escapeHtml(r.onceki)}</td><td>${escapeHtml(r.yeni)}</td></tr>`,
             )
             .join('')
 
@@ -1331,6 +1354,7 @@ export default function App() {
         const after = getPaymentAllocations(key, c, paymentAllocations)
         return {
           bayi: (c.customer.registeredName ?? '').trim() || '-',
+          bayiKodu: bayiCodeOf(c.customer),
           fatura: c.invoiceCode ?? '-',
           onceki: allocationSummary(before),
           yeni: allocationSummary(after),
@@ -1339,11 +1363,11 @@ export default function App() {
 
     const changedPaymentsRowsHtml =
       changedPaymentRows.length === 0
-        ? `<tr><td colspan="4" class="empty">Kayıt yok</td></tr>`
+        ? `<tr><td colspan="5" class="empty">Kayıt yok</td></tr>`
         : changedPaymentRows
             .map(
               (r) =>
-                `<tr><td>${escapeHtml(r.bayi)}</td><td>${escapeHtml(r.fatura)}</td><td>${escapeHtml(r.onceki)}</td><td>${escapeHtml(r.yeni)}</td></tr>`,
+                `<tr><td>${escapeHtml(r.bayi)}</td><td>${escapeHtml(r.bayiKodu)}</td><td>${escapeHtml(r.fatura)}</td><td>${escapeHtml(r.onceki)}</td><td>${escapeHtml(r.yeni)}</td></tr>`,
             )
             .join('')
 
@@ -1488,7 +1512,7 @@ export default function App() {
     <div class="section">
       <div class="section-title">Ödeme Tipi Değişen Faturalar</div>
       <table>
-        <thead><tr><th>Bayi</th><th>Fatura</th><th>Önceki Dağılım</th><th>Yeni Dağılım</th></tr></thead>
+        <thead><tr><th>Bayi</th><th>Bayi Kodu</th><th>Fatura</th><th>Önceki Dağılım</th><th>Yeni Dağılım</th></tr></thead>
         <tbody>${changedInvoicesRowsHtml}</tbody>
       </table>
     </div>
@@ -1496,7 +1520,7 @@ export default function App() {
     <div class="section">
       <div class="section-title">Ödeme Tipi Değişen Tahsilatlar</div>
       <table>
-        <thead><tr><th>Bayi</th><th>Fatura</th><th>Önceki Dağılım</th><th>Yeni Dağılım</th></tr></thead>
+        <thead><tr><th>Bayi</th><th>Bayi Kodu</th><th>Fatura</th><th>Önceki Dağılım</th><th>Yeni Dağılım</th></tr></thead>
         <tbody>${changedPaymentsRowsHtml}</tbody>
       </table>
     </div>
@@ -1504,7 +1528,7 @@ export default function App() {
     <div class="section">
       <div class="section-title">Havale Ödeme Tipli Faturalar (Bayi Bazında)</div>
       <table>
-        <thead><tr><th>Bayi</th><th class="num">Toplam</th></tr></thead>
+        <thead><tr><th>Bayi</th><th>Bayi Kodu</th><th class="num">Toplam</th></tr></thead>
         <tbody>${havaleRowsHtml}</tbody>
       </table>
     </div>
@@ -1512,7 +1536,7 @@ export default function App() {
     <div class="section">
       <div class="section-title">Vadeli Tahsilat Havaleleri (Bayi Bazında)</div>
       <table>
-        <thead><tr><th>Bayi</th><th class="num">Toplam</th></tr></thead>
+        <thead><tr><th>Bayi</th><th>Bayi Kodu</th><th class="num">Toplam</th></tr></thead>
         <tbody>${vadeliRowsHtml}</tbody>
       </table>
     </div>
@@ -2198,6 +2222,7 @@ export default function App() {
                         <thead>
                           <tr>
                             <th>Müşteri</th>
+                            <th>Bayi Kodu</th>
                             <th>Vergi No</th>
                             <th>Fatura</th>
                             <th>Tutar</th>
@@ -2208,7 +2233,7 @@ export default function App() {
                         <tbody>
                           {mutabakatInvoicesForEdit.length === 0 ? (
                             <tr>
-                              <td colSpan={6} style={{ textAlign: 'center', color: '#718096' }}>
+                              <td colSpan={7} style={{ textAlign: 'center', color: '#718096' }}>
                                 Kayıt yok
                               </td>
                             </tr>
@@ -2219,6 +2244,7 @@ export default function App() {
                               return (
                                 <tr key={inv.code}>
                                   <td>{inv.customer.registeredName}</td>
+                                  <td>{bayiCodeOf(inv.customer)}</td>
                                   <td>{inv.customer.taxNumber ?? '-'}</td>
                                   <td>{inv.code}</td>
                                   <td>{formatMoney(total)}</td>
@@ -2239,6 +2265,7 @@ export default function App() {
                         <thead>
                           <tr>
                             <th>Müşteri</th>
+                            <th>Bayi Kodu</th>
                             <th>Vergi No</th>
                             <th>Fatura</th>
                             <th>Tutar</th>
@@ -2249,7 +2276,7 @@ export default function App() {
                         <tbody>
                           {mutabakatPaymentsForEdit.length === 0 ? (
                             <tr>
-                              <td colSpan={6} style={{ textAlign: 'center', color: '#718096' }}>
+                              <td colSpan={7} style={{ textAlign: 'center', color: '#718096' }}>
                                 Kayıt yok
                               </td>
                             </tr>
@@ -2257,6 +2284,7 @@ export default function App() {
                             mutabakatPaymentsForEdit.map((r) => (
                               <tr key={r.key}>
                                 <td>{r.c.customer.registeredName}</td>
+                                <td>{bayiCodeOf(r.c.customer)}</td>
                                 <td>{r.c.customer.taxNumber ?? '-'}</td>
                                 <td>{r.c.invoiceCode ?? '-'}</td>
                                 <td>{formatMoney(r.c.amount ?? 0)}</td>
@@ -2576,6 +2604,7 @@ export default function App() {
                         <thead>
                           <tr>
                             <th>Bayi</th>
+                            <th>Bayi Kodu</th>
                             <th>Fatura</th>
                             <th>Önceki Dağılım</th>
                             <th>Yeni Dağılım</th>
@@ -2584,7 +2613,7 @@ export default function App() {
                         <tbody>
                           {positionInvoices.filter((inv) => Array.isArray(invoiceAllocations[inv.code]) && (invoiceAllocations[inv.code]?.length ?? 0) > 0).length === 0 ? (
                             <tr>
-                              <td colSpan={4} style={{ textAlign: 'center', color: '#718096' }}>
+                              <td colSpan={5} style={{ textAlign: 'center', color: '#718096' }}>
                                 Kayıt yok
                               </td>
                             </tr>
@@ -2597,6 +2626,7 @@ export default function App() {
                                 return (
                                   <tr key={inv.code}>
                                     <td>{inv.customer.registeredName}</td>
+                                    <td>{bayiCodeOf(inv.customer)}</td>
                                     <td>{inv.code}</td>
                                     <td>{allocationSummary(before)}</td>
                                     <td>{allocationSummary(after)}</td>
@@ -2614,6 +2644,7 @@ export default function App() {
                         <thead>
                           <tr>
                             <th>Bayi</th>
+                            <th>Bayi Kodu</th>
                             <th>Fatura</th>
                             <th>Önceki Dağılım</th>
                             <th>Yeni Dağılım</th>
@@ -2625,7 +2656,7 @@ export default function App() {
                             return Array.isArray(paymentAllocations[key]) && (paymentAllocations[key]?.length ?? 0) > 0
                           }).length === 0 ? (
                             <tr>
-                              <td colSpan={4} style={{ textAlign: 'center', color: '#718096' }}>
+                              <td colSpan={5} style={{ textAlign: 'center', color: '#718096' }}>
                                 Kayıt yok
                               </td>
                             </tr>
@@ -2642,6 +2673,7 @@ export default function App() {
                                 return (
                                   <tr key={key}>
                                     <td>{c.customer.registeredName}</td>
+                                    <td>{bayiCodeOf(c.customer)}</td>
                                     <td>{c.invoiceCode ?? '-'}</td>
                                     <td>{allocationSummary(before)}</td>
                                     <td>{allocationSummary(after)}</td>
@@ -2659,20 +2691,22 @@ export default function App() {
                         <thead>
                           <tr>
                             <th>Bayi</th>
+                            <th>Bayi Kodu</th>
                             <th>Tutar</th>
                           </tr>
                         </thead>
                         <tbody>
                           {havaleInvoicesByBayi.length === 0 ? (
                             <tr>
-                              <td colSpan={2} style={{ textAlign: 'center', color: '#718096' }}>
+                              <td colSpan={3} style={{ textAlign: 'center', color: '#718096' }}>
                                 Kayıt yok
                               </td>
                             </tr>
                           ) : (
                             havaleInvoicesByBayi.map((r) => (
-                              <tr key={r.bayi}>
+                              <tr key={`${r.bayiKodu}|${r.bayi}`}>
                                 <td>{r.bayi}</td>
+                                <td>{r.bayiKodu}</td>
                                 <td>{formatMoney(r.total)}</td>
                               </tr>
                             ))
@@ -2687,20 +2721,22 @@ export default function App() {
                         <thead>
                           <tr>
                             <th>Bayi</th>
+                            <th>Bayi Kodu</th>
                             <th>Tutar</th>
                           </tr>
                         </thead>
                         <tbody>
                           {vadeliTahsilatHavaleleriByBayi.length === 0 ? (
                             <tr>
-                              <td colSpan={2} style={{ textAlign: 'center', color: '#718096' }}>
+                              <td colSpan={3} style={{ textAlign: 'center', color: '#718096' }}>
                                 Kayıt yok
                               </td>
                             </tr>
                           ) : (
                             vadeliTahsilatHavaleleriByBayi.map((r) => (
-                              <tr key={r.bayi}>
+                              <tr key={`${r.bayiKodu}|${r.bayi}`}>
                                 <td>{r.bayi}</td>
+                                <td>{r.bayiKodu}</td>
                                 <td>{formatMoney(r.total)}</td>
                               </tr>
                             ))
