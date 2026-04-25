@@ -369,6 +369,7 @@ export default function App() {
   const [mutabakatCorrectionsTab, setMutabakatCorrectionsTab] = useState<'faturalar' | 'tahsilatlar'>('faturalar')
   const [mutabakatCorrectionsSearch, setMutabakatCorrectionsSearch] = useState('')
   const [manimBayiMatchReceipts, setManimBayiMatchReceipts] = useState<ManimReceiptRow[]>([])
+  const [manimBayiMatchLoading, setManimBayiMatchLoading] = useState(false)
 
   const [adminUsers, setAdminUsers] = useState<UserRow[]>([])
   const [adminUsersLoading, setAdminUsersLoading] = useState(false)
@@ -1202,26 +1203,38 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) return
     const date = selectedDataset.date
-    if (!date) {
+    if (!date || mutabakatStep !== 2) {
+      setManimBayiMatchLoading(false)
       setManimBayiMatchReceipts([])
       return
     }
-    const handle = window.setTimeout(() => {
-      fetchManimReceipts({ userName: currentUser.userName, date, includePreviousDay: true, allBanks: true, untilNow: true, limit: 5000 })
-        .then((r) => {
-          if (!r.ok) {
-            setStatus({ type: 'error', message: r.message || 'Bayi eşleme için Manim hareketleri alınamadı' })
-            return
-          }
-          setManimBayiMatchReceipts(Array.isArray(r.receipts) ? r.receipts : [])
-        })
-        .catch((e) => {
-          const msg = e instanceof Error ? e.message : 'Bayi eşleme için Manim hareketleri alınamadı'
-          setStatus({ type: 'error', message: msg })
-        })
-    }, 350)
-    return () => window.clearTimeout(handle)
-  }, [currentUser, selectedDataset.date])
+    let alive = true
+    setManimBayiMatchLoading(true)
+    setManimBayiMatchReceipts([])
+    fetchManimReceipts({ userName: currentUser.userName, date, includePreviousDay: true, allBanks: true, untilNow: true, limit: 5000 })
+      .then((r) => {
+        if (!alive) return
+        if (!r.ok) {
+          setStatus({ type: 'error', message: r.message || 'Bayi eşleme için Manim hareketleri alınamadı' })
+          setManimBayiMatchReceipts([])
+          return
+        }
+        setManimBayiMatchReceipts(Array.isArray(r.receipts) ? r.receipts : [])
+      })
+      .catch((e) => {
+        if (!alive) return
+        const msg = e instanceof Error ? e.message : 'Bayi eşleme için Manim hareketleri alınamadı'
+        setStatus({ type: 'error', message: msg })
+        setManimBayiMatchReceipts([])
+      })
+      .finally(() => {
+        if (!alive) return
+        setManimBayiMatchLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [currentUser, selectedDataset.date, mutabakatStep, selectedPosition])
 
   const filteredManimReceipts = useMemo(() => {
     const q = manimReceiptSearch.trim().toLocaleLowerCase('tr-TR')
@@ -2656,42 +2669,50 @@ export default function App() {
                       </div>
                     </div>
 
-                    <table className="mini-table">
-                      <thead>
-                        <tr>
-                          <th>Bayi Kodu</th>
-                          <th>Bayi Adı</th>
-                          <th>Havale Faturaları</th>
-                          <th>Vadeli Tahsilat Havaleleri</th>
-                          <th>Toplam</th>
-                          <th>Gelen Tutar Toplamı</th>
-                          <th>Fark</th>
-                          <th>Durum</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {bayiHavaleEslemeRows.length === 0 ? (
+                    <div className="bayi-match-table-wrap">
+                      {manimBayiMatchLoading ? (
+                        <div className="bayi-match-loading">
+                          <div className="bayi-match-spinner" />
+                          <div className="bayi-match-loading-text">Eşleştirme yapılıyor, lütfen bekleyin...</div>
+                        </div>
+                      ) : null}
+                      <table className="mini-table">
+                        <thead>
                           <tr>
-                            <td colSpan={8} style={{ textAlign: 'center', color: '#718096' }}>
-                              Kayıt yok
-                            </td>
+                            <th>Bayi Kodu</th>
+                            <th>Bayi Adı</th>
+                            <th>Havale Faturaları</th>
+                            <th>Vadeli Tahsilat Havaleleri</th>
+                            <th>Toplam</th>
+                            <th>Gelen Tutar Toplamı</th>
+                            <th>Fark</th>
+                            <th>Durum</th>
                           </tr>
-                        ) : (
-                          bayiHavaleEslemeRows.map((r) => (
-                            <tr key={`${r.bayiKodu}|${r.bayi}`}>
-                              <td>{r.bayiKodu}</td>
-                              <td>{r.bayi}</td>
-                              <td>{formatMoney(r.havale)}</td>
-                              <td>{formatMoney(r.vadeli)}</td>
-                              <td>{formatMoney(r.toplam)}</td>
-                              <td>{formatMoney(r.gelenTutarToplami)}</td>
-                              <td>{formatMoney(r.fark)}</td>
-                              <td>{r.eslesti ? 'Geldi' : 'Farklı'}</td>
+                        </thead>
+                        <tbody>
+                          {bayiHavaleEslemeRows.length === 0 ? (
+                            <tr>
+                              <td colSpan={8} style={{ textAlign: 'center', color: '#718096' }}>
+                                {manimBayiMatchLoading ? 'Eşleştirme sürüyor...' : 'Kayıt yok'}
+                              </td>
                             </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
+                          ) : (
+                            bayiHavaleEslemeRows.map((r) => (
+                              <tr key={`${r.bayiKodu}|${r.bayi}`}>
+                                <td>{r.bayiKodu}</td>
+                                <td>{r.bayi}</td>
+                                <td>{formatMoney(r.havale)}</td>
+                                <td>{formatMoney(r.vadeli)}</td>
+                                <td>{formatMoney(r.toplam)}</td>
+                                <td>{formatMoney(r.gelenTutarToplami)}</td>
+                                <td>{formatMoney(r.fark)}</td>
+                                <td>{r.eslesti ? 'Geldi' : 'Farklı'}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 ) : (
                   <div className="mutabakat">
