@@ -1297,6 +1297,56 @@ export default function App() {
             )
             .join('')
 
+    const changedInvoiceRows = positionInvoices
+      .filter((inv) => Array.isArray(invoiceAllocations[inv.code]) && (invoiceAllocations[inv.code]?.length ?? 0) > 0)
+      .map((inv) => {
+        const before = deriveInvoiceAllocations(inv)
+        const after = getInvoiceAllocations(inv, invoiceAllocations)
+        return {
+          bayi: (inv.customer.registeredName ?? '').trim() || '-',
+          fatura: inv.code,
+          onceki: allocationSummary(before),
+          yeni: allocationSummary(after),
+        }
+      })
+
+    const changedInvoicesRowsHtml =
+      changedInvoiceRows.length === 0
+        ? `<tr><td colspan="4" class="empty">Kayıt yok</td></tr>`
+        : changedInvoiceRows
+            .map(
+              (r) =>
+                `<tr><td>${escapeHtml(r.bayi)}</td><td>${escapeHtml(r.fatura)}</td><td>${escapeHtml(r.onceki)}</td><td>${escapeHtml(r.yeni)}</td></tr>`,
+            )
+            .join('')
+
+    const changedPaymentRows = positionCollections
+      .filter((c) => {
+        const key = c.paymentKey ?? computePaymentKey(c.invoiceCode ?? '', c)
+        return Array.isArray(paymentAllocations[key]) && (paymentAllocations[key]?.length ?? 0) > 0
+      })
+      .map((c) => {
+        const key = c.paymentKey ?? computePaymentKey(c.invoiceCode ?? '', c)
+        const before = derivePaymentAllocations(c)
+        const after = getPaymentAllocations(key, c, paymentAllocations)
+        return {
+          bayi: (c.customer.registeredName ?? '').trim() || '-',
+          fatura: c.invoiceCode ?? '-',
+          onceki: allocationSummary(before),
+          yeni: allocationSummary(after),
+        }
+      })
+
+    const changedPaymentsRowsHtml =
+      changedPaymentRows.length === 0
+        ? `<tr><td colspan="4" class="empty">Kayıt yok</td></tr>`
+        : changedPaymentRows
+            .map(
+              (r) =>
+                `<tr><td>${escapeHtml(r.bayi)}</td><td>${escapeHtml(r.fatura)}</td><td>${escapeHtml(r.onceki)}</td><td>${escapeHtml(r.yeni)}</td></tr>`,
+            )
+            .join('')
+
     const cashRowsHtml =
       !hasCash
         ? ''
@@ -1432,6 +1482,22 @@ export default function App() {
       <table>
         <thead><tr><th>Tip</th><th>Açıklama</th><th class="num">Tutar</th></tr></thead>
         <tbody>${adjustmentRowsHtml}</tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Ödeme Tipi Değişen Faturalar</div>
+      <table>
+        <thead><tr><th>Bayi</th><th>Fatura</th><th>Önceki Dağılım</th><th>Yeni Dağılım</th></tr></thead>
+        <tbody>${changedInvoicesRowsHtml}</tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Ödeme Tipi Değişen Tahsilatlar</div>
+      <table>
+        <thead><tr><th>Bayi</th><th>Fatura</th><th>Önceki Dağılım</th><th>Yeni Dağılım</th></tr></thead>
+        <tbody>${changedPaymentsRowsHtml}</tbody>
       </table>
     </div>
 
