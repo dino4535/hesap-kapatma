@@ -34,7 +34,7 @@ import { clearSessionUser, loadSessionUser, saveSessionUser, type SessionUser } 
 import { transferAmount, type Allocation, allocationAmountForType, computePaymentKey, getInvoiceAllocations, getPaymentAllocations, invoiceTotalAmount } from './domain/allocations'
 import { formatDateTr, formatMoney } from './domain/format'
 import type { Collection, Invoice } from './domain/models'
-import { PAYMENT_TYPES, type PaymentType, paymentTypeLabel } from './domain/paymentTypes'
+import { PAYMENT_TYPES, normalizePaymentType, type PaymentType, paymentTypeLabel } from './domain/paymentTypes'
 
 type StatusType = 'success' | 'error' | 'info'
 
@@ -63,6 +63,12 @@ function formatDateTimeTr(value?: string) {
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return value
   return d.toLocaleString('tr-TR')
+}
+
+function isPlainVadeliTahsilat(formCode?: string, formDescription?: string) {
+  const code = (formCode ?? '').trim().toUpperCase()
+  const desc = (formDescription ?? '').trim().toLocaleLowerCase('tr-TR')
+  return code === 'VADETAH' || desc === 'vadeli tahsilat'
 }
 
 type SqlCollectionRow = Collection & { paymentKey?: string }
@@ -155,7 +161,6 @@ function Modal(props: { title: string; open: boolean; onClose: () => void; child
 }
 
 function AllocationEditor(props: {
-  editorKey: string
   title: string
   total: number
   allocations: Allocation[]
@@ -164,17 +169,6 @@ function AllocationEditor(props: {
   const [from, setFrom] = useState<PaymentType>('HAVALE')
   const [to, setTo] = useState<PaymentType>('NAKIT')
   const [amount, setAmount] = useState<number>(0)
-
-  useEffect(() => {
-    const positive = props.allocations
-      .filter((a) => (Number(a.amount) || 0) > 0)
-      .sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0))
-    const source = (positive[0]?.type ?? 'NAKIT') as PaymentType
-    const target = (PAYMENT_TYPES.find((t) => t !== source) ?? source) as PaymentType
-    setFrom(source)
-    setTo(target)
-    setAmount(0)
-  }, [props.editorKey, props.allocations])
 
   const onApply = () => {
     props.onChange(transferAmount(props.allocations, from, to, amount))
@@ -726,12 +720,32 @@ export default function App() {
       .sort((a, b) => a.bayi.localeCompare(b.bayi, 'tr', { sensitivity: 'base' }))
   }, [positionCollections, paymentAllocations])
 
+  const invoiceNakitGrossTotal = useMemo(() => {
+    let total = 0
+    for (const inv of positionInvoices) {
+      for (const p of inv.payments ?? []) {
+        if (normalizePaymentType(p.paymentFormCode, p.paymentFormDescription) !== 'NAKIT') continue
+        total += Number(p.amount) || 0
+      }
+    }
+    return total
+  }, [positionInvoices])
+
+  const collectionVadeliTahsilatAmountTotal = useMemo(() => {
+    let total = 0
+    for (const c of positionCollections) {
+      if (!isPlainVadeliTahsilat(c.paymentFormCode, c.paymentFormDescription)) continue
+      total += c.amount ?? 0
+    }
+    return total
+  }, [positionCollections])
+
   const summaryTotals = useMemo(() => {
     if (!selectedPosition) return null
 
-    const invoiceNakit = totalsByTypeInvoices.NAKIT
+    const invoiceNakit = invoiceNakitGrossTotal
     const invoiceHavale = totalsByTypeInvoices.HAVALE
-    const collectionVadeliTahsilat = totalsByTypePayments.VADETAH
+    const collectionVadeliTahsilat = collectionVadeliTahsilatAmountTotal
     const collectionVadeliTahsilatHavale = totalsByTypePayments.VADETAHHAV
 
     const havaleTutari = invoiceHavale
@@ -758,6 +772,8 @@ export default function App() {
     }
   }, [
     selectedPosition,
+    invoiceNakitGrossTotal,
+    collectionVadeliTahsilatAmountTotal,
     totalsByTypeInvoices,
     totalsByTypePayments,
     discountTotalAll,
@@ -2927,15 +2943,9 @@ export default function App() {
         </>
       )}
 
-      <Modal
-        title={editingInvoice ? `Fatura Tip Dağılımı - ${editingInvoice.code}` : ''}
-        open={!!editingInvoice}
-        onClose={() => setEditingInvoice(null)}
-        size="wide"
-      >
+      <Modal title={editingInvoice ? `Fatura Tip Dağılımı - ${editingInvoice.code}` : ''} open={!!editingInvoice} onClose={() => setEditingInvoice(null)}>
         {editingInvoice ? (
           <AllocationEditor
-            editorKey={editingInvoice.code}
             title="Fatura"
             total={invoiceTotalAmount(editingInvoice)}
             allocations={getInvoiceAllocations(editingInvoice, invoiceAllocations)}
@@ -2944,15 +2954,9 @@ export default function App() {
         ) : null}
       </Modal>
 
-      <Modal
-        title={editingPayment ? `Tahsilat Tip Dağılımı - ${editingPayment.collection.invoiceCode ?? ''}` : ''}
-        open={!!editingPayment}
-        onClose={() => setEditingPayment(null)}
-        size="wide"
-      >
+      <Modal title={editingPayment ? `Tahsilat Tip Dağılımı - ${editingPayment.collection.invoiceCode ?? ''}` : ''} open={!!editingPayment} onClose={() => setEditingPayment(null)}>
         {editingPayment ? (
           <AllocationEditor
-            editorKey={editingPayment.key}
             title="Tahsilat"
             total={editingPayment.collection.amount ?? 0}
             allocations={getPaymentAllocations(editingPayment.key, editingPayment.collection, paymentAllocations)}
