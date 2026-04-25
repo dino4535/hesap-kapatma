@@ -31,7 +31,17 @@ import {
   type UserRow,
 } from './data/api'
 import { clearSessionUser, loadSessionUser, saveSessionUser, type SessionUser } from './data/local'
-import { transferAmount, type Allocation, allocationAmountForType, computePaymentKey, getInvoiceAllocations, getPaymentAllocations, invoiceTotalAmount } from './domain/allocations'
+import {
+  transferAmount,
+  type Allocation,
+  allocationAmountForType,
+  computePaymentKey,
+  deriveInvoiceAllocations,
+  derivePaymentAllocations,
+  getInvoiceAllocations,
+  getPaymentAllocations,
+  invoiceTotalAmount,
+} from './domain/allocations'
 import { formatDateTr, formatMoney } from './domain/format'
 import type { Collection, Invoice } from './domain/models'
 import { PAYMENT_TYPES, normalizePaymentType, type PaymentType, paymentTypeLabel } from './domain/paymentTypes'
@@ -69,6 +79,38 @@ function isPlainVadeliTahsilat(formCode?: string, formDescription?: string) {
   const code = (formCode ?? '').trim().toUpperCase()
   const desc = (formDescription ?? '').trim().toLocaleLowerCase('tr-TR')
   return code === 'VADETAH' || desc === 'vadeli tahsilat'
+}
+
+function diffAllocationTransfers(before: Allocation[], after: Allocation[]) {
+  const epsilon = 0.0001
+  const outgoing = PAYMENT_TYPES.map((type) => {
+    const value = allocationAmountForType(before, type) - allocationAmountForType(after, type)
+    return { type, amount: value > epsilon ? value : 0 }
+  }).filter((x) => x.amount > 0)
+
+  const incoming = PAYMENT_TYPES.map((type) => {
+    const value = allocationAmountForType(after, type) - allocationAmountForType(before, type)
+    return { type, amount: value > epsilon ? value : 0 }
+  }).filter((x) => x.amount > 0)
+
+  const rows: Array<{ from: PaymentType; to: PaymentType; amount: number }> = []
+  let incomingIndex = 0
+  for (const out of outgoing) {
+    let remaining = out.amount
+    while (remaining > epsilon && incomingIndex < incoming.length) {
+      const inp = incoming[incomingIndex]
+      if (inp.amount <= epsilon) {
+        incomingIndex += 1
+        continue
+      }
+      const move = Math.min(remaining, inp.amount)
+      if (move > epsilon) rows.push({ from: out.type, to: inp.type, amount: move })
+      remaining -= move
+      inp.amount -= move
+      if (inp.amount <= epsilon) incomingIndex += 1
+    }
+  }
+  return rows
 }
 
 type SqlCollectionRow = Collection & { paymentKey?: string }
@@ -740,6 +782,33 @@ export default function App() {
     return total
   }, [positionCollections])
 
+  const torbaManualAdjustment = useMemo(() => {
+    let totalEffect = 0
+
+    for (const inv of positionInvoices) {
+      if (!Array.isArray(invoiceAllocations[inv.code]) || (invoiceAllocations[inv.code]?.length ?? 0) === 0) continue
+      const before = deriveInvoiceAllocations(inv)
+      const after = getInvoiceAllocations(inv, invoiceAllocations)
+      for (const move of diffAllocationTransfers(before, after)) {
+        if (move.from === 'HAVALE' && move.to === 'NAKIT') totalEffect += move.amount
+        else if (move.from === 'NAKIT' && move.to === 'HAVALE') totalEffect -= move.amount
+      }
+    }
+
+    for (const c of positionCollections) {
+      const key = c.paymentKey ?? computePaymentKey(c.invoiceCode ?? '', c)
+      if (!Array.isArray(paymentAllocations[key]) || (paymentAllocations[key]?.length ?? 0) === 0) continue
+      const before = derivePaymentAllocations(c)
+      const after = getPaymentAllocations(key, c, paymentAllocations)
+      for (const move of diffAllocationTransfers(before, after)) {
+        if (move.from === 'VADETAHHAV' && move.to === 'VADETAH') totalEffect += move.amount
+        else if (move.from === 'VADETAH' && move.to === 'VADETAHHAV') totalEffect -= move.amount
+      }
+    }
+
+    return totalEffect
+  }, [positionInvoices, invoiceAllocations, positionCollections, paymentAllocations])
+
   const summaryTotals = useMemo(() => {
     if (!selectedPosition) return null
 
@@ -755,7 +824,7 @@ export default function App() {
     const vadeliSatisTutari = totalsByTypeInvoices.VADELI
     const genelToplam = rutToplam + vadeliSatisTutari
 
-    const torbaTutari = nakitTutari + collectionVadeliTahsilat
+    const torbaTutari = nakitTutari + collectionVadeliTahsilat + torbaManualAdjustment
 
     return {
       havaleTutari,
@@ -774,6 +843,7 @@ export default function App() {
     selectedPosition,
     invoiceNakitGrossTotal,
     collectionVadeliTahsilatAmountTotal,
+    torbaManualAdjustment,
     totalsByTypeInvoices,
     totalsByTypePayments,
     discountTotalAll,
