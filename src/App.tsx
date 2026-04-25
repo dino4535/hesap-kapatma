@@ -1270,42 +1270,36 @@ export default function App() {
     const modeLabel = hasCash && hasBank ? 'Karma' : hasBank ? 'Bankaya Yatan' : 'Nakit'
     const money = (n: number | null | undefined) => formatMoney(Number(n) || 0)
 
-    const limitByOther = (rows: { bayi: string; bayiKodu: string; total: number }[], maxRows: number) => {
-      if (rows.length <= maxRows) return { rows, other: null as null | { bayi: string; bayiKodu: string; total: number } }
-      const keep = Math.max(1, maxRows - 1)
-      const head = rows.slice(0, keep)
-      const rest = rows.slice(keep)
-      const restTotal = rest.reduce((s, r) => s + (Number(r.total) || 0), 0)
-      return {
-        rows: head,
-        other: { bayi: `Diğer (${rest.length} bayi)`, bayiKodu: '-', total: restTotal },
-      }
+    const havaleVadeliByBayi = new Map<string, { bayi: string; bayiKodu: string; havale: number; vadeli: number }>()
+    for (const r of havaleInvoicesByBayi) {
+      const key = `${r.bayiKodu}|${r.bayi}`
+      const prev = havaleVadeliByBayi.get(key) ?? { bayi: r.bayi, bayiKodu: r.bayiKodu, havale: 0, vadeli: 0 }
+      prev.havale += Number(r.total) || 0
+      havaleVadeliByBayi.set(key, prev)
     }
+    for (const r of vadeliTahsilatHavaleleriByBayi) {
+      const key = `${r.bayiKodu}|${r.bayi}`
+      const prev = havaleVadeliByBayi.get(key) ?? { bayi: r.bayi, bayiKodu: r.bayiKodu, havale: 0, vadeli: 0 }
+      prev.vadeli += Number(r.total) || 0
+      havaleVadeliByBayi.set(key, prev)
+    }
+    const havaleVadeliRows = Array.from(havaleVadeliByBayi.values())
+      .map((r) => ({ ...r, toplam: r.havale + r.vadeli }))
+      .sort((a, b) => {
+        const byName = a.bayi.localeCompare(b.bayi, 'tr', { sensitivity: 'base' })
+        if (byName !== 0) return byName
+        return a.bayiKodu.localeCompare(b.bayiKodu, 'tr', { sensitivity: 'base' })
+      })
 
-    const limitedHavale = limitByOther(havaleInvoicesByBayi, 14)
-    const limitedVadeli = limitByOther(vadeliTahsilatHavaleleriByBayi, 14)
-
-    const havaleRowsHtml =
-      havaleInvoicesByBayi.length === 0
-        ? `<tr><td colspan="3" class="empty">Kayıt yok</td></tr>`
-        : `${limitedHavale.rows
-            .map((r) => `<tr><td>${escapeHtml(r.bayiKodu)}</td><td>${escapeHtml(r.bayi)}</td><td class="num">${escapeHtml(money(r.total))}</td></tr>`)
-            .join('')}${
-            limitedHavale.other
-              ? `<tr><td>${escapeHtml(limitedHavale.other.bayiKodu)}</td><td>${escapeHtml(limitedHavale.other.bayi)}</td><td class="num">${escapeHtml(money(limitedHavale.other.total))}</td></tr>`
-              : ''
-          }`
-
-    const vadeliRowsHtml =
-      vadeliTahsilatHavaleleriByBayi.length === 0
-        ? `<tr><td colspan="3" class="empty">Kayıt yok</td></tr>`
-        : `${limitedVadeli.rows
-            .map((r) => `<tr><td>${escapeHtml(r.bayiKodu)}</td><td>${escapeHtml(r.bayi)}</td><td class="num">${escapeHtml(money(r.total))}</td></tr>`)
-            .join('')}${
-            limitedVadeli.other
-              ? `<tr><td>${escapeHtml(limitedVadeli.other.bayiKodu)}</td><td>${escapeHtml(limitedVadeli.other.bayi)}</td><td class="num">${escapeHtml(money(limitedVadeli.other.total))}</td></tr>`
-              : ''
-          }`
+    const havaleVadeliRowsHtml =
+      havaleVadeliRows.length === 0
+        ? `<tr><td colspan="5" class="empty">Kayıt yok</td></tr>`
+        : havaleVadeliRows
+            .map(
+              (r) =>
+                `<tr><td>${escapeHtml(r.bayiKodu)}</td><td>${escapeHtml(r.bayi)}</td><td class="num">${escapeHtml(money(r.havale))}</td><td class="num">${escapeHtml(money(r.vadeli))}</td><td class="num">${escapeHtml(money(r.toplam))}</td></tr>`,
+            )
+            .join('')
 
     const adjustmentRowsHtml =
       adjustments.length === 0
@@ -1526,18 +1520,10 @@ export default function App() {
     </div>
 
     <div class="section">
-      <div class="section-title">Havale Ödeme Tipli Faturalar (Bayi Bazında)</div>
+      <div class="section-title">Havale ve Vadeli Ödeme Havaleleri</div>
       <table>
-        <thead><tr><th>Bayi Kodu</th><th>Bayi</th><th class="num">Toplam</th></tr></thead>
-        <tbody>${havaleRowsHtml}</tbody>
-      </table>
-    </div>
-
-    <div class="section">
-      <div class="section-title">Vadeli Tahsilat Havaleleri (Bayi Bazında)</div>
-      <table>
-        <thead><tr><th>Bayi Kodu</th><th>Bayi</th><th class="num">Toplam</th></tr></thead>
-        <tbody>${vadeliRowsHtml}</tbody>
+        <thead><tr><th>Bayi Kodu</th><th>Bayi</th><th class="num">Havale</th><th class="num">Vadeli Ödeme Havaleleri</th><th class="num">Toplam</th></tr></thead>
+        <tbody>${havaleVadeliRowsHtml}</tbody>
       </table>
     </div>
 
