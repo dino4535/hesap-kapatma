@@ -126,6 +126,10 @@ function depotLabel(depotCode?: string) {
 const BANKNOTES = [200, 100, 50, 20, 10, 5, 1] as const
 type Banknote = (typeof BANKNOTES)[number]
 
+function banknoteLabel(value: Banknote) {
+  return value === 1 ? 'Nikel' : String(value)
+}
+
 const BANKS = ['Ziraat', 'İş Bankası', 'Garanti', 'Yapı Kredi', 'Akbank', 'VakıfBank', 'Halkbank', 'QNB', 'DenizBank'] as const
 
 function LoginPage(props: { onLogin: (user: SessionUser) => void }) {
@@ -998,7 +1002,10 @@ export default function App() {
   }
 
   const torbaTutari = summaryTotals?.torbaTutari ?? 0
-  const cashTotal = BANKNOTES.reduce((s, d) => s + d * (banknoteCounts[d] ?? 0), 0)
+  const cashTotal = BANKNOTES.reduce((s, d) => {
+    const entered = banknoteCounts[d] ?? 0
+    return s + (d === 1 ? entered : d * entered)
+  }, 0)
   const adjustmentTotal = mutabakatAdjustments.reduce((s, a) => s + (Number(a.amount) || 0), 0)
   const cashEnabled = mutabakatMode === 'NAKIT' || mutabakatMode === 'KARMA'
   const bankEnabled = mutabakatMode === 'BANKA' || mutabakatMode === 'KARMA'
@@ -1221,8 +1228,13 @@ export default function App() {
 
     const cashCounts = (rec.cashJson ?? {}) as { banknoteCounts?: Record<string, unknown> }
     const bn = cashCounts.banknoteCounts ?? {}
-    const cashRows = BANKNOTES.map((d) => ({ denom: d, count: Number(bn[String(d)] ?? 0) || 0 })).filter((r) => r.count > 0)
-    const cashTotal = cashRows.reduce((s, r) => s + r.denom * r.count, 0)
+    const cashRows = BANKNOTES.map((d) => {
+      const entered = Number(bn[String(d)] ?? 0) || 0
+      const isNikel = d === 1
+      const lineTotal = isNikel ? entered : d * entered
+      return { denom: d, label: banknoteLabel(d), entered, lineTotal, isNikel }
+    }).filter((r) => r.entered > 0)
+    const cashTotal = cashRows.reduce((s, r) => s + r.lineTotal, 0)
 
     const adjustments = rec.adjustments ?? []
     const adjustTotal = adjustments.reduce((s, a) => s + (Number(a.amount) || 0), 0)
@@ -1290,9 +1302,7 @@ export default function App() {
         ? ''
         : cashRows.length === 0
           ? `<tr><td colspan="3" class="empty">Kayıt yok</td></tr>`
-          : cashRows
-              .map((r) => `<tr><td class="num">${r.denom}</td><td class="num">${r.count}</td><td class="num">${escapeHtml(money(r.denom * r.count))}</td></tr>`)
-              .join('')
+          : cashRows.map((r) => `<tr><td>${escapeHtml(r.label)}</td><td class="num">${r.entered}</td><td class="num">${escapeHtml(money(r.lineTotal))}</td></tr>`).join('')
 
     const bankInfoHtml =
       !hasBank
@@ -1321,7 +1331,7 @@ export default function App() {
 <div class="section">
   <div class="section-title">Nakit Banknot Dökümü</div>
   <table>
-    <thead><tr><th class="num">Banknot</th><th class="num">Adet</th><th class="num">Tutar</th></tr></thead>
+    <thead><tr><th>Banknot</th><th class="num">Adet / Tutar</th><th class="num">Tutar</th></tr></thead>
     <tbody>${cashRowsHtml}</tbody>
     <tfoot><tr><td colspan="2" class="num">Toplam</td><td class="num">${escapeHtml(money(cashTotal))}</td></tr></tfoot>
   </table>
@@ -2256,22 +2266,24 @@ export default function App() {
                           <thead>
                             <tr>
                               <th>Banknot</th>
-                              <th>Adet</th>
+                              <th>Adet / Tutar</th>
                               <th>Tutar</th>
                             </tr>
                           </thead>
                           <tbody>
                             {BANKNOTES.map((d) => {
-                              const count = banknoteCounts[d] ?? 0
-                              const total = d * count
+                              const entered = banknoteCounts[d] ?? 0
+                              const isNikel = d === 1
+                              const total = isNikel ? entered : d * entered
                               return (
                                 <tr key={d}>
-                                  <td>{d}</td>
+                                  <td>{banknoteLabel(d)}</td>
                                   <td>
                                     <input
                                       type="number"
                                       min={0}
-                                      value={count || ''}
+                                      step={isNikel ? '0.01' : '1'}
+                                      value={entered || ''}
                                       disabled={mutabakatSaved?.status === 'COMPLETED'}
                                       onChange={(e) => {
                                         const next = Math.max(0, Number(e.target.value || 0))
