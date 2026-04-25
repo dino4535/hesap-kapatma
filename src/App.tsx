@@ -180,12 +180,13 @@ function LoginPage(props: { onLogin: (user: SessionUser) => void }) {
   )
 }
 
-function Modal(props: { title: string; open: boolean; onClose: () => void; children: ReactNode; size?: 'default' | 'wide' }) {
+function Modal(props: { title: string; open: boolean; onClose: () => void; children: ReactNode; size?: 'default' | 'large' | 'wide' }) {
   if (!props.open) return null
+  const modalClass = props.size === 'wide' ? 'modal modal-wide' : props.size === 'large' ? 'modal modal-large' : 'modal'
   return (
     <div className="modal-backdrop" onClick={props.onClose} role="presentation">
       <div
-        className={props.size === 'wide' ? 'modal modal-wide' : 'modal'}
+        className={modalClass}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
@@ -208,9 +209,26 @@ function AllocationEditor(props: {
   allocations: Allocation[]
   onChange: (next: Allocation[]) => void
 }) {
-  const [from, setFrom] = useState<PaymentType>('HAVALE')
+  const findCurrentSourceType = (allocs: Allocation[]) => {
+    const positive = allocs.filter((a) => (Number(a.amount) || 0) > 0)
+    if (positive.length === 0) return 'HAVALE' as PaymentType
+    return positive.reduce((best, cur) => (cur.amount > best.amount ? cur : best)).type
+  }
+
+  const [from, setFrom] = useState<PaymentType>(findCurrentSourceType(props.allocations))
   const [to, setTo] = useState<PaymentType>('NAKIT')
   const [amount, setAmount] = useState<number>(0)
+
+  useEffect(() => {
+    const nextFrom = findCurrentSourceType(props.allocations)
+    setFrom(nextFrom)
+  }, [props.allocations])
+
+  useEffect(() => {
+    if (to !== from) return
+    const fallback = PAYMENT_TYPES.find((t) => t !== from)
+    if (fallback) setTo(fallback)
+  }, [from, to])
 
   const onApply = () => {
     props.onChange(transferAmount(props.allocations, from, to, amount))
@@ -243,8 +261,8 @@ function AllocationEditor(props: {
 
       <div className="transfer">
         <div className="transfer-row">
-          <label>Kaynak</label>
-          <select value={from} onChange={(e) => setFrom(e.target.value as PaymentType)}>
+          <label>Kaynak (Mevcut Tip)</label>
+          <select value={from} disabled>
             {PAYMENT_TYPES.map((t) => (
               <option key={t} value={t}>
                 {paymentTypeLabel(t)}
@@ -3013,7 +3031,7 @@ export default function App() {
         </>
       )}
 
-      <Modal title={editingInvoice ? `Fatura Tip Dağılımı - ${editingInvoice.code}` : ''} open={!!editingInvoice} onClose={() => setEditingInvoice(null)}>
+      <Modal title={editingInvoice ? `Fatura Tip Dağılımı - ${editingInvoice.code}` : ''} open={!!editingInvoice} onClose={() => setEditingInvoice(null)} size="large">
         {editingInvoice ? (
           <AllocationEditor
             title="Fatura"
@@ -3024,7 +3042,7 @@ export default function App() {
         ) : null}
       </Modal>
 
-      <Modal title={editingPayment ? `Tahsilat Tip Dağılımı - ${editingPayment.collection.invoiceCode ?? ''}` : ''} open={!!editingPayment} onClose={() => setEditingPayment(null)}>
+      <Modal title={editingPayment ? `Tahsilat Tip Dağılımı - ${editingPayment.collection.invoiceCode ?? ''}` : ''} open={!!editingPayment} onClose={() => setEditingPayment(null)} size="large">
         {editingPayment ? (
           <AllocationEditor
             title="Tahsilat"

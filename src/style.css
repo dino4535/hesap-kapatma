@@ -753,6 +753,11 @@ td {
   height: 92vh;
 }
 
+.modal-large {
+  width: 860px;
+  max-width: 96vw;
+}
+
 .modal-header {
   display: flex;
   justify-content: space-between;
