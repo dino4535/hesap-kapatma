@@ -2511,26 +2511,32 @@ export default function App() {
                           <tr>
                             <th>Bayi</th>
                             <th>Fatura</th>
-                            <th>Dağılım</th>
+                            <th>Önceki Dağılım</th>
+                            <th>Yeni Dağılım</th>
                           </tr>
                         </thead>
                         <tbody>
                           {positionInvoices.filter((inv) => Array.isArray(invoiceAllocations[inv.code]) && (invoiceAllocations[inv.code]?.length ?? 0) > 0).length === 0 ? (
                             <tr>
-                              <td colSpan={3} style={{ textAlign: 'center', color: '#718096' }}>
+                              <td colSpan={4} style={{ textAlign: 'center', color: '#718096' }}>
                                 Kayıt yok
                               </td>
                             </tr>
                           ) : (
                             positionInvoices
                               .filter((inv) => Array.isArray(invoiceAllocations[inv.code]) && (invoiceAllocations[inv.code]?.length ?? 0) > 0)
-                              .map((inv) => (
-                                <tr key={inv.code}>
-                                  <td>{inv.customer.registeredName}</td>
-                                  <td>{inv.code}</td>
-                                  <td>{allocationSummary(getInvoiceAllocations(inv, invoiceAllocations))}</td>
-                                </tr>
-                              ))
+                              .map((inv) => {
+                                const before = deriveInvoiceAllocations(inv)
+                                const after = getInvoiceAllocations(inv, invoiceAllocations)
+                                return (
+                                  <tr key={inv.code}>
+                                    <td>{inv.customer.registeredName}</td>
+                                    <td>{inv.code}</td>
+                                    <td>{allocationSummary(before)}</td>
+                                    <td>{allocationSummary(after)}</td>
+                                  </tr>
+                                )
+                              })
                           )}
                         </tbody>
                       </table>
@@ -2543,7 +2549,8 @@ export default function App() {
                           <tr>
                             <th>Bayi</th>
                             <th>Fatura</th>
-                            <th>Dağılım</th>
+                            <th>Önceki Dağılım</th>
+                            <th>Yeni Dağılım</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -2552,7 +2559,7 @@ export default function App() {
                             return Array.isArray(paymentAllocations[key]) && (paymentAllocations[key]?.length ?? 0) > 0
                           }).length === 0 ? (
                             <tr>
-                              <td colSpan={3} style={{ textAlign: 'center', color: '#718096' }}>
+                              <td colSpan={4} style={{ textAlign: 'center', color: '#718096' }}>
                                 Kayıt yok
                               </td>
                             </tr>
@@ -2564,11 +2571,14 @@ export default function App() {
                               })
                               .map((c) => {
                                 const key = c.paymentKey ?? computePaymentKey(c.invoiceCode ?? '', c)
+                                const before = derivePaymentAllocations(c)
+                                const after = getPaymentAllocations(key, c, paymentAllocations)
                                 return (
                                   <tr key={key}>
                                     <td>{c.customer.registeredName}</td>
                                     <td>{c.invoiceCode ?? '-'}</td>
-                                    <td>{allocationSummary(getPaymentAllocations(key, c, paymentAllocations))}</td>
+                                    <td>{allocationSummary(before)}</td>
+                                    <td>{allocationSummary(after)}</td>
                                   </tr>
                                 )
                               })
