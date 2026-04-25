@@ -456,6 +456,8 @@ export interface ManimReceiptRow {
   amount: number
   direction?: string
   explanation?: string
+  correspondentCode?: string
+  correspondentLabel?: string
   bankAccountId?: string
   bankAccountLabel?: string
 }
@@ -464,10 +466,12 @@ export async function fetchManimReceipts(args: {
   userName: string
   bankName: string
   date: string
+  includePreviousDay?: boolean
 }): Promise<{ ok: boolean; receipts: ManimReceiptRow[]; message?: string }> {
   const qs = new URLSearchParams()
   qs.set('bankName', args.bankName)
   qs.set('date', args.date)
+  if (args.includePreviousDay) qs.set('includePreviousDay', '1')
   const res = await fetch(`/api/manim/receipts?${qs.toString()}`, { headers: { 'x-user': args.userName } })
   if (!res.ok) {
     const text = await res.text().catch(() => '')

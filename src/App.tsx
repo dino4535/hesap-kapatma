@@ -134,6 +134,13 @@ function bayiCodeOf(customer: { code?: string }) {
   return (customer.code ?? '').trim() || '-'
 }
 
+function normalizeMatchCode(value?: string) {
+  return String(value ?? '')
+    .trim()
+    .toLocaleUpperCase('tr-TR')
+    .replace(/[^A-Z0-9]/g, '')
+}
+
 const BANKS = ['Ziraat', 'İş Bankası', 'Garanti', 'Yapı Kredi', 'Akbank', 'VakıfBank', 'Halkbank', 'QNB', 'DenizBank'] as const
 
 function LoginPage(props: { onLogin: (user: SessionUser) => void }) {
@@ -349,9 +356,10 @@ export default function App() {
   const [manimReceipts, setManimReceipts] = useState<ManimReceiptRow[]>([])
   const [manimReceiptSearch, setManimReceiptSearch] = useState('')
   const [mutabakatAdjustments, setMutabakatAdjustments] = useState<MutabakatAdjustment[]>([])
-  const [mutabakatStep, setMutabakatStep] = useState<0 | 1 | 2>(0)
+  const [mutabakatStep, setMutabakatStep] = useState<0 | 1 | 2 | 3>(0)
   const [mutabakatCorrectionsTab, setMutabakatCorrectionsTab] = useState<'faturalar' | 'tahsilatlar'>('faturalar')
   const [mutabakatCorrectionsSearch, setMutabakatCorrectionsSearch] = useState('')
+  const [manimBayiMatchReceipts, setManimBayiMatchReceipts] = useState<ManimReceiptRow[]>([])
 
   const [adminUsers, setAdminUsers] = useState<UserRow[]>([])
   const [adminUsersLoading, setAdminUsersLoading] = useState(false)
@@ -806,6 +814,52 @@ export default function App() {
     })
   }, [positionCollections, paymentAllocations])
 
+  const havaleVadeliByBayiRows = useMemo(() => {
+    const rows = new Map<string, { bayiKodu: string; bayi: string; havale: number; vadeli: number }>()
+    for (const r of havaleInvoicesByBayi) {
+      const key = `${r.bayiKodu}__${r.bayi}`
+      const prev = rows.get(key) ?? { bayiKodu: r.bayiKodu, bayi: r.bayi, havale: 0, vadeli: 0 }
+      prev.havale += Number(r.total) || 0
+      rows.set(key, prev)
+    }
+    for (const r of vadeliTahsilatHavaleleriByBayi) {
+      const key = `${r.bayiKodu}__${r.bayi}`
+      const prev = rows.get(key) ?? { bayiKodu: r.bayiKodu, bayi: r.bayi, havale: 0, vadeli: 0 }
+      prev.vadeli += Number(r.total) || 0
+      rows.set(key, prev)
+    }
+    return Array.from(rows.values())
+      .map((r) => ({ ...r, toplam: (Number(r.havale) || 0) + (Number(r.vadeli) || 0) }))
+      .sort((a, b) => {
+        const byName = a.bayi.localeCompare(b.bayi, 'tr', { sensitivity: 'base' })
+        if (byName !== 0) return byName
+        return a.bayiKodu.localeCompare(b.bayiKodu, 'tr', { sensitivity: 'base' })
+      })
+  }, [havaleInvoicesByBayi, vadeliTahsilatHavaleleriByBayi])
+
+  const manimIncomingByCorrespondentCode = useMemo(() => {
+    const totals = new Map<string, number>()
+    for (const r of manimBayiMatchReceipts) {
+      const direction = String(r.direction ?? '').trim().toLocaleLowerCase('tr-TR')
+      if (direction && direction !== 'in') continue
+      const code = normalizeMatchCode(r.correspondentCode)
+      if (!code) continue
+      totals.set(code, (totals.get(code) ?? 0) + (Number(r.amount) || 0))
+    }
+    return totals
+  }, [manimBayiMatchReceipts])
+
+  const bayiHavaleEslemeRows = useMemo(() => {
+    return havaleVadeliByBayiRows.map((r) => {
+      const matchCode = normalizeMatchCode(r.bayiKodu)
+      const gelenTutarToplami = manimIncomingByCorrespondentCode.get(matchCode) ?? 0
+      return { ...r, gelenTutarToplami }
+    })
+  }, [havaleVadeliByBayiRows, manimIncomingByCorrespondentCode])
+
+  const bayiEslemeBeklenenToplam = useMemo(() => bayiHavaleEslemeRows.reduce((s, r) => s + (Number(r.toplam) || 0), 0), [bayiHavaleEslemeRows])
+  const bayiEslemeGelenToplam = useMemo(() => bayiHavaleEslemeRows.reduce((s, r) => s + (Number(r.gelenTutarToplami) || 0), 0), [bayiHavaleEslemeRows])
+
   const invoiceNakitGrossTotal = useMemo(() => {
     let total = 0
     for (const inv of positionInvoices) {
@@ -1134,6 +1188,35 @@ export default function App() {
 
     return () => window.clearTimeout(handle)
   }, [currentUser, bankEnabled, bankName, selectedDataset.date, mutabakatSaved?.status])
+
+  useEffect(() => {
+    if (!currentUser) return
+    if (!bankEnabled) {
+      setManimBayiMatchReceipts([])
+      return
+    }
+    const bank = bankName.trim()
+    const date = selectedDataset.date
+    if (!bank || !date) {
+      setManimBayiMatchReceipts([])
+      return
+    }
+    const handle = window.setTimeout(() => {
+      fetchManimReceipts({ userName: currentUser.userName, bankName: bank, date, includePreviousDay: true })
+        .then((r) => {
+          if (!r.ok) {
+            setStatus({ type: 'error', message: r.message || 'Bayi eşleme için Manim hareketleri alınamadı' })
+            return
+          }
+          setManimBayiMatchReceipts(Array.isArray(r.receipts) ? r.receipts : [])
+        })
+        .catch((e) => {
+          const msg = e instanceof Error ? e.message : 'Bayi eşleme için Manim hareketleri alınamadı'
+          setStatus({ type: 'error', message: msg })
+        })
+    }, 350)
+    return () => window.clearTimeout(handle)
+  }, [currentUser, bankEnabled, bankName, selectedDataset.date])
 
   const filteredManimReceipts = useMemo(() => {
     const q = manimReceiptSearch.trim().toLocaleLowerCase('tr-TR')
@@ -2111,7 +2194,22 @@ export default function App() {
                     setMutabakatStep(2)
                   }}
                 >
-                  3. Özet & İşlemler
+                  3. Bayi Havale Eşleme
+                </button>
+                <button
+                  className={`flow-step ${mutabakatStep === 3 ? 'active' : ''}`}
+                  type="button"
+                  onClick={() => {
+                    if (mutabakatStep === 0) {
+                      setStatus({ type: 'info', message: 'Önce ödeme adımını tamamlayın' })
+                      setMutabakatStep(1)
+                      return
+                    }
+                    if (!validatePaymentInputs()) return
+                    setMutabakatStep(3)
+                  }}
+                >
+                  4. Özet & İşlemler
                 </button>
               </div>
 
@@ -2531,6 +2629,65 @@ export default function App() {
                       <div>Fark: {formatMoney(mutabakatFark)}</div>
                     </div>
                   </div>
+                ) : mutabakatStep === 2 ? (
+                  <div className="mutabakat">
+                    <div className="mutabakat-section-title">Bayi Havale Eşleme</div>
+                    <div className="mutabakat-meta">
+                      <div className="mutabakat-meta-row">
+                        <div className="mutabakat-label">Mutabakat Tarihi</div>
+                        <div className="mutabakat-value">{selectedDataset.date ? formatDateTr(selectedDataset.date) : '-'}</div>
+                      </div>
+                      <div className="mutabakat-meta-row">
+                        <div className="mutabakat-label">Manim Tarih Aralığı</div>
+                        <div className="mutabakat-value">{selectedDataset.date ? `${formatDateTr(selectedDataset.date)} ve bir önceki gün` : '-'}</div>
+                      </div>
+                      <div className="mutabakat-meta-row">
+                        <div className="mutabakat-label">Beklenen Toplam</div>
+                        <div className="mutabakat-value">{formatMoney(bayiEslemeBeklenenToplam)}</div>
+                      </div>
+                      <div className="mutabakat-meta-row">
+                        <div className="mutabakat-label">Gelen Tutar Toplamı</div>
+                        <div className="mutabakat-value">{formatMoney(bayiEslemeGelenToplam)}</div>
+                      </div>
+                    </div>
+
+                    {!bankEnabled || !bankName.trim() ? (
+                      <div className="upload-status info">Bayi eşleme için Ödeme adımında bankayı seçin.</div>
+                    ) : (
+                      <table className="mini-table">
+                        <thead>
+                          <tr>
+                            <th>Bayi Kodu</th>
+                            <th>Bayi Adı</th>
+                            <th>Havale Faturaları</th>
+                            <th>Vadeli Tahsilat Havaleleri</th>
+                            <th>Toplam</th>
+                            <th>Gelen Tutar Toplamı</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {bayiHavaleEslemeRows.length === 0 ? (
+                            <tr>
+                              <td colSpan={6} style={{ textAlign: 'center', color: '#718096' }}>
+                                Kayıt yok
+                              </td>
+                            </tr>
+                          ) : (
+                            bayiHavaleEslemeRows.map((r) => (
+                              <tr key={`${r.bayiKodu}|${r.bayi}`}>
+                                <td>{r.bayiKodu}</td>
+                                <td>{r.bayi}</td>
+                                <td>{formatMoney(r.havale)}</td>
+                                <td>{formatMoney(r.vadeli)}</td>
+                                <td>{formatMoney(r.toplam)}</td>
+                                <td>{formatMoney(r.gelenTutarToplami)}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
                 ) : (
                   <div className="mutabakat">
                     <div className="mutabakat-section-title">Özet</div>
@@ -2735,7 +2892,12 @@ export default function App() {
               </div>
 
               <div className="flow-footer">
-                <button className="btn btn-secondary" type="button" onClick={() => setMutabakatStep((s) => (s === 0 ? 0 : ((s - 1) as 0 | 1 | 2)))} disabled={mutabakatStep === 0}>
+                <button
+                  className="btn btn-secondary"
+                  type="button"
+                  onClick={() => setMutabakatStep((s) => (s === 0 ? 0 : ((s - 1) as 0 | 1 | 2 | 3)))}
+                  disabled={mutabakatStep === 0}
+                >
                   Geri
                 </button>
                 <button
@@ -2743,9 +2905,9 @@ export default function App() {
                   type="button"
                   onClick={() => {
                     if (mutabakatStep === 1 && !validatePaymentInputs()) return
-                    setMutabakatStep((s) => (s === 2 ? 2 : ((s + 1) as 0 | 1 | 2)))
+                    setMutabakatStep((s) => (s === 3 ? 3 : ((s + 1) as 0 | 1 | 2 | 3)))
                   }}
-                  disabled={mutabakatStep === 2}
+                  disabled={mutabakatStep === 3}
                 >
                   İleri
                 </button>

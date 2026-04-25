@@ -464,6 +464,8 @@ type ManimReceiptCandidate = {
   amount: number
   direction?: string
   explanation?: string
+  correspondentCode?: string
+  correspondentLabel?: string
   bankAccountId?: string
   bankAccountLabel?: string
 }
@@ -510,6 +512,14 @@ async function loadManimReceipts(accountId: string): Promise<ManimReceiptCandida
         const amount = typeof obj?.receiptAmount === 'number' ? obj.receiptAmount : toNumberFlexible(obj?.receiptAmount) ?? 0
         const direction = typeof obj?.direction === 'string' ? obj.direction : undefined
         const explanation = typeof obj?.explanation === 'string' ? obj.explanation : undefined
+        const correspondentCode =
+          String(
+            obj?.correspondentCode ??
+              obj?.correspondent?.code ??
+              obj?.correspondent?.erpCode ??
+              '',
+          ).trim() || undefined
+        const correspondentLabel = String(obj?.correspondent?.label ?? '').trim() || undefined
         const bankAccountId = typeof obj?.bankAccount?._id === 'string' ? obj.bankAccount._id : accountId
         const bankAccountLabel = typeof obj?.bankAccount?.label === 'string' ? obj.bankAccount.label : undefined
         if (!receiptNo || !receiptDate || !Number.isFinite(amount)) return null
@@ -519,6 +529,8 @@ async function loadManimReceipts(accountId: string): Promise<ManimReceiptCandida
           amount,
           ...(direction ? { direction } : {}),
           ...(explanation ? { explanation } : {}),
+          ...(correspondentCode ? { correspondentCode } : {}),
+          ...(correspondentLabel ? { correspondentLabel } : {}),
           ...(bankAccountId ? { bankAccountId } : {}),
           ...(bankAccountLabel ? { bankAccountLabel } : {}),
         }
@@ -784,6 +796,8 @@ type ManimReceiptRaw = {
   receiptAmount?: unknown
   direction?: unknown
   explanation?: unknown
+  correspondent?: unknown
+  correspondentCode?: unknown
   bankAccount?: unknown
 }
 
@@ -819,6 +833,15 @@ async function loadManimReceiptsRemote(args: {
       const amount = typeof obj?.receiptAmount === 'number' ? (obj.receiptAmount as number) : toNumberFlexible(obj?.receiptAmount) ?? 0
       const direction = typeof obj?.direction === 'string' ? obj.direction : undefined
       const explanation = typeof obj?.explanation === 'string' ? obj.explanation : undefined
+      const correspondentObj = typeof obj?.correspondent === 'object' && obj?.correspondent ? (obj.correspondent as Record<string, unknown>) : null
+      const correspondentCode =
+        String(
+          obj?.correspondentCode ??
+            (correspondentObj?.code as unknown) ??
+            (correspondentObj?.erpCode as unknown) ??
+            '',
+        ).trim() || undefined
+      const correspondentLabel = String(correspondentObj?.label ?? '').trim() || undefined
       if (!receiptNo || !receiptDate || !Number.isFinite(amount)) return null
       const candidate: ManimReceiptCandidate = {
         receiptNo,
@@ -826,6 +849,8 @@ async function loadManimReceiptsRemote(args: {
         amount,
         ...(direction ? { direction } : {}),
         ...(explanation ? { explanation } : {}),
+        ...(correspondentCode ? { correspondentCode } : {}),
+        ...(correspondentLabel ? { correspondentLabel } : {}),
         bankAccountId: args.accountId,
       }
       return candidate
@@ -2808,6 +2833,8 @@ app.get('/api/manim/receipts', async (req, res) => {
       res.status(400).send('bankName, date zorunlu')
       return
     }
+    const includePreviousDayRaw = String(req.query.includePreviousDay ?? '').trim().toLowerCase()
+    const includePreviousDay = includePreviousDayRaw === '1' || includePreviousDayRaw === 'true'
 
     const pool = await getPool()
     await ensureSchema(pool)
@@ -2836,8 +2863,20 @@ app.get('/api/manim/receipts', async (req, res) => {
 
     const targetDay = manimIsoDay(parsedDate.date)
     const targets = new Set([targetDay])
-
-    const { startIso, endIso } = manimIstanbulUtcRange(targetDay)
+    let startIso: string
+    let endIso: string
+    if (includePreviousDay) {
+      const prev = new Date(parsedDate.date.getTime())
+      prev.setUTCDate(prev.getUTCDate() - 1)
+      const prevDay = manimIsoDay(prev)
+      targets.add(prevDay)
+      startIso = manimIstanbulUtcRange(prevDay).startIso
+      endIso = manimIstanbulUtcRange(targetDay).endIso
+    } else {
+      const range = manimIstanbulUtcRange(targetDay)
+      startIso = range.startIso
+      endIso = range.endIso
+    }
 
     const dedupe = new Map<string, ManimReceiptCandidate & { timeScore: number }>()
 
@@ -2872,6 +2911,8 @@ app.get('/api/manim/receipts', async (req, res) => {
         amount: x.amount,
         direction: x.direction,
         explanation: x.explanation,
+        correspondentCode: x.correspondentCode,
+        correspondentLabel: x.correspondentLabel,
         bankAccountId: x.bankAccountId,
         bankAccountLabel: x.bankAccountLabel,
       })),
