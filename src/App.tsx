@@ -1289,10 +1289,10 @@ export default function App() {
       havaleInvoicesByBayi.length === 0
         ? `<tr><td colspan="3" class="empty">Kayıt yok</td></tr>`
         : `${limitedHavale.rows
-            .map((r) => `<tr><td>${escapeHtml(r.bayi)}</td><td>${escapeHtml(r.bayiKodu)}</td><td class="num">${escapeHtml(money(r.total))}</td></tr>`)
+            .map((r) => `<tr><td>${escapeHtml(r.bayiKodu)}</td><td>${escapeHtml(r.bayi)}</td><td class="num">${escapeHtml(money(r.total))}</td></tr>`)
             .join('')}${
             limitedHavale.other
-              ? `<tr><td>${escapeHtml(limitedHavale.other.bayi)}</td><td>${escapeHtml(limitedHavale.other.bayiKodu)}</td><td class="num">${escapeHtml(money(limitedHavale.other.total))}</td></tr>`
+              ? `<tr><td>${escapeHtml(limitedHavale.other.bayiKodu)}</td><td>${escapeHtml(limitedHavale.other.bayi)}</td><td class="num">${escapeHtml(money(limitedHavale.other.total))}</td></tr>`
               : ''
           }`
 
@@ -1300,10 +1300,10 @@ export default function App() {
       vadeliTahsilatHavaleleriByBayi.length === 0
         ? `<tr><td colspan="3" class="empty">Kayıt yok</td></tr>`
         : `${limitedVadeli.rows
-            .map((r) => `<tr><td>${escapeHtml(r.bayi)}</td><td>${escapeHtml(r.bayiKodu)}</td><td class="num">${escapeHtml(money(r.total))}</td></tr>`)
+            .map((r) => `<tr><td>${escapeHtml(r.bayiKodu)}</td><td>${escapeHtml(r.bayi)}</td><td class="num">${escapeHtml(money(r.total))}</td></tr>`)
             .join('')}${
             limitedVadeli.other
-              ? `<tr><td>${escapeHtml(limitedVadeli.other.bayi)}</td><td>${escapeHtml(limitedVadeli.other.bayiKodu)}</td><td class="num">${escapeHtml(money(limitedVadeli.other.total))}</td></tr>`
+              ? `<tr><td>${escapeHtml(limitedVadeli.other.bayiKodu)}</td><td>${escapeHtml(limitedVadeli.other.bayi)}</td><td class="num">${escapeHtml(money(limitedVadeli.other.total))}</td></tr>`
               : ''
           }`
 
@@ -1339,7 +1339,7 @@ export default function App() {
         : changedInvoiceRows
             .map(
               (r) =>
-                `<tr><td>${escapeHtml(r.bayi)}</td><td>${escapeHtml(r.bayiKodu)}</td><td>${escapeHtml(r.fatura)}</td><td>${escapeHtml(r.onceki)}</td><td>${escapeHtml(r.yeni)}</td></tr>`,
+                `<tr><td>${escapeHtml(r.bayiKodu)}</td><td>${escapeHtml(r.bayi)}</td><td>${escapeHtml(r.fatura)}</td><td>${escapeHtml(r.onceki)}</td><td>${escapeHtml(r.yeni)}</td></tr>`,
             )
             .join('')
 
@@ -1367,7 +1367,7 @@ export default function App() {
         : changedPaymentRows
             .map(
               (r) =>
-                `<tr><td>${escapeHtml(r.bayi)}</td><td>${escapeHtml(r.bayiKodu)}</td><td>${escapeHtml(r.fatura)}</td><td>${escapeHtml(r.onceki)}</td><td>${escapeHtml(r.yeni)}</td></tr>`,
+                `<tr><td>${escapeHtml(r.bayiKodu)}</td><td>${escapeHtml(r.bayi)}</td><td>${escapeHtml(r.fatura)}</td><td>${escapeHtml(r.onceki)}</td><td>${escapeHtml(r.yeni)}</td></tr>`,
             )
             .join('')
 
@@ -1512,7 +1512,7 @@ export default function App() {
     <div class="section">
       <div class="section-title">Ödeme Tipi Değişen Faturalar</div>
       <table>
-        <thead><tr><th>Bayi</th><th>Bayi Kodu</th><th>Fatura</th><th>Önceki Dağılım</th><th>Yeni Dağılım</th></tr></thead>
+        <thead><tr><th>Bayi Kodu</th><th>Bayi</th><th>Fatura</th><th>Önceki Dağılım</th><th>Yeni Dağılım</th></tr></thead>
         <tbody>${changedInvoicesRowsHtml}</tbody>
       </table>
     </div>
@@ -1520,7 +1520,7 @@ export default function App() {
     <div class="section">
       <div class="section-title">Ödeme Tipi Değişen Tahsilatlar</div>
       <table>
-        <thead><tr><th>Bayi</th><th>Bayi Kodu</th><th>Fatura</th><th>Önceki Dağılım</th><th>Yeni Dağılım</th></tr></thead>
+        <thead><tr><th>Bayi Kodu</th><th>Bayi</th><th>Fatura</th><th>Önceki Dağılım</th><th>Yeni Dağılım</th></tr></thead>
         <tbody>${changedPaymentsRowsHtml}</tbody>
       </table>
     </div>
@@ -1528,7 +1528,7 @@ export default function App() {
     <div class="section">
       <div class="section-title">Havale Ödeme Tipli Faturalar (Bayi Bazında)</div>
       <table>
-        <thead><tr><th>Bayi</th><th>Bayi Kodu</th><th class="num">Toplam</th></tr></thead>
+        <thead><tr><th>Bayi Kodu</th><th>Bayi</th><th class="num">Toplam</th></tr></thead>
         <tbody>${havaleRowsHtml}</tbody>
       </table>
     </div>
@@ -1536,7 +1536,7 @@ export default function App() {
     <div class="section">
       <div class="section-title">Vadeli Tahsilat Havaleleri (Bayi Bazında)</div>
       <table>
-        <thead><tr><th>Bayi</th><th>Bayi Kodu</th><th class="num">Toplam</th></tr></thead>
+        <thead><tr><th>Bayi Kodu</th><th>Bayi</th><th class="num">Toplam</th></tr></thead>
         <tbody>${vadeliRowsHtml}</tbody>
       </table>
     </div>
@@ -2221,8 +2221,8 @@ export default function App() {
                       <table className="mini-table">
                         <thead>
                           <tr>
-                            <th>Müşteri</th>
                             <th>Bayi Kodu</th>
+                            <th>Müşteri</th>
                             <th>Vergi No</th>
                             <th>Fatura</th>
                             <th>Tutar</th>
@@ -2243,8 +2243,8 @@ export default function App() {
                               const allocs = getInvoiceAllocations(inv, invoiceAllocations)
                               return (
                                 <tr key={inv.code}>
-                                  <td>{inv.customer.registeredName}</td>
                                   <td>{bayiCodeOf(inv.customer)}</td>
+                                  <td>{inv.customer.registeredName}</td>
                                   <td>{inv.customer.taxNumber ?? '-'}</td>
                                   <td>{inv.code}</td>
                                   <td>{formatMoney(total)}</td>
@@ -2264,8 +2264,8 @@ export default function App() {
                       <table className="mini-table">
                         <thead>
                           <tr>
-                            <th>Müşteri</th>
                             <th>Bayi Kodu</th>
+                            <th>Müşteri</th>
                             <th>Vergi No</th>
                             <th>Fatura</th>
                             <th>Tutar</th>
@@ -2283,8 +2283,8 @@ export default function App() {
                           ) : (
                             mutabakatPaymentsForEdit.map((r) => (
                               <tr key={r.key}>
-                                <td>{r.c.customer.registeredName}</td>
                                 <td>{bayiCodeOf(r.c.customer)}</td>
+                                <td>{r.c.customer.registeredName}</td>
                                 <td>{r.c.customer.taxNumber ?? '-'}</td>
                                 <td>{r.c.invoiceCode ?? '-'}</td>
                                 <td>{formatMoney(r.c.amount ?? 0)}</td>
@@ -2603,8 +2603,8 @@ export default function App() {
                       <table className="mini-table">
                         <thead>
                           <tr>
-                            <th>Bayi</th>
                             <th>Bayi Kodu</th>
+                            <th>Bayi</th>
                             <th>Fatura</th>
                             <th>Önceki Dağılım</th>
                             <th>Yeni Dağılım</th>
@@ -2625,8 +2625,8 @@ export default function App() {
                                 const after = getInvoiceAllocations(inv, invoiceAllocations)
                                 return (
                                   <tr key={inv.code}>
-                                    <td>{inv.customer.registeredName}</td>
                                     <td>{bayiCodeOf(inv.customer)}</td>
+                                    <td>{inv.customer.registeredName}</td>
                                     <td>{inv.code}</td>
                                     <td>{allocationSummary(before)}</td>
                                     <td>{allocationSummary(after)}</td>
@@ -2643,8 +2643,8 @@ export default function App() {
                       <table className="mini-table">
                         <thead>
                           <tr>
-                            <th>Bayi</th>
                             <th>Bayi Kodu</th>
+                            <th>Bayi</th>
                             <th>Fatura</th>
                             <th>Önceki Dağılım</th>
                             <th>Yeni Dağılım</th>
@@ -2672,8 +2672,8 @@ export default function App() {
                                 const after = getPaymentAllocations(key, c, paymentAllocations)
                                 return (
                                   <tr key={key}>
-                                    <td>{c.customer.registeredName}</td>
                                     <td>{bayiCodeOf(c.customer)}</td>
+                                    <td>{c.customer.registeredName}</td>
                                     <td>{c.invoiceCode ?? '-'}</td>
                                     <td>{allocationSummary(before)}</td>
                                     <td>{allocationSummary(after)}</td>
@@ -2690,8 +2690,8 @@ export default function App() {
                       <table className="mini-table">
                         <thead>
                           <tr>
-                            <th>Bayi</th>
                             <th>Bayi Kodu</th>
+                            <th>Bayi</th>
                             <th>Tutar</th>
                           </tr>
                         </thead>
@@ -2705,8 +2705,8 @@ export default function App() {
                           ) : (
                             havaleInvoicesByBayi.map((r) => (
                               <tr key={`${r.bayiKodu}|${r.bayi}`}>
-                                <td>{r.bayi}</td>
                                 <td>{r.bayiKodu}</td>
+                                <td>{r.bayi}</td>
                                 <td>{formatMoney(r.total)}</td>
                               </tr>
                             ))
@@ -2720,8 +2720,8 @@ export default function App() {
                       <table className="mini-table">
                         <thead>
                           <tr>
-                            <th>Bayi</th>
                             <th>Bayi Kodu</th>
+                            <th>Bayi</th>
                             <th>Tutar</th>
                           </tr>
                         </thead>
@@ -2735,8 +2735,8 @@ export default function App() {
                           ) : (
                             vadeliTahsilatHavaleleriByBayi.map((r) => (
                               <tr key={`${r.bayiKodu}|${r.bayi}`}>
-                                <td>{r.bayi}</td>
                                 <td>{r.bayiKodu}</td>
+                                <td>{r.bayi}</td>
                                 <td>{formatMoney(r.total)}</td>
                               </tr>
                             ))
