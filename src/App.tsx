@@ -864,7 +864,8 @@ export default function App() {
       const gelenTutarToplami = manimIncomingByCorrespondentCode.get(matchCode) ?? 0
       const fark = (Number(gelenTutarToplami) || 0) - (Number(r.toplam) || 0)
       const eslesti = Math.abs(fark) < 0.01
-      return { ...r, gelenTutarToplami, fark, eslesti }
+      const durum = eslesti ? 'Tam eşleşti' : fark < 0 ? 'Eksik ödeme' : 'Fazla ödeme'
+      return { ...r, gelenTutarToplami, fark, eslesti, durum }
     })
   }, [havaleVadeliByBayiRows, manimIncomingByCorrespondentCode])
 
@@ -1392,13 +1393,23 @@ export default function App() {
         return a.bayiKodu.localeCompare(b.bayiKodu, 'tr', { sensitivity: 'base' })
       })
 
+    const havaleEslemeRows = havaleVadeliRows.map((r) => {
+      const matchCode = normalizeMatchCode(r.bayiKodu)
+      const gelenTutarToplami = manimIncomingByCorrespondentCode.get(matchCode) ?? 0
+      const fark = (Number(gelenTutarToplami) || 0) - (Number(r.toplam) || 0)
+      const eslesti = Math.abs(fark) < 0.01
+      const durum = eslesti ? 'Tam eşleşti' : fark < 0 ? 'Eksik ödeme' : 'Fazla ödeme'
+      return { ...r, gelenTutarToplami, fark, eslesti, durum }
+    })
+    const havaleEslesmeyenRows = havaleEslemeRows.filter((r) => !r.eslesti)
+
     const havaleVadeliRowsHtml =
-      havaleVadeliRows.length === 0
-        ? `<tr><td colspan="5" class="empty">Kayıt yok</td></tr>`
-        : havaleVadeliRows
+      havaleEslesmeyenRows.length === 0
+        ? `<tr><td colspan="8" class="empty">Eşleşmeyen kayıt yok</td></tr>`
+        : havaleEslesmeyenRows
             .map(
               (r) =>
-                `<tr><td>${escapeHtml(r.bayiKodu)}</td><td>${escapeHtml(r.bayi)}</td><td class="num">${escapeHtml(money(r.havale))}</td><td class="num">${escapeHtml(money(r.vadeli))}</td><td class="num">${escapeHtml(money(r.toplam))}</td></tr>`,
+                `<tr><td>${escapeHtml(r.bayiKodu)}</td><td>${escapeHtml(r.bayi)}</td><td class="num">${escapeHtml(money(r.havale))}</td><td class="num">${escapeHtml(money(r.vadeli))}</td><td class="num">${escapeHtml(money(r.toplam))}</td><td class="num">${escapeHtml(money(r.gelenTutarToplami))}</td><td class="num">${escapeHtml(money(r.fark))}</td><td>${escapeHtml(r.durum)}</td></tr>`,
             )
             .join('')
 
@@ -1621,9 +1632,9 @@ export default function App() {
     </div>
 
     <div class="section">
-      <div class="section-title">Havale ve Vadeli Ödeme Havaleleri</div>
+      <div class="section-title">Bayi Havale Eşleme (Sadece Eşleşmeyenler)</div>
       <table>
-        <thead><tr><th>Bayi Kodu</th><th>Bayi</th><th class="num">Havale</th><th class="num">Vadeli Ödeme Havaleleri</th><th class="num">Toplam</th></tr></thead>
+        <thead><tr><th>Bayi Kodu</th><th>Bayi</th><th class="num">Havale</th><th class="num">Vadeli Ödeme Havaleleri</th><th class="num">Toplam</th><th class="num">Gelen Tutar Toplamı</th><th class="num">Fark</th><th>Durum</th></tr></thead>
         <tbody>${havaleVadeliRowsHtml}</tbody>
       </table>
     </div>
@@ -2706,7 +2717,7 @@ export default function App() {
                                 <td>{formatMoney(r.toplam)}</td>
                                 <td>{formatMoney(r.gelenTutarToplami)}</td>
                                 <td>{formatMoney(r.fark)}</td>
-                                <td>{r.eslesti ? 'Geldi' : 'Farklı'}</td>
+                                <td>{r.durum}</td>
                               </tr>
                             ))
                           )}
