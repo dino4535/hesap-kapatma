@@ -2839,6 +2839,8 @@ app.get('/api/manim/receipts', async (req, res) => {
     const includePreviousDay = includePreviousDayRaw === '1' || includePreviousDayRaw === 'true'
     const untilNowRaw = String(req.query.untilNow ?? '').trim().toLowerCase()
     const untilNow = untilNowRaw === '1' || untilNowRaw === 'true'
+    const limitRaw = Number(req.query.limit)
+    const limit = Number.isFinite(limitRaw) ? Math.min(5000, Math.max(1, Math.trunc(limitRaw))) : 200
 
     const pool = await getPool()
     await ensureSchema(pool)
@@ -2921,7 +2923,7 @@ app.get('/api/manim/receipts', async (req, res) => {
 
     res.json({
       ok: true,
-      receipts: list.slice(0, 200).map((x) => ({
+      receipts: list.slice(0, limit).map((x) => ({
         receiptNo: x.receiptNo,
         receiptDate: x.receiptDate,
         amount: x.amount,

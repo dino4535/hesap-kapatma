@@ -469,6 +469,7 @@ export async function fetchManimReceipts(args: {
   includePreviousDay?: boolean
   allBanks?: boolean
   untilNow?: boolean
+  limit?: number
 }): Promise<{ ok: boolean; receipts: ManimReceiptRow[]; message?: string }> {
   const qs = new URLSearchParams()
   if (args.bankName) qs.set('bankName', args.bankName)
@@ -476,6 +477,7 @@ export async function fetchManimReceipts(args: {
   if (args.includePreviousDay) qs.set('includePreviousDay', '1')
   if (args.allBanks) qs.set('allBanks', '1')
   if (args.untilNow) qs.set('untilNow', '1')
+  if (typeof args.limit === 'number' && Number.isFinite(args.limit) && args.limit > 0) qs.set('limit', String(Math.floor(args.limit)))
   const res = await fetch(`/api/manim/receipts?${qs.toString()}`, { headers: { 'x-user': args.userName } })
   if (!res.ok) {
     const text = await res.text().catch(() => '')

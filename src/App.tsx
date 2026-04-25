@@ -141,6 +141,15 @@ function normalizeMatchCode(value?: string) {
     .replace(/[^A-Z0-9]/g, '')
 }
 
+function isIncomingDirection(value?: string) {
+  const raw = String(value ?? '').trim().toLocaleLowerCase('tr-TR')
+  if (!raw) return true
+  const normalized = raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  if (['in', 'incoming', 'giris', 'gelen', 'deposit', 'credit', 'alacak'].includes(normalized)) return true
+  if (['out', 'outgoing', 'cikis', 'giden', 'withdraw', 'debit', 'borc'].includes(normalized)) return false
+  return true
+}
+
 const BANKS = ['Ziraat', 'İş Bankası', 'Garanti', 'Yapı Kredi', 'Akbank', 'VakıfBank', 'Halkbank', 'QNB', 'DenizBank'] as const
 
 function LoginPage(props: { onLogin: (user: SessionUser) => void }) {
@@ -840,8 +849,7 @@ export default function App() {
   const manimIncomingByCorrespondentCode = useMemo(() => {
     const totals = new Map<string, number>()
     for (const r of manimBayiMatchReceipts) {
-      const direction = String(r.direction ?? '').trim().toLocaleLowerCase('tr-TR')
-      if (direction && direction !== 'in') continue
+      if (!isIncomingDirection(r.direction)) continue
       const code = normalizeMatchCode(r.correspondentCode)
       if (!code) continue
       totals.set(code, (totals.get(code) ?? 0) + (Number(r.amount) || 0))
@@ -1199,7 +1207,7 @@ export default function App() {
       return
     }
     const handle = window.setTimeout(() => {
-      fetchManimReceipts({ userName: currentUser.userName, date, includePreviousDay: true, allBanks: true, untilNow: true })
+      fetchManimReceipts({ userName: currentUser.userName, date, includePreviousDay: true, allBanks: true, untilNow: true, limit: 5000 })
         .then((r) => {
           if (!r.ok) {
             setStatus({ type: 'error', message: r.message || 'Bayi eşleme için Manim hareketleri alınamadı' })
