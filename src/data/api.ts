@@ -464,14 +464,18 @@ export interface ManimReceiptRow {
 
 export async function fetchManimReceipts(args: {
   userName: string
-  bankName: string
+  bankName?: string
   date: string
   includePreviousDay?: boolean
+  allBanks?: boolean
+  untilNow?: boolean
 }): Promise<{ ok: boolean; receipts: ManimReceiptRow[]; message?: string }> {
   const qs = new URLSearchParams()
-  qs.set('bankName', args.bankName)
+  if (args.bankName) qs.set('bankName', args.bankName)
   qs.set('date', args.date)
   if (args.includePreviousDay) qs.set('includePreviousDay', '1')
+  if (args.allBanks) qs.set('allBanks', '1')
+  if (args.untilNow) qs.set('untilNow', '1')
   const res = await fetch(`/api/manim/receipts?${qs.toString()}`, { headers: { 'x-user': args.userName } })
   if (!res.ok) {
     const text = await res.text().catch(() => '')

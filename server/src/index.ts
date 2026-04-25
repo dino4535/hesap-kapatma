@@ -2824,17 +2824,21 @@ app.get('/api/manim/receipts', async (req, res) => {
     }
 
     const bankName = String(req.query.bankName ?? '').trim()
+    const allBanksRaw = String(req.query.allBanks ?? '').trim().toLowerCase()
+    const allBanks = allBanksRaw === '1' || allBanksRaw === 'true'
     const parsedDate = parseQueryDate(req.query.date)
     if (!parsedDate.ok || !parsedDate.date) {
       res.status(400).send(parsedDate.ok ? 'Tarih zorunlu' : parsedDate.error)
       return
     }
-    if (!bankName) {
-      res.status(400).send('bankName, date zorunlu')
+    if (!allBanks && !bankName) {
+      res.status(400).send('date zorunlu, bankName veya allBanks=1 gönderin')
       return
     }
     const includePreviousDayRaw = String(req.query.includePreviousDay ?? '').trim().toLowerCase()
     const includePreviousDay = includePreviousDayRaw === '1' || includePreviousDayRaw === 'true'
+    const untilNowRaw = String(req.query.untilNow ?? '').trim().toLowerCase()
+    const untilNow = untilNowRaw === '1' || untilNowRaw === 'true'
 
     const pool = await getPool()
     await ensureSchema(pool)
@@ -2844,17 +2848,19 @@ app.get('/api/manim/receipts', async (req, res) => {
       return
     }
 
-    const matchers = manimBankMatchers(bankName)
-    if (matchers.length === 0) {
+    const matchers = allBanks ? [] : manimBankMatchers(bankName)
+    if (!allBanks && matchers.length === 0) {
       res.json({ ok: true, receipts: [] })
       return
     }
 
     const accounts = hasManimRemoteConfig() ? await loadManimAccountsRemote() : await loadManimAccounts()
-    const matchedAccounts = accounts.filter((a) => {
-      const lab = normalizeManimMatch(a.label)
-      return matchers.some((m) => lab.includes(m))
-    })
+    const matchedAccounts = allBanks
+      ? accounts
+      : accounts.filter((a) => {
+          const lab = normalizeManimMatch(a.label)
+          return matchers.some((m) => lab.includes(m))
+        })
 
     if (matchedAccounts.length === 0) {
       res.json({ ok: true, receipts: [] })
@@ -2877,6 +2883,14 @@ app.get('/api/manim/receipts', async (req, res) => {
       startIso = range.startIso
       endIso = range.endIso
     }
+    if (untilNow) {
+      const candidateEndMs = new Date(endIso).getTime()
+      if (Number.isFinite(candidateEndMs)) {
+        endIso = new Date(Math.min(candidateEndMs, Date.now())).toISOString()
+      }
+    }
+    const startMs = new Date(startIso).getTime()
+    const endMs = new Date(endIso).getTime()
 
     const dedupe = new Map<string, ManimReceiptCandidate & { timeScore: number }>()
 
@@ -2887,13 +2901,15 @@ app.get('/api/manim/receipts', async (req, res) => {
       for (const r of receipts) {
         const dt = new Date(r.receiptDate)
         if (Number.isNaN(dt.getTime())) continue
+        const ts = dt.getTime()
+        if (Number.isFinite(startMs) && Number.isFinite(endMs) && (ts < startMs || ts > endMs)) continue
         const day = manimIsoDay(dt)
         if (!targets.has(day)) continue
         const row: ManimReceiptCandidate & { timeScore: number } = {
           ...r,
           bankAccountId: r.bankAccountId ?? acc.id,
           bankAccountLabel: r.bankAccountLabel ?? acc.label,
-          timeScore: dt.getTime(),
+          timeScore: ts,
         }
         const key = `${row.bankAccountId ?? ''}|${row.receiptNo}|${row.receiptDate}|${row.amount}`
         if (!dedupe.has(key)) dedupe.set(key, row)

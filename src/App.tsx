@@ -853,7 +853,9 @@ export default function App() {
     return havaleVadeliByBayiRows.map((r) => {
       const matchCode = normalizeMatchCode(r.bayiKodu)
       const gelenTutarToplami = manimIncomingByCorrespondentCode.get(matchCode) ?? 0
-      return { ...r, gelenTutarToplami }
+      const fark = (Number(gelenTutarToplami) || 0) - (Number(r.toplam) || 0)
+      const eslesti = Math.abs(fark) < 0.01
+      return { ...r, gelenTutarToplami, fark, eslesti }
     })
   }, [havaleVadeliByBayiRows, manimIncomingByCorrespondentCode])
 
@@ -1191,18 +1193,13 @@ export default function App() {
 
   useEffect(() => {
     if (!currentUser) return
-    if (!bankEnabled) {
-      setManimBayiMatchReceipts([])
-      return
-    }
-    const bank = bankName.trim()
     const date = selectedDataset.date
-    if (!bank || !date) {
+    if (!date) {
       setManimBayiMatchReceipts([])
       return
     }
     const handle = window.setTimeout(() => {
-      fetchManimReceipts({ userName: currentUser.userName, bankName: bank, date, includePreviousDay: true })
+      fetchManimReceipts({ userName: currentUser.userName, date, includePreviousDay: true, allBanks: true, untilNow: true })
         .then((r) => {
           if (!r.ok) {
             setStatus({ type: 'error', message: r.message || 'Bayi eşleme için Manim hareketleri alınamadı' })
@@ -1216,7 +1213,7 @@ export default function App() {
         })
     }, 350)
     return () => window.clearTimeout(handle)
-  }, [currentUser, bankEnabled, bankName, selectedDataset.date])
+  }, [currentUser, selectedDataset.date])
 
   const filteredManimReceipts = useMemo(() => {
     const q = manimReceiptSearch.trim().toLocaleLowerCase('tr-TR')
@@ -2651,42 +2648,42 @@ export default function App() {
                       </div>
                     </div>
 
-                    {!bankEnabled || !bankName.trim() ? (
-                      <div className="upload-status info">Bayi eşleme için Ödeme adımında bankayı seçin.</div>
-                    ) : (
-                      <table className="mini-table">
-                        <thead>
+                    <table className="mini-table">
+                      <thead>
+                        <tr>
+                          <th>Bayi Kodu</th>
+                          <th>Bayi Adı</th>
+                          <th>Havale Faturaları</th>
+                          <th>Vadeli Tahsilat Havaleleri</th>
+                          <th>Toplam</th>
+                          <th>Gelen Tutar Toplamı</th>
+                          <th>Fark</th>
+                          <th>Durum</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {bayiHavaleEslemeRows.length === 0 ? (
                           <tr>
-                            <th>Bayi Kodu</th>
-                            <th>Bayi Adı</th>
-                            <th>Havale Faturaları</th>
-                            <th>Vadeli Tahsilat Havaleleri</th>
-                            <th>Toplam</th>
-                            <th>Gelen Tutar Toplamı</th>
+                            <td colSpan={8} style={{ textAlign: 'center', color: '#718096' }}>
+                              Kayıt yok
+                            </td>
                           </tr>
-                        </thead>
-                        <tbody>
-                          {bayiHavaleEslemeRows.length === 0 ? (
-                            <tr>
-                              <td colSpan={6} style={{ textAlign: 'center', color: '#718096' }}>
-                                Kayıt yok
-                              </td>
+                        ) : (
+                          bayiHavaleEslemeRows.map((r) => (
+                            <tr key={`${r.bayiKodu}|${r.bayi}`}>
+                              <td>{r.bayiKodu}</td>
+                              <td>{r.bayi}</td>
+                              <td>{formatMoney(r.havale)}</td>
+                              <td>{formatMoney(r.vadeli)}</td>
+                              <td>{formatMoney(r.toplam)}</td>
+                              <td>{formatMoney(r.gelenTutarToplami)}</td>
+                              <td>{formatMoney(r.fark)}</td>
+                              <td>{r.eslesti ? 'Geldi' : 'Farklı'}</td>
                             </tr>
-                          ) : (
-                            bayiHavaleEslemeRows.map((r) => (
-                              <tr key={`${r.bayiKodu}|${r.bayi}`}>
-                                <td>{r.bayiKodu}</td>
-                                <td>{r.bayi}</td>
-                                <td>{formatMoney(r.havale)}</td>
-                                <td>{formatMoney(r.vadeli)}</td>
-                                <td>{formatMoney(r.toplam)}</td>
-                                <td>{formatMoney(r.gelenTutarToplami)}</td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    )}
+                          ))
+                        )}
+                      </tbody>
+                    </table>
                   </div>
                 ) : (
                   <div className="mutabakat">
