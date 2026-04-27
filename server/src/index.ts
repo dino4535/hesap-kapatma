@@ -902,6 +902,45 @@ BEGIN
   ALTER TABLE dbo.Users ADD IsAdmin BIT NOT NULL CONSTRAINT DF_Users_IsAdmin DEFAULT (0);
 END
 
+IF COL_LENGTH('dbo.Users', 'RoleCode') IS NULL
+BEGIN
+  ALTER TABLE dbo.Users ADD RoleCode NVARCHAR(32) NULL;
+END
+
+UPDATE dbo.Users
+SET RoleCode = CASE WHEN IsAdmin = 1 THEN 'ADMIN' ELSE 'SHEF' END
+WHERE RoleCode IS NULL OR LTRIM(RTRIM(RoleCode)) = '';
+
+IF OBJECT_ID('dbo.UserScreenPermissions', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.UserScreenPermissions (
+    UserName NVARCHAR(64) NOT NULL PRIMARY KEY,
+    CanMain BIT NOT NULL CONSTRAINT DF_UserScreenPermissions_CanMain DEFAULT (1),
+    CanMutabakat BIT NOT NULL CONSTRAINT DF_UserScreenPermissions_CanMutabakat DEFAULT (1),
+    CanBayiHavaleMatch BIT NOT NULL CONSTRAINT DF_UserScreenPermissions_CanBayiHavaleMatch DEFAULT (1),
+    CanPositionRepresentative BIT NOT NULL CONSTRAINT DF_UserScreenPermissions_CanPositionRepresentative DEFAULT (1),
+    CanUserAdmin BIT NOT NULL CONSTRAINT DF_UserScreenPermissions_CanUserAdmin DEFAULT (0),
+    UpdatedBy NVARCHAR(64) NULL,
+    UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_UserScreenPermissions_UpdatedAt DEFAULT (SYSUTCDATETIME())
+  );
+END
+
+MERGE dbo.UserScreenPermissions WITH (HOLDLOCK) AS t
+USING (
+  SELECT
+    UserName,
+    CASE WHEN RoleCode = 'ADMIN' THEN CAST(1 AS BIT) ELSE CAST(1 AS BIT) END AS CanMain,
+    CASE WHEN RoleCode = 'ADMIN' THEN CAST(1 AS BIT) ELSE CAST(1 AS BIT) END AS CanMutabakat,
+    CASE WHEN RoleCode = 'ADMIN' THEN CAST(1 AS BIT) ELSE CAST(1 AS BIT) END AS CanBayiHavaleMatch,
+    CASE WHEN RoleCode = 'ADMIN' THEN CAST(1 AS BIT) ELSE CAST(1 AS BIT) END AS CanPositionRepresentative,
+    CASE WHEN RoleCode = 'ADMIN' THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS CanUserAdmin
+  FROM dbo.Users
+) AS s
+ON t.UserName = s.UserName
+WHEN NOT MATCHED BY TARGET THEN
+  INSERT (UserName, CanMain, CanMutabakat, CanBayiHavaleMatch, CanPositionRepresentative, CanUserAdmin)
+  VALUES (s.UserName, s.CanMain, s.CanMutabakat, s.CanBayiHavaleMatch, s.CanPositionRepresentative, s.CanUserAdmin);
+
 IF OBJECT_ID('dbo.ImportFiles', 'U') IS NULL
 BEGIN
   CREATE TABLE dbo.ImportFiles (
@@ -1242,23 +1281,144 @@ function hashPassword(password: string, salt: Buffer) {
   return crypto.pbkdf2Sync(password, salt, 120_000, 32, 'sha256')
 }
 
+type RoleCode = 'ADMIN' | 'PLAN_MUHASEBE' | 'SHEF'
+type ScreenPermissions = {
+  canMain: boolean
+  canMutabakat: boolean
+  canBayiHavaleMatch: boolean
+  canPositionRepresentative: boolean
+  canUserAdmin: boolean
+}
+
+function normalizeRoleCode(value: string): RoleCode {
+  const v = value.trim().toUpperCase()
+  if (v === 'ADMIN') return 'ADMIN'
+  if (v === 'PLAN_MUHASEBE') return 'PLAN_MUHASEBE'
+  return 'SHEF'
+}
+
+function defaultPermissionsForRole(roleCode: RoleCode): ScreenPermissions {
+  if (roleCode === 'ADMIN') {
+    return { canMain: true, canMutabakat: true, canBayiHavaleMatch: true, canPositionRepresentative: true, canUserAdmin: true }
+  }
+  return { canMain: true, canMutabakat: true, canBayiHavaleMatch: true, canPositionRepresentative: true, canUserAdmin: false }
+}
+
+function normalizePermissions(input: unknown, fallback: ScreenPermissions): ScreenPermissions {
+  const obj = (input && typeof input === 'object' ? input : null) as Record<string, unknown> | null
+  if (!obj) return fallback
+  return {
+    canMain: typeof obj.canMain === 'boolean' ? obj.canMain : fallback.canMain,
+    canMutabakat: typeof obj.canMutabakat === 'boolean' ? obj.canMutabakat : fallback.canMutabakat,
+    canBayiHavaleMatch: typeof obj.canBayiHavaleMatch === 'boolean' ? obj.canBayiHavaleMatch : fallback.canBayiHavaleMatch,
+    canPositionRepresentative: typeof obj.canPositionRepresentative === 'boolean' ? obj.canPositionRepresentative : fallback.canPositionRepresentative,
+    canUserAdmin: typeof obj.canUserAdmin === 'boolean' ? obj.canUserAdmin : fallback.canUserAdmin,
+  }
+}
+
+async function upsertUserPermissions(
+  pool: mssql.ConnectionPool,
+  userName: string,
+  permissions: ScreenPermissions,
+  actorUserName: string | null,
+) {
+  await pool
+    .request()
+    .input('UserName', mssql.NVarChar(64), userName)
+    .input('CanMain', mssql.Bit, permissions.canMain)
+    .input('CanMutabakat', mssql.Bit, permissions.canMutabakat)
+    .input('CanBayiHavaleMatch', mssql.Bit, permissions.canBayiHavaleMatch)
+    .input('CanPositionRepresentative', mssql.Bit, permissions.canPositionRepresentative)
+    .input('CanUserAdmin', mssql.Bit, permissions.canUserAdmin)
+    .input('UpdatedBy', mssql.NVarChar(64), actorUserName)
+    .query(`
+MERGE dbo.UserScreenPermissions WITH (HOLDLOCK) AS t
+USING (SELECT
+  @UserName AS UserName,
+  @CanMain AS CanMain,
+  @CanMutabakat AS CanMutabakat,
+  @CanBayiHavaleMatch AS CanBayiHavaleMatch,
+  @CanPositionRepresentative AS CanPositionRepresentative,
+  @CanUserAdmin AS CanUserAdmin,
+  @UpdatedBy AS UpdatedBy
+) AS s
+ON t.UserName = s.UserName
+WHEN MATCHED THEN
+  UPDATE SET
+    CanMain = s.CanMain,
+    CanMutabakat = s.CanMutabakat,
+    CanBayiHavaleMatch = s.CanBayiHavaleMatch,
+    CanPositionRepresentative = s.CanPositionRepresentative,
+    CanUserAdmin = s.CanUserAdmin,
+    UpdatedBy = s.UpdatedBy,
+    UpdatedAt = SYSUTCDATETIME()
+WHEN NOT MATCHED THEN
+  INSERT (UserName, CanMain, CanMutabakat, CanBayiHavaleMatch, CanPositionRepresentative, CanUserAdmin, UpdatedBy)
+  VALUES (s.UserName, s.CanMain, s.CanMutabakat, s.CanBayiHavaleMatch, s.CanPositionRepresentative, s.CanUserAdmin, s.UpdatedBy);
+`)
+}
+
 async function verifyUser(pool: mssql.ConnectionPool, userName: string, password: string) {
   const r = await pool
     .request()
     .input('UserName', mssql.NVarChar(64), userName)
-    .query('SELECT TOP 1 UserName, PasswordSalt, PasswordHash, IsActive, IsAdmin FROM dbo.Users WHERE UserName = @UserName')
+    .query(`
+SELECT TOP 1
+  u.UserName,
+  u.PasswordSalt,
+  u.PasswordHash,
+  u.IsActive,
+  u.IsAdmin,
+  u.RoleCode,
+  p.CanMain,
+  p.CanMutabakat,
+  p.CanBayiHavaleMatch,
+  p.CanPositionRepresentative,
+  p.CanUserAdmin
+FROM dbo.Users u
+LEFT JOIN dbo.UserScreenPermissions p ON p.UserName = u.UserName
+WHERE u.UserName = @UserName
+`)
 
   const row = r.recordset?.[0] as
-    | { UserName: string; PasswordSalt: Buffer; PasswordHash: Buffer; IsActive: boolean; IsAdmin: boolean }
+    | {
+        UserName: string
+        PasswordSalt: Buffer
+        PasswordHash: Buffer
+        IsActive: boolean
+        IsAdmin: boolean
+        RoleCode: string | null
+        CanMain: boolean | null
+        CanMutabakat: boolean | null
+        CanBayiHavaleMatch: boolean | null
+        CanPositionRepresentative: boolean | null
+        CanUserAdmin: boolean | null
+      }
     | undefined
 
   if (!row || !row.IsActive) return null
   const computed = hashPassword(password, row.PasswordSalt)
   if (!crypto.timingSafeEqual(computed, row.PasswordHash)) return null
-  return { userName: row.UserName, isAdmin: Boolean(row.IsAdmin) }
+  const roleCode = normalizeRoleCode(String(row.RoleCode ?? (row.IsAdmin ? 'ADMIN' : 'SHEF')))
+  const defaults = defaultPermissionsForRole(roleCode)
+  const permissions = {
+    canMain: row.CanMain == null ? defaults.canMain : Boolean(row.CanMain),
+    canMutabakat: row.CanMutabakat == null ? defaults.canMutabakat : Boolean(row.CanMutabakat),
+    canBayiHavaleMatch: row.CanBayiHavaleMatch == null ? defaults.canBayiHavaleMatch : Boolean(row.CanBayiHavaleMatch),
+    canPositionRepresentative: row.CanPositionRepresentative == null ? defaults.canPositionRepresentative : Boolean(row.CanPositionRepresentative),
+    canUserAdmin: row.CanUserAdmin == null ? defaults.canUserAdmin : Boolean(row.CanUserAdmin),
+  }
+  return { userName: row.UserName, roleCode, isAdmin: roleCode === 'ADMIN', permissions }
 }
 
-async function createUser(pool: mssql.ConnectionPool, userName: string, password: string, isAdmin: boolean) {
+async function createUser(
+  pool: mssql.ConnectionPool,
+  userName: string,
+  password: string,
+  roleCode: RoleCode,
+  permissions: ScreenPermissions,
+  actorUserName: string | null,
+) {
   const salt = crypto.randomBytes(16)
   const hash = hashPassword(password, salt)
   await pool
@@ -1266,8 +1426,10 @@ async function createUser(pool: mssql.ConnectionPool, userName: string, password
     .input('UserName', mssql.NVarChar(64), userName)
     .input('PasswordSalt', mssql.VarBinary(16), salt)
     .input('PasswordHash', mssql.VarBinary(32), hash)
-    .input('IsAdmin', mssql.Bit, isAdmin)
-    .query('INSERT INTO dbo.Users (UserName, PasswordSalt, PasswordHash, IsAdmin) VALUES (@UserName, @PasswordSalt, @PasswordHash, @IsAdmin)')
+    .input('IsAdmin', mssql.Bit, roleCode === 'ADMIN')
+    .input('RoleCode', mssql.NVarChar(32), roleCode)
+    .query('INSERT INTO dbo.Users (UserName, PasswordSalt, PasswordHash, IsAdmin, RoleCode) VALUES (@UserName, @PasswordSalt, @PasswordHash, @IsAdmin, @RoleCode)')
+  await upsertUserPermissions(pool, userName, permissions, actorUserName)
 }
 
 async function ensureDist2kPosition(pool: mssql.ConnectionPool, state: ImportRuntimeState, positionCode: string, positionDescription: string) {
@@ -1838,9 +2000,10 @@ async function requireActiveUser(pool: mssql.ConnectionPool, userName: string) {
   const r = await pool
     .request()
     .input('UserName', mssql.NVarChar(64), userName)
-    .query('SELECT TOP 1 IsActive, IsAdmin FROM dbo.Users WHERE UserName = @UserName')
-  const row = r.recordset?.[0] as { IsActive: boolean; IsAdmin: boolean } | undefined
-  return { active: !!row?.IsActive, isAdmin: Boolean(row?.IsAdmin) }
+    .query('SELECT TOP 1 IsActive, IsAdmin, RoleCode FROM dbo.Users WHERE UserName = @UserName')
+  const row = r.recordset?.[0] as { IsActive: boolean; IsAdmin: boolean; RoleCode: string | null } | undefined
+  const roleCode = normalizeRoleCode(String(row?.RoleCode ?? (row?.IsAdmin ? 'ADMIN' : 'SHEF')))
+  return { active: !!row?.IsActive, isAdmin: roleCode === 'ADMIN', roleCode }
 }
 
 async function requireAdminUser(pool: mssql.ConnectionPool, userName: string) {
@@ -1864,7 +2027,7 @@ app.post('/api/auth/login', async (req, res) => {
       res.status(401).send('Hatalı kullanıcı adı/şifre')
       return
     }
-    res.json({ ok: true, userName: info.userName, isAdmin: info.isAdmin })
+    res.json({ ok: true, userName: info.userName, isAdmin: info.isAdmin, roleCode: info.roleCode, permissions: info.permissions })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
     res.status(500).send(msg)
@@ -1879,7 +2042,8 @@ app.post('/api/users', async (req, res) => {
 
     const userName = String(req.body?.userName ?? '').trim()
     const password = String(req.body?.password ?? '')
-    const isAdmin = Boolean(req.body?.isAdmin)
+    const roleCode = normalizeRoleCode(String(req.body?.roleCode ?? (Boolean(req.body?.isAdmin) ? 'ADMIN' : 'SHEF')))
+    const permissions = normalizePermissions(req.body?.permissions, defaultPermissionsForRole(roleCode))
     if (!userName || !password) {
       res.status(400).send('Eksik alan')
       return
@@ -1900,7 +2064,7 @@ app.post('/api/users', async (req, res) => {
       }
     }
 
-    await createUser(pool, userName, password, isAdmin)
+    await createUser(pool, userName, password, roleCode, permissions, actor || null)
     res.json({ ok: true })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
@@ -1930,17 +2094,89 @@ app.get('/api/users', async (req, res) => {
     }
 
     const r = await pool.request().query(`
-SELECT UserName, IsAdmin, IsActive, CreatedAt
-FROM dbo.Users
-ORDER BY UserName
+SELECT
+  u.UserName,
+  u.IsAdmin,
+  u.IsActive,
+  u.RoleCode,
+  u.CreatedAt,
+  p.CanMain,
+  p.CanMutabakat,
+  p.CanBayiHavaleMatch,
+  p.CanPositionRepresentative,
+  p.CanUserAdmin
+FROM dbo.Users u
+LEFT JOIN dbo.UserScreenPermissions p ON p.UserName = u.UserName
+ORDER BY u.UserName
 `)
-    const users = (r.recordset ?? []).map((row) => ({
-      userName: String(row.UserName ?? ''),
-      isAdmin: Boolean(row.IsAdmin),
-      isActive: Boolean(row.IsActive),
-      createdAt: row.CreatedAt ? new Date(row.CreatedAt).toISOString() : undefined,
-    }))
+    const users = (r.recordset ?? []).map((row) => {
+      const roleCode = normalizeRoleCode(String(row.RoleCode ?? (row.IsAdmin ? 'ADMIN' : 'SHEF')))
+      const defaults = defaultPermissionsForRole(roleCode)
+      return {
+        userName: String(row.UserName ?? ''),
+        roleCode,
+        isAdmin: roleCode === 'ADMIN',
+        isActive: Boolean(row.IsActive),
+        createdAt: row.CreatedAt ? new Date(row.CreatedAt).toISOString() : undefined,
+        permissions: {
+          canMain: row.CanMain == null ? defaults.canMain : Boolean(row.CanMain),
+          canMutabakat: row.CanMutabakat == null ? defaults.canMutabakat : Boolean(row.CanMutabakat),
+          canBayiHavaleMatch: row.CanBayiHavaleMatch == null ? defaults.canBayiHavaleMatch : Boolean(row.CanBayiHavaleMatch),
+          canPositionRepresentative: row.CanPositionRepresentative == null ? defaults.canPositionRepresentative : Boolean(row.CanPositionRepresentative),
+          canUserAdmin: row.CanUserAdmin == null ? defaults.canUserAdmin : Boolean(row.CanUserAdmin),
+        },
+      }
+    })
     res.json({ ok: true, users })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
+app.put('/api/users/:userName', async (req, res) => {
+  try {
+    const actor = String(req.header('x-user') ?? '').trim()
+    if (!actor) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+    const targetUserName = String(req.params.userName ?? '').trim()
+    if (!targetUserName) {
+      res.status(400).send('Eksik alan')
+      return
+    }
+
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const ok = await requireAdminUser(pool, actor)
+    if (!ok) {
+      res.status(403).send('Yetkisiz')
+      return
+    }
+
+    const roleCode = normalizeRoleCode(String(req.body?.roleCode ?? 'SHEF'))
+    const permissions = normalizePermissions(req.body?.permissions, defaultPermissionsForRole(roleCode))
+    const isActiveRaw = req.body?.isActive
+    const isActive = typeof isActiveRaw === 'boolean' ? isActiveRaw : true
+
+    await pool
+      .request()
+      .input('UserName', mssql.NVarChar(64), targetUserName)
+      .input('IsAdmin', mssql.Bit, roleCode === 'ADMIN')
+      .input('RoleCode', mssql.NVarChar(32), roleCode)
+      .input('IsActive', mssql.Bit, isActive)
+      .query(`
+UPDATE dbo.Users
+SET
+  IsAdmin = @IsAdmin,
+  RoleCode = @RoleCode,
+  IsActive = @IsActive
+WHERE UserName = @UserName
+`)
+
+    await upsertUserPermissions(pool, targetUserName, permissions, actor)
+    res.json({ ok: true })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
     res.status(500).send(msg)

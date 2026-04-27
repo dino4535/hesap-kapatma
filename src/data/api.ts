@@ -348,10 +348,21 @@ export async function deletePositionRepresentative(args: {
   return (await res.json()) as { ok: boolean }
 }
 
+export type RoleCode = 'ADMIN' | 'PLAN_MUHASEBE' | 'SHEF'
+export interface ScreenPermissions {
+  canMain: boolean
+  canMutabakat: boolean
+  canBayiHavaleMatch: boolean
+  canPositionRepresentative: boolean
+  canUserAdmin: boolean
+}
+
 export interface UserRow {
   userName: string
+  roleCode: RoleCode
   isAdmin: boolean
   isActive: boolean
+  permissions: ScreenPermissions
   createdAt?: string
 }
 
@@ -372,12 +383,32 @@ export async function createUserAsAdmin(args: {
   userName: string
   newUserName: string
   password: string
-  isAdmin: boolean
+  roleCode: RoleCode
+  permissions: ScreenPermissions
 }): Promise<{ ok: boolean; message?: string }> {
   const res = await fetch('/api/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-user': args.userName },
-    body: JSON.stringify({ userName: args.newUserName, password: args.password, isAdmin: args.isAdmin }),
+    body: JSON.stringify({ userName: args.newUserName, password: args.password, roleCode: args.roleCode, permissions: args.permissions }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean }
+}
+
+export async function updateUserAsAdmin(args: {
+  userName: string
+  targetUserName: string
+  roleCode: RoleCode
+  isActive: boolean
+  permissions: ScreenPermissions
+}): Promise<{ ok: boolean; message?: string }> {
+  const res = await fetch(`/api/users/${encodeURIComponent(args.targetUserName)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'x-user': args.userName },
+    body: JSON.stringify({ roleCode: args.roleCode, isActive: args.isActive, permissions: args.permissions }),
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')

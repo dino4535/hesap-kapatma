@@ -9,19 +9,57 @@ const PAYMENT_ALLOC_KEY = 'hesapKapatmaPaymentAllocations'
 
 const userKey = (base: string, userId: string) => `${base}:${userId}`
 
-export type SessionUser = { userName: string; isAdmin: boolean }
+export type SessionUser = {
+  userName: string
+  isAdmin: boolean
+  roleCode: 'ADMIN' | 'PLAN_MUHASEBE' | 'SHEF'
+  permissions: {
+    canMain: boolean
+    canMutabakat: boolean
+    canBayiHavaleMatch: boolean
+    canPositionRepresentative: boolean
+    canUserAdmin: boolean
+  }
+}
 
 export function loadSessionUser(): SessionUser | null {
   try {
     const v = localStorage.getItem(SESSION_KEY)
     if (!v || !v.trim()) return null
     try {
-      const parsed = JSON.parse(v) as { userName?: unknown; isAdmin?: unknown }
+      const parsed = JSON.parse(v) as {
+        userName?: unknown
+        isAdmin?: unknown
+        roleCode?: unknown
+        permissions?: unknown
+      }
       const userName = typeof parsed?.userName === 'string' ? parsed.userName.trim() : ''
       if (!userName) return null
-      return { userName, isAdmin: Boolean(parsed.isAdmin) }
+      const roleCodeRaw = typeof parsed?.roleCode === 'string' ? parsed.roleCode.trim().toUpperCase() : ''
+      const roleCode: SessionUser['roleCode'] = roleCodeRaw === 'ADMIN' || roleCodeRaw === 'PLAN_MUHASEBE' ? roleCodeRaw : 'SHEF'
+      const fallbackPermissions =
+        roleCode === 'ADMIN'
+          ? { canMain: true, canMutabakat: true, canBayiHavaleMatch: true, canPositionRepresentative: true, canUserAdmin: true }
+          : { canMain: true, canMutabakat: true, canBayiHavaleMatch: true, canPositionRepresentative: true, canUserAdmin: false }
+      const p = (parsed.permissions && typeof parsed.permissions === 'object' ? parsed.permissions : null) as
+        | Partial<SessionUser['permissions']>
+        | null
+      const permissions: SessionUser['permissions'] = {
+        canMain: typeof p?.canMain === 'boolean' ? p.canMain : fallbackPermissions.canMain,
+        canMutabakat: typeof p?.canMutabakat === 'boolean' ? p.canMutabakat : fallbackPermissions.canMutabakat,
+        canBayiHavaleMatch: typeof p?.canBayiHavaleMatch === 'boolean' ? p.canBayiHavaleMatch : fallbackPermissions.canBayiHavaleMatch,
+        canPositionRepresentative:
+          typeof p?.canPositionRepresentative === 'boolean' ? p.canPositionRepresentative : fallbackPermissions.canPositionRepresentative,
+        canUserAdmin: typeof p?.canUserAdmin === 'boolean' ? p.canUserAdmin : roleCode === 'ADMIN',
+      }
+      return { userName, isAdmin: roleCode === 'ADMIN' || Boolean(parsed.isAdmin), roleCode, permissions }
     } catch {
-      return { userName: v.trim(), isAdmin: false }
+      return {
+        userName: v.trim(),
+        isAdmin: false,
+        roleCode: 'SHEF',
+        permissions: { canMain: true, canMutabakat: true, canBayiHavaleMatch: true, canPositionRepresentative: true, canUserAdmin: false },
+      }
     }
   } catch {
     return null

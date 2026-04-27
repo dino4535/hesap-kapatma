@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import {
   completeMutabakat,
   createUserAsAdmin,
+  updateUserAsAdmin,
   deleteDataByDateDepot,
   deleteDataByImportFile,
   findManimDekont,
@@ -28,6 +29,8 @@ import {
   type ImportResultFile,
   type PositionRow,
   type PositionRepresentativeRow,
+  type RoleCode,
+  type ScreenPermissions,
   type UserRow,
 } from './data/api'
 import { clearSessionUser, loadSessionUser, saveSessionUser, type SessionUser } from './data/local'
@@ -152,6 +155,19 @@ function isIncomingDirection(value?: string) {
 
 const BANKS = ['Ziraat', 'İş Bankası', 'Garanti', 'Yapı Kredi', 'Akbank', 'VakıfBank', 'Halkbank', 'QNB', 'DenizBank'] as const
 
+function roleLabel(roleCode: RoleCode) {
+  if (roleCode === 'ADMIN') return 'Admin'
+  if (roleCode === 'PLAN_MUHASEBE') return 'Planlama/Muhasebe'
+  return 'Şef'
+}
+
+function defaultPermissionsForRole(roleCode: RoleCode): ScreenPermissions {
+  if (roleCode === 'ADMIN') {
+    return { canMain: true, canMutabakat: true, canBayiHavaleMatch: true, canPositionRepresentative: true, canUserAdmin: true }
+  }
+  return { canMain: true, canMutabakat: true, canBayiHavaleMatch: true, canPositionRepresentative: true, canUserAdmin: false }
+}
+
 function LoginPage(props: { onLogin: (user: SessionUser) => void }) {
   const [userId, setUserId] = useState('')
   const [password, setPassword] = useState('')
@@ -185,9 +201,30 @@ function LoginPage(props: { onLogin: (user: SessionUser) => void }) {
                   const text = await res.text().catch(() => '')
                   throw new Error(text || `HTTP ${res.status}`)
                 }
-                const json = (await res.json()) as { ok: boolean; userName: string; isAdmin?: boolean }
+                const json = (await res.json()) as {
+                  ok: boolean
+                  userName: string
+                  isAdmin?: boolean
+                  roleCode?: RoleCode
+                  permissions?: ScreenPermissions
+                }
                 if (!json.ok) throw new Error('Giriş başarısız')
-                props.onLogin({ userName: json.userName, isAdmin: Boolean(json.isAdmin) })
+                const roleCode: RoleCode = json.roleCode === 'ADMIN' || json.roleCode === 'PLAN_MUHASEBE' ? json.roleCode : 'SHEF'
+                const base = defaultPermissionsForRole(roleCode)
+                const p = json.permissions
+                props.onLogin({
+                  userName: json.userName,
+                  isAdmin: roleCode === 'ADMIN' || Boolean(json.isAdmin),
+                  roleCode,
+                  permissions: {
+                    canMain: typeof p?.canMain === 'boolean' ? p.canMain : base.canMain,
+                    canMutabakat: typeof p?.canMutabakat === 'boolean' ? p.canMutabakat : base.canMutabakat,
+                    canBayiHavaleMatch: typeof p?.canBayiHavaleMatch === 'boolean' ? p.canBayiHavaleMatch : base.canBayiHavaleMatch,
+                    canPositionRepresentative:
+                      typeof p?.canPositionRepresentative === 'boolean' ? p.canPositionRepresentative : base.canPositionRepresentative,
+                    canUserAdmin: typeof p?.canUserAdmin === 'boolean' ? p.canUserAdmin : roleCode === 'ADMIN',
+                  },
+                })
               } catch (e) {
                 setError(e instanceof Error ? e.message : 'Giriş sırasında hata oluştu')
               } finally {
@@ -376,7 +413,12 @@ export default function App() {
   const [adminUsersLoading, setAdminUsersLoading] = useState(false)
   const [newUserName, setNewUserName] = useState('')
   const [newUserPassword, setNewUserPassword] = useState('')
-  const [newUserIsAdmin, setNewUserIsAdmin] = useState(false)
+  const [newUserRoleCode, setNewUserRoleCode] = useState<RoleCode>('SHEF')
+  const [newUserPermissions, setNewUserPermissions] = useState<ScreenPermissions>(() => defaultPermissionsForRole('SHEF'))
+  const [editingUser, setEditingUser] = useState<UserRow | null>(null)
+  const [editRoleCode, setEditRoleCode] = useState<RoleCode>('SHEF')
+  const [editIsActive, setEditIsActive] = useState(true)
+  const [editPermissions, setEditPermissions] = useState<ScreenPermissions>(() => defaultPermissionsForRole('SHEF'))
   const [adminStatus, setAdminStatus] = useState<{ type: StatusType; message: string } | null>(null)
   const [adminDeleteDate, setAdminDeleteDate] = useState('')
   const [adminDeleteDepot, setAdminDeleteDepot] = useState('')
@@ -651,6 +693,30 @@ export default function App() {
     return map
   }, [allRepMappings])
 
+  const effectivePermissions = currentUser?.permissions ?? defaultPermissionsForRole('SHEF')
+  const canMainPage = effectivePermissions.canMain
+  const canMutabakatPage = effectivePermissions.canMutabakat
+  const canBayiHavaleMatchPage = effectivePermissions.canBayiHavaleMatch
+  const canPositionRepresentativePage = effectivePermissions.canPositionRepresentative
+  const canUserAdminPage = currentUser?.roleCode === 'ADMIN'
+
+  useEffect(() => {
+    if (!currentUser) return
+    const allowedPages: Array<'main' | 'mutabakat' | 'bayi-havale-match' | 'position-representative' | 'user-admin'> = []
+    if (canMainPage) allowedPages.push('main')
+    if (canMutabakatPage) allowedPages.push('mutabakat')
+    if (canBayiHavaleMatchPage) allowedPages.push('bayi-havale-match')
+    if (canPositionRepresentativePage) allowedPages.push('position-representative')
+    if (canUserAdminPage) allowedPages.push('user-admin')
+    if (allowedPages.length === 0) {
+      onLogout()
+      return
+    }
+    if (!allowedPages.includes(page)) {
+      setPage(allowedPages[0])
+    }
+  }, [currentUser, page, canMainPage, canMutabakatPage, canBayiHavaleMatchPage, canPositionRepresentativePage, canUserAdminPage])
+
   const onLogin = (user: SessionUser) => {
     saveSessionUser(user)
     setCurrentUser(user)
@@ -662,6 +728,21 @@ export default function App() {
     setSelectedPosition(null)
     setPage('main')
     setStatus(null)
+  }
+
+  const updateCreatePermission = (key: keyof ScreenPermissions, value: boolean) => {
+    setNewUserPermissions((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const updateEditPermission = (key: keyof ScreenPermissions, value: boolean) => {
+    setEditPermissions((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const openEditUserModal = (user: UserRow) => {
+    setEditingUser(user)
+    setEditRoleCode(user.roleCode)
+    setEditIsActive(user.isActive)
+    setEditPermissions({ ...user.permissions })
   }
 
   useEffect(() => {
@@ -1755,56 +1836,64 @@ export default function App() {
             <div className="sidebar-brand">Hesap Kapatma</div>
             <div className="sidebar-user">
               {currentUser.userName}
-              {currentUser.isAdmin ? ' (Admin)' : ''}
+              {` (${roleLabel(currentUser.roleCode)})`}
             </div>
           </div>
 
           <nav className="sidebar-nav">
-            <button
-              className={`nav-item ${page === 'main' ? 'active' : ''}`}
-              type="button"
-              onClick={() => {
-                setPage('main')
-              }}
-            >
-              Pozisyon Hesabı
-            </button>
-            <button
-              className={`nav-item ${page === 'mutabakat' ? 'active' : ''}`}
-              type="button"
-              onClick={() => {
-                setPage('mutabakat')
-                setMutabakatStep(0)
-              }}
-            >
-              Mutabakat
-            </button>
-            <button
-              className={`nav-item ${page === 'bayi-havale-match' ? 'active' : ''}`}
-              type="button"
-              onClick={() => {
-                setPage('bayi-havale-match')
-                setTypeFilter(null)
-                setPositionTab('faturalar')
-                setDetailSearch('')
-              }}
-            >
-              Bayi Havale Eşleme
-            </button>
-            <button
-              className={`nav-item ${page === 'position-representative' ? 'active' : ''}`}
-              type="button"
-              onClick={() => {
-                setSelectedPosition(null)
-                setTypeFilter(null)
-                setPositionTab('faturalar')
-                setDetailSearch('')
-                setPage('position-representative')
-              }}
-            >
-              Pozisyon - Temsilci
-            </button>
-            {currentUser.isAdmin ? (
+            {canMainPage ? (
+              <button
+                className={`nav-item ${page === 'main' ? 'active' : ''}`}
+                type="button"
+                onClick={() => {
+                  setPage('main')
+                }}
+              >
+                Pozisyon Hesabı
+              </button>
+            ) : null}
+            {canMutabakatPage ? (
+              <button
+                className={`nav-item ${page === 'mutabakat' ? 'active' : ''}`}
+                type="button"
+                onClick={() => {
+                  setPage('mutabakat')
+                  setMutabakatStep(0)
+                }}
+              >
+                Mutabakat
+              </button>
+            ) : null}
+            {canBayiHavaleMatchPage ? (
+              <button
+                className={`nav-item ${page === 'bayi-havale-match' ? 'active' : ''}`}
+                type="button"
+                onClick={() => {
+                  setPage('bayi-havale-match')
+                  setTypeFilter(null)
+                  setPositionTab('faturalar')
+                  setDetailSearch('')
+                }}
+              >
+                Bayi Havale Eşleme
+              </button>
+            ) : null}
+            {canPositionRepresentativePage ? (
+              <button
+                className={`nav-item ${page === 'position-representative' ? 'active' : ''}`}
+                type="button"
+                onClick={() => {
+                  setSelectedPosition(null)
+                  setTypeFilter(null)
+                  setPositionTab('faturalar')
+                  setDetailSearch('')
+                  setPage('position-representative')
+                }}
+              >
+                Pozisyon - Temsilci
+              </button>
+            ) : null}
+            {canUserAdminPage ? (
               <button
                 className={`nav-item ${page === 'user-admin' ? 'active' : ''}`}
                 type="button"
@@ -2023,11 +2112,11 @@ export default function App() {
         <>
           <div className="header">
             <h1>Kullanıcı Yönetimi</h1>
-            <p>Admin kullanıcılar yeni kullanıcı ekleyebilir.</p>
+            <p>Admin kullanıcılar rol ve ekran izinlerini yönetebilir.</p>
             {adminStatus ? <div className={`upload-status ${adminStatus.type}`}>{adminStatus.message}</div> : null}
           </div>
 
-          {!currentUser.isAdmin ? (
+          {!canUserAdminPage ? (
             <div className="upload-section">
               <div className="upload-box" style={{ justifyContent: 'space-between' }}>
                 <div style={{ color: '#4a5568' }}>Bu sayfa sadece admin kullanıcılar içindir.</div>
@@ -2048,12 +2137,49 @@ export default function App() {
                     <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Şifre</label>
                     <input value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)} placeholder="şifre" type="password" />
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 140 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 220 }}>
                     <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Yetki</label>
-                    <label style={{ display: 'flex', gap: 8, alignItems: 'center', color: '#2d3748', fontSize: 13 }}>
-                      <input type="checkbox" checked={newUserIsAdmin} onChange={(e) => setNewUserIsAdmin(e.target.checked)} />
-                      Admin
-                    </label>
+                    <select
+                      value={newUserRoleCode}
+                      onChange={(e) => {
+                        const value = (e.target.value as RoleCode) || 'SHEF'
+                        setNewUserRoleCode(value)
+                        setNewUserPermissions(defaultPermissionsForRole(value))
+                      }}
+                    >
+                      <option value="ADMIN">Admin</option>
+                      <option value="PLAN_MUHASEBE">Planlama/Muhasebe</option>
+                      <option value="SHEF">Şef</option>
+                    </select>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 300 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Ekran İzinleri</label>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(120px,1fr))', gap: 6 }}>
+                      <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
+                        <input type="checkbox" checked={newUserPermissions.canMain} onChange={(e) => updateCreatePermission('canMain', e.target.checked)} />
+                        Pozisyon
+                      </label>
+                      <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
+                        <input type="checkbox" checked={newUserPermissions.canMutabakat} onChange={(e) => updateCreatePermission('canMutabakat', e.target.checked)} />
+                        Mutabakat
+                      </label>
+                      <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
+                        <input
+                          type="checkbox"
+                          checked={newUserPermissions.canBayiHavaleMatch}
+                          onChange={(e) => updateCreatePermission('canBayiHavaleMatch', e.target.checked)}
+                        />
+                        Bayi Havale
+                      </label>
+                      <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
+                        <input
+                          type="checkbox"
+                          checked={newUserPermissions.canPositionRepresentative}
+                          onChange={(e) => updateCreatePermission('canPositionRepresentative', e.target.checked)}
+                        />
+                        Pozisyon-Temsilci
+                      </label>
+                    </div>
                   </div>
                   <button
                     className="btn btn-primary"
@@ -2070,7 +2196,8 @@ export default function App() {
                         userName: currentUser.userName,
                         newUserName: u,
                         password: p,
-                        isAdmin: newUserIsAdmin,
+                        roleCode: newUserRoleCode,
+                        permissions: { ...newUserPermissions, canUserAdmin: newUserRoleCode === 'ADMIN' },
                       })
                       if (!r.ok) {
                         setAdminStatus({ type: 'error', message: r.message || 'Kullanıcı oluşturulamadı' })
@@ -2078,7 +2205,8 @@ export default function App() {
                       }
                       setNewUserName('')
                       setNewUserPassword('')
-                      setNewUserIsAdmin(false)
+                      setNewUserRoleCode('SHEF')
+                      setNewUserPermissions(defaultPermissionsForRole('SHEF'))
                       const list = await fetchUsers({ userName: currentUser.userName })
                       if (list.ok) setAdminUsers(list.users)
                       setAdminStatus({ type: 'success', message: 'Kullanıcı oluşturuldu' })
@@ -2099,21 +2227,23 @@ export default function App() {
                     <thead>
                       <tr>
                         <th>Kullanıcı</th>
-                        <th>Admin</th>
+                        <th>Rol</th>
                         <th>Aktif</th>
+                        <th>İzinler</th>
                         <th>Oluşturma</th>
+                        <th>İşlem</th>
                       </tr>
                     </thead>
                     <tbody>
                       {adminUsersLoading ? (
                         <tr>
-                          <td colSpan={4} style={{ textAlign: 'center', color: '#718096' }}>
+                          <td colSpan={6} style={{ textAlign: 'center', color: '#718096' }}>
                             Yükleniyor...
                           </td>
                         </tr>
                       ) : adminUsers.length === 0 ? (
                         <tr>
-                          <td colSpan={4} style={{ textAlign: 'center', color: '#718096' }}>
+                          <td colSpan={6} style={{ textAlign: 'center', color: '#718096' }}>
                             Kayıt yok
                           </td>
                         </tr>
@@ -2121,9 +2251,24 @@ export default function App() {
                         adminUsers.map((u) => (
                           <tr key={u.userName}>
                             <td>{u.userName}</td>
-                            <td>{u.isAdmin ? 'Evet' : 'Hayır'}</td>
+                            <td>{roleLabel(u.roleCode)}</td>
                             <td>{u.isActive ? 'Evet' : 'Hayır'}</td>
+                            <td>
+                              {[
+                                u.permissions.canMain ? 'Pozisyon' : null,
+                                u.permissions.canMutabakat ? 'Mutabakat' : null,
+                                u.permissions.canBayiHavaleMatch ? 'Bayi Havale' : null,
+                                u.permissions.canPositionRepresentative ? 'Pozisyon-Temsilci' : null,
+                              ]
+                                .filter(Boolean)
+                                .join(', ') || '-'}
+                            </td>
                             <td>{u.createdAt ? formatDateTimeTr(u.createdAt) : '-'}</td>
+                            <td>
+                              <button className="btn btn-secondary" type="button" onClick={() => openEditUserModal(u)}>
+                                Düzenle
+                              </button>
+                            </td>
                           </tr>
                         ))
                       )}
@@ -2231,6 +2376,98 @@ export default function App() {
                   </div>
                 </div>
               </div>
+
+              <Modal title="Kullanıcı Yetki Düzenle" open={!!editingUser} onClose={() => setEditingUser(null)}>
+                {editingUser ? (
+                  <div className="modal-content">
+                    <div className="form-row">
+                      <label>Kullanıcı</label>
+                      <input value={editingUser.userName} disabled />
+                    </div>
+                    <div className="form-row">
+                      <label>Rol</label>
+                      <select
+                        value={editRoleCode}
+                        onChange={(e) => {
+                          const value = (e.target.value as RoleCode) || 'SHEF'
+                          setEditRoleCode(value)
+                          setEditPermissions(defaultPermissionsForRole(value))
+                        }}
+                      >
+                        <option value="ADMIN">Admin</option>
+                        <option value="PLAN_MUHASEBE">Planlama/Muhasebe</option>
+                        <option value="SHEF">Şef</option>
+                      </select>
+                    </div>
+                    <div className="form-row">
+                      <label>Durum</label>
+                      <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <input type="checkbox" checked={editIsActive} onChange={(e) => setEditIsActive(e.target.checked)} />
+                        Aktif
+                      </label>
+                    </div>
+                    <div className="form-row">
+                      <label>Ekran İzinleri</label>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(140px,1fr))', gap: 8 }}>
+                        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <input type="checkbox" checked={editPermissions.canMain} onChange={(e) => updateEditPermission('canMain', e.target.checked)} />
+                          Pozisyon Hesabı
+                        </label>
+                        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <input type="checkbox" checked={editPermissions.canMutabakat} onChange={(e) => updateEditPermission('canMutabakat', e.target.checked)} />
+                          Mutabakat
+                        </label>
+                        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <input
+                            type="checkbox"
+                            checked={editPermissions.canBayiHavaleMatch}
+                            onChange={(e) => updateEditPermission('canBayiHavaleMatch', e.target.checked)}
+                          />
+                          Bayi Havale Eşleme
+                        </label>
+                        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <input
+                            type="checkbox"
+                            checked={editPermissions.canPositionRepresentative}
+                            onChange={(e) => updateEditPermission('canPositionRepresentative', e.target.checked)}
+                          />
+                          Pozisyon-Temsilci
+                        </label>
+                      </div>
+                    </div>
+                    <div className="modal-actions">
+                      <button className="btn btn-secondary" type="button" onClick={() => setEditingUser(null)}>
+                        İptal
+                      </button>
+                      <button
+                        className="btn btn-primary"
+                        type="button"
+                        onClick={async () => {
+                          if (!currentUser || !editingUser) return
+                          setAdminStatus({ type: 'info', message: 'Kullanıcı güncelleniyor...' })
+                          const r = await updateUserAsAdmin({
+                            userName: currentUser.userName,
+                            targetUserName: editingUser.userName,
+                            roleCode: editRoleCode,
+                            isActive: editIsActive,
+                            permissions: { ...editPermissions, canUserAdmin: editRoleCode === 'ADMIN' },
+                          })
+                          if (!r.ok) {
+                            setAdminStatus({ type: 'error', message: r.message || 'Kullanıcı güncellenemedi' })
+                            return
+                          }
+                          const list = await fetchUsers({ userName: currentUser.userName })
+                          if (list.ok) setAdminUsers(list.users)
+                          setEditingUser(null)
+                          setAdminStatus({ type: 'success', message: 'Kullanıcı güncellendi' })
+                        }}
+                      >
+                        Kaydet
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </Modal>
             </>
           )}
         </>
