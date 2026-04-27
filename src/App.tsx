@@ -465,6 +465,7 @@ export default function App() {
   const [adminMutabakatDiffLimitInput, setAdminMutabakatDiffLimitInput] = useState('0.01')
   const [endOfDayReport, setEndOfDayReport] = useState<EndOfDayReport | null>(null)
   const [endOfDayLoading, setEndOfDayLoading] = useState(false)
+  const [endOfDayDate, setEndOfDayDate] = useState('')
   const [endOfDayDepot, setEndOfDayDepot] = useState('')
   const [endOfDayRefreshTick, setEndOfDayRefreshTick] = useState(0)
 
@@ -611,6 +612,22 @@ export default function App() {
     return depots
   }, [importFiles, adminDeleteDate])
 
+  const endOfDayDepotOptions = useMemo(() => {
+    const d = endOfDayDate.trim()
+    if (!d) return []
+    const seen = new Set<string>()
+    const depots: string[] = []
+    for (const f of importFiles) {
+      if ((f.fileDate ?? '').trim() !== d) continue
+      const depot = (f.depotCode ?? '').trim()
+      if (!depot || seen.has(depot)) continue
+      seen.add(depot)
+      depots.push(depot)
+    }
+    depots.sort((a, b) => depotLabel(a).localeCompare(depotLabel(b)))
+    return depots
+  }, [importFiles, endOfDayDate])
+
   const adminImportFileOptions = useMemo(() => {
     const list = [...importFiles].filter((f) => (f.fileName ?? '').trim())
     list.sort((a, b) => String(b.importedAt ?? '').localeCompare(String(a.importedAt ?? '')))
@@ -647,12 +664,26 @@ export default function App() {
   }, [selectedDate, depotOptions, selectedDepot])
 
   useEffect(() => {
-    if (!selectedDepot) {
-      setEndOfDayDepot('')
+    if (!selectedDate.trim()) {
+      if (endOfDayDate) setEndOfDayDate('')
       return
     }
-    setEndOfDayDepot((prev) => prev || selectedDepot)
-  }, [selectedDepot])
+    setEndOfDayDate((prev) => prev || selectedDate)
+  }, [selectedDate, endOfDayDate])
+
+  useEffect(() => {
+    if (!endOfDayDate.trim()) {
+      if (endOfDayDepot) setEndOfDayDepot('')
+      return
+    }
+    if (endOfDayDepotOptions.length === 0) {
+      if (endOfDayDepot) setEndOfDayDepot('')
+      return
+    }
+    if (!endOfDayDepot || !endOfDayDepotOptions.includes(endOfDayDepot)) {
+      setEndOfDayDepot(endOfDayDepotOptions[0])
+    }
+  }, [endOfDayDate, endOfDayDepotOptions, endOfDayDepot])
 
   useEffect(() => {
     if (!currentUser) return
@@ -1396,7 +1427,7 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) return
     if (page !== 'end-of-day-report') return
-    const reportDate = selectedDataset.date
+    const reportDate = endOfDayDate.trim()
     if (!reportDate || !endOfDayDepot) {
       setEndOfDayReport(null)
       setEndOfDayLoading(false)
@@ -1428,7 +1459,7 @@ export default function App() {
       alive = false
       window.clearInterval(timer)
     }
-  }, [currentUser, page, selectedDataset.date, endOfDayDepot, endOfDayRefreshTick])
+  }, [currentUser, page, endOfDayDate, endOfDayDepot, endOfDayRefreshTick])
 
   const filteredManimReceipts = useMemo(() => {
     const q = manimReceiptSearch.trim().toLocaleLowerCase('tr-TR')
@@ -2098,26 +2129,33 @@ export default function App() {
             <div className="upload-box" style={{ gap: 10, alignItems: 'end', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 180 }}>
                 <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Tarih</label>
-                <input value={selectedDataset.date ? formatDateTr(selectedDataset.date) : '-'} disabled />
+                <select value={endOfDayDate} onChange={(e) => setEndOfDayDate(e.target.value)}>
+                  <option value="">Tarih seçiniz</option>
+                  {dateOptions.map((d) => (
+                    <option key={d} value={d}>
+                      {formatDateTr(d)}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 220 }}>
                 <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Depo Filtresi</label>
-                <select value={endOfDayDepot} onChange={(e) => setEndOfDayDepot(e.target.value)} disabled={!selectedDataset.date}>
+                <select value={endOfDayDepot} onChange={(e) => setEndOfDayDepot(e.target.value)} disabled={!endOfDayDate}>
                   <option value="">Depo seçiniz</option>
-                  {depotOptions.map((d) => (
+                  {endOfDayDepotOptions.map((d) => (
                     <option key={d} value={d}>
                       {depotLabel(d)}
                     </option>
                   ))}
                 </select>
               </div>
-              <button className="btn btn-secondary" type="button" onClick={() => setEndOfDayRefreshTick((x) => x + 1)} disabled={!selectedDataset.date || !endOfDayDepot}>
+              <button className="btn btn-secondary" type="button" onClick={() => setEndOfDayRefreshTick((x) => x + 1)} disabled={!endOfDayDate || !endOfDayDepot}>
                 Yenile
               </button>
             </div>
           </div>
 
-          {!selectedDataset.date ? (
+          {!endOfDayDate ? (
             <div className="empty-state">Rapor için önce tarih seçiniz.</div>
           ) : !endOfDayDepot ? (
             <div className="empty-state">Rapor için depo filtresi seçiniz.</div>
