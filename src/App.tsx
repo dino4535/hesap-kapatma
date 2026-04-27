@@ -1192,6 +1192,7 @@ export default function App() {
   const bankEnabled = mutabakatMode === 'BANKA' || mutabakatMode === 'KARMA'
   const enteredTotal = (cashEnabled ? cashTotal : 0) + (bankEnabled ? Number(yatanTutar) || 0 : 0)
   const mutabakatFark = enteredTotal + adjustmentTotal - torbaTutari
+  const mutabakatFarkClass = Math.abs(mutabakatFark) < 0.01 ? 'is-zero' : mutabakatFark > 0 ? 'is-positive' : 'is-negative'
 
   const validatePaymentInputs = () => {
     if (bankEnabled) {
@@ -1932,6 +1933,22 @@ export default function App() {
               </div>
             </div>
             <div className="main-header-right">
+              {page === 'mutabakat' && selectedPosition ? (
+                <div className="mutabakat-header-totals">
+                  <div className="mutabakat-header-total-item">
+                    <div className="mutabakat-header-total-label">Girilen Toplam</div>
+                    <div className="mutabakat-header-total-value">{formatMoney(enteredTotal)}</div>
+                  </div>
+                  <div className="mutabakat-header-total-item">
+                    <div className="mutabakat-header-total-label">Düzeltme</div>
+                    <div className="mutabakat-header-total-value">{formatMoney(adjustmentTotal)}</div>
+                  </div>
+                  <div className={`mutabakat-header-total-item ${mutabakatFarkClass}`}>
+                    <div className="mutabakat-header-total-label">Fark</div>
+                    <div className="mutabakat-header-total-value">{formatMoney(mutabakatFark)}</div>
+                  </div>
+                </div>
+              ) : null}
               {selectedPosition ? (
                 <button
                   className="btn btn-secondary"
@@ -3108,11 +3125,6 @@ export default function App() {
                       </>
                     ) : null}
 
-                    <div className="mutabakat-totals">
-                      <div>Girilen Toplam: {formatMoney(enteredTotal)}</div>
-                      <div>Düzeltme: {formatMoney(adjustmentTotal)}</div>
-                      <div>Fark: {formatMoney(mutabakatFark)}</div>
-                    </div>
                   </div>
                 ) : mutabakatStep === 2 ? (
                   <div className="mutabakat">
