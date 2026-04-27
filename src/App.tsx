@@ -178,6 +178,17 @@ function parseTrDecimalInput(value: string) {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+function buildIncomingByCorrespondentCode(receipts: ManimReceiptRow[]) {
+  const totals = new Map<string, number>()
+  for (const r of receipts) {
+    if (!isIncomingDirection(r.direction)) continue
+    const code = normalizeMatchCode(r.correspondentCode)
+    if (!code) continue
+    totals.set(code, (totals.get(code) ?? 0) + (Number(r.amount) || 0))
+  }
+  return totals
+}
+
 function LoginPage(props: { onLogin: (user: SessionUser) => void }) {
   const [userId, setUserId] = useState('')
   const [password, setPassword] = useState('')
@@ -968,16 +979,7 @@ export default function App() {
       })
   }, [havaleInvoicesByBayi, vadeliTahsilatHavaleleriByBayi])
 
-  const manimIncomingByCorrespondentCode = useMemo(() => {
-    const totals = new Map<string, number>()
-    for (const r of manimBayiMatchReceipts) {
-      if (!isIncomingDirection(r.direction)) continue
-      const code = normalizeMatchCode(r.correspondentCode)
-      if (!code) continue
-      totals.set(code, (totals.get(code) ?? 0) + (Number(r.amount) || 0))
-    }
-    return totals
-  }, [manimBayiMatchReceipts])
+  const manimIncomingByCorrespondentCode = useMemo(() => buildIncomingByCorrespondentCode(manimBayiMatchReceipts), [manimBayiMatchReceipts])
 
   const bayiHavaleEslemeRows = useMemo(() => {
     return havaleVadeliByBayiRows.map((r) => {
@@ -1466,13 +1468,32 @@ export default function App() {
     setStatus({ type: 'success', message: 'Mutabakat tamamlandı' })
   }
 
-  const printMutabakatPdf = () => {
+  const printMutabakatPdf = async () => {
     if (!mutabakatSaved || mutabakatSaved.status !== 'COMPLETED') {
       setStatus({ type: 'error', message: 'PDF için önce mutabakat tamamlanmalı' })
       return
     }
+    if (!currentUser) {
+      setStatus({ type: 'error', message: 'Kullanıcı bilgisi bulunamadı' })
+      return
+    }
 
     const rec = mutabakatSaved
+    setStatus({ type: 'info', message: 'PDF verileri hazırlanıyor...' })
+    const receiptsResp = await fetchManimReceipts({
+      userName: currentUser.userName,
+      date: rec.sourceFileDate,
+      includePreviousDay: true,
+      allBanks: true,
+      untilNow: true,
+      limit: 5000,
+    })
+    if (!receiptsResp.ok) {
+      setStatus({ type: 'error', message: receiptsResp.message || 'PDF için Manim hareketleri alınamadı' })
+      return
+    }
+    const incomingByCorrespondentForPrint = buildIncomingByCorrespondentCode(Array.isArray(receiptsResp.receipts) ? receiptsResp.receipts : [])
+
     const completedAt = formatDateTimeTr(rec.completedAt || rec.updatedAt)
     const completedBy = (rec.completedBy || rec.updatedBy || currentUser?.userName || '').trim() || '-'
     const repName = (representativeByPositionCode.get((rec.positionCode ?? '').trim()) || selectedRepresentativeName).trim() || '-'
@@ -1522,7 +1543,7 @@ export default function App() {
 
     const havaleEslemeRows = havaleVadeliRows.map((r) => {
       const matchCode = normalizeMatchCode(r.bayiKodu)
-      const gelenTutarToplami = manimIncomingByCorrespondentCode.get(matchCode) ?? 0
+      const gelenTutarToplami = incomingByCorrespondentForPrint.get(matchCode) ?? 0
       const fark = (Number(gelenTutarToplami) || 0) - (Number(r.toplam) || 0)
       const eslesti = Math.abs(fark) < 0.01
       const durum = eslesti ? 'Tam eşleşti' : fark < 0 ? 'Eksik ödeme' : 'Fazla ödeme'
@@ -1814,6 +1835,7 @@ export default function App() {
       setStatus({ type: 'error', message: 'Popup engellendi. Lütfen popup izni verin.' })
       return
     }
+    setStatus(null)
     setTimeout(() => URL.revokeObjectURL(url), 60_000)
   }
 
