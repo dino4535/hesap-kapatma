@@ -1420,7 +1420,7 @@ export default function App() {
         : havaleEslesmeyenRows
             .map(
               (r) =>
-                `<tr><td>${escapeHtml(r.bayiKodu)}</td><td>${escapeHtml(r.bayi)}</td><td class="num">${escapeHtml(money(r.havale))}</td><td class="num">${escapeHtml(money(r.vadeli))}</td><td class="num">${escapeHtml(money(r.toplam))}</td><td class="num">${escapeHtml(money(r.gelenTutarToplami))}</td><td class="num">${escapeHtml(money(r.fark))}</td><td>${escapeHtml(r.durum)}</td></tr>`,
+                `<tr><td>${escapeHtml(r.bayiKodu)}</td><td>${escapeHtml(r.bayi)}</td><td class="num">${escapeHtml(money(r.havale))}</td><td class="num">${escapeHtml(money(r.vadeli))}</td><td class="num">${escapeHtml(money(r.toplam))}</td><td class="num">${escapeHtml(money(r.gelenTutarToplami))}</td><td class="num">${escapeHtml(money(r.fark))}</td><td class="nowrap">${escapeHtml(r.durum)}</td></tr>`,
             )
             .join('')
 
@@ -1561,6 +1561,7 @@ export default function App() {
     th, td { border: 1px solid #e2e8f0; padding: 3px 5px; vertical-align: top; }
     th { background: #f7fafc; text-align: left; }
     td.num, th.num { text-align: right; white-space: nowrap; }
+    td.nowrap, th.nowrap { white-space: nowrap; }
     tfoot td { font-weight: 700; background: #f7fafc; }
     .empty { text-align: center; color: #718096; }
     .signatures { margin-top: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -1645,7 +1646,7 @@ export default function App() {
     <div class="section">
       <div class="section-title">Bayi Havale Eşleme (Sadece Eşleşmeyenler)</div>
       <table>
-        <thead><tr><th>Bayi Kodu</th><th>Bayi</th><th class="num">Havale</th><th class="num">Vadeli Ödeme Havaleleri</th><th class="num">Toplam</th><th class="num">Gelen Tutar Toplamı</th><th class="num">Fark</th><th>Durum</th></tr></thead>
+        <thead><tr><th>Bayi Kodu</th><th>Bayi</th><th class="num">Havale</th><th class="num">Vadeli Ödeme Havaleleri</th><th class="num">Toplam</th><th class="num">Gelen Tutar Toplamı</th><th class="num">Fark</th><th class="nowrap">Durum</th></tr></thead>
         <tbody>${havaleVadeliRowsHtml}</tbody>
       </table>
     </div>
