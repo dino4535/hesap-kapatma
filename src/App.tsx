@@ -618,6 +618,7 @@ export default function App() {
         if (!m.ok) throw new Error(m.message || 'Eşleme listesi alınamadı')
         if (!p.ok) throw new Error(p.message || 'Pozisyon listesi alınamadı')
         setRepMappings(m.mappings)
+        setAllRepMappings(m.mappings)
         setRepPositions(p.positions)
       })
       .catch((e) => {
@@ -639,6 +640,15 @@ export default function App() {
     const row = allRepMappings.find((m) => m.positionCode === selectedPosition)
     return (row?.representativeName ?? '').trim()
   }, [allRepMappings, selectedPosition])
+  const representativeByPositionCode = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const row of allRepMappings) {
+      const code = (row.positionCode ?? '').trim()
+      if (!code) continue
+      map.set(code, (row.representativeName ?? '').trim())
+    }
+    return map
+  }, [allRepMappings])
 
   const onLogin = (user: SessionUser) => {
     saveSessionUser(user)
@@ -1349,7 +1359,7 @@ export default function App() {
     const rec = mutabakatSaved
     const completedAt = formatDateTimeTr(rec.completedAt || rec.updatedAt)
     const completedBy = (rec.completedBy || rec.updatedBy || currentUser?.userName || '').trim() || '-'
-    const repName = selectedRepresentativeName.trim() || '-'
+    const repName = (representativeByPositionCode.get((rec.positionCode ?? '').trim()) || selectedRepresentativeName).trim() || '-'
 
     const cashCounts = (rec.cashJson ?? {}) as { banknoteCounts?: Record<string, unknown> }
     const bn = cashCounts.banknoteCounts ?? {}
@@ -1898,6 +1908,12 @@ export default function App() {
                     next.sort((a, b) => a.positionCode.localeCompare(b.positionCode))
                     return next
                   })
+                  setAllRepMappings((prev) => {
+                    const next = prev.filter((x) => x.positionCode !== r.mapping!.positionCode)
+                    next.push(r.mapping!)
+                    next.sort((a, b) => a.positionCode.localeCompare(b.positionCode))
+                    return next
+                  })
                   setRepPositionCode('')
                   setRepName('')
                   setStatus({ type: 'success', message: 'Kaydedildi' })
@@ -1972,6 +1988,7 @@ export default function App() {
                                 return
                               }
                               setRepMappings((prev) => prev.filter((x) => x.positionCode !== m.positionCode))
+                              setAllRepMappings((prev) => prev.filter((x) => x.positionCode !== m.positionCode))
                               setStatus({ type: 'success', message: 'Silindi' })
                             }}
                           >
@@ -3308,6 +3325,7 @@ export default function App() {
                     <div className="card-title">{p.invoiceCount} fatura</div>
                   </div>
                   <div className="card-title">{p.description ?? ''}</div>
+                  <div className="card-title">Temsilci: {representativeByPositionCode.get(p.code) || '-'}</div>
                   <div className="card-title">Torba: {formatMoney(Number(p.torbaTutari ?? 0))}</div>
                 </div>
               ))
