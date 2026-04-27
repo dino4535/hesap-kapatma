@@ -417,6 +417,21 @@ export async function updateUserAsAdmin(args: {
   return (await res.json()) as { ok: boolean }
 }
 
+export async function deleteUserAsAdmin(args: {
+  userName: string
+  targetUserName: string
+}): Promise<{ ok: boolean; message?: string }> {
+  const res = await fetch(`/api/users/${encodeURIComponent(args.targetUserName)}`, {
+    method: 'DELETE',
+    headers: { 'x-user': args.userName },
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean }
+}
+
 export async function deleteDataByDateDepot(args: {
   userName: string
   date: string

@@ -2197,6 +2197,69 @@ WHERE UserName = @UserName
   }
 })
 
+app.delete('/api/users/:userName', async (req, res) => {
+  try {
+    const actor = String(req.header('x-user') ?? '').trim()
+    if (!actor) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+    const targetUserName = String(req.params.userName ?? '').trim()
+    if (!targetUserName) {
+      res.status(400).send('Eksik alan')
+      return
+    }
+
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const ok = await requireAdminUser(pool, actor)
+    if (!ok) {
+      res.status(403).send('Yetkisiz')
+      return
+    }
+    if (targetUserName.toLowerCase() === actor.toLowerCase()) {
+      res.status(400).send('Kendi kullanıcınızı silemezsiniz')
+      return
+    }
+    if (targetUserName.toLowerCase() === 'hk_admin') {
+      res.status(400).send('hk_admin kullanıcısı silinemez')
+      return
+    }
+
+    const userRow = await pool
+      .request()
+      .input('UserName', mssql.NVarChar(64), targetUserName)
+      .query('SELECT TOP 1 IsAdmin, RoleCode FROM dbo.Users WHERE UserName = @UserName')
+    const user = userRow.recordset?.[0] as { IsAdmin?: boolean; RoleCode?: string | null } | undefined
+    if (!user) {
+      res.status(404).send('Kullanıcı bulunamadı')
+      return
+    }
+    const roleCode = normalizeRoleCode(String(user.RoleCode ?? (user.IsAdmin ? 'ADMIN' : 'SHEF')))
+    if (roleCode === 'ADMIN') {
+      const adminCountResult = await pool
+        .request()
+        .query(
+          "SELECT COUNT(1) AS Cnt FROM dbo.Users WHERE IsActive = 1 AND (RoleCode = 'ADMIN' OR (RoleCode IS NULL AND IsAdmin = 1))",
+        )
+      const adminCount = Number((adminCountResult.recordset?.[0] as { Cnt?: unknown } | undefined)?.Cnt ?? 0)
+      if (adminCount <= 1) {
+        res.status(400).send('Son admin kullanıcı silinemez')
+        return
+      }
+    }
+
+    await pool.request().input('UserName', mssql.NVarChar(64), targetUserName).query(`
+DELETE FROM dbo.UserScreenPermissions WHERE UserName = @UserName;
+DELETE FROM dbo.Users WHERE UserName = @UserName;
+`)
+    res.json({ ok: true })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
 async function cleanupDatabase(pool: mssql.ConnectionPool) {
   const deletedCounts: Record<string, number> = {}
 

@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import {
   completeMutabakat,
   createUserAsAdmin,
+  deleteUserAsAdmin,
   updateUserAsAdmin,
   deleteDataByDateDepot,
   deleteDataByImportFile,
@@ -2267,6 +2268,26 @@ export default function App() {
                             <td>
                               <button className="btn btn-secondary" type="button" onClick={() => openEditUserModal(u)}>
                                 Düzenle
+                              </button>
+                              <button
+                                className="btn btn-secondary"
+                                type="button"
+                                onClick={async () => {
+                                  const ok = window.confirm(`${u.userName} kullanıcısı silinsin mi?`)
+                                  if (!ok) return
+                                  setAdminStatus({ type: 'info', message: 'Kullanıcı siliniyor...' })
+                                  const r = await deleteUserAsAdmin({ userName: currentUser.userName, targetUserName: u.userName })
+                                  if (!r.ok) {
+                                    setAdminStatus({ type: 'error', message: r.message || 'Kullanıcı silinemedi' })
+                                    return
+                                  }
+                                  const list = await fetchUsers({ userName: currentUser.userName })
+                                  if (list.ok) setAdminUsers(list.users)
+                                  if (editingUser?.userName === u.userName) setEditingUser(null)
+                                  setAdminStatus({ type: 'success', message: 'Kullanıcı silindi' })
+                                }}
+                              >
+                                Sil
                               </button>
                             </td>
                           </tr>
