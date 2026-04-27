@@ -340,6 +340,7 @@ export default function App() {
   const [repSearch, setRepSearch] = useState('')
   const [repPositionCode, setRepPositionCode] = useState('')
   const [repName, setRepName] = useState('')
+  const [repPhone, setRepPhone] = useState('')
   const [repPositions, setRepPositions] = useState<PositionRow[]>([])
   const [allRepMappings, setAllRepMappings] = useState<PositionRepresentativeRow[]>([])
 
@@ -632,7 +633,7 @@ export default function App() {
   const filteredRepMappings = useMemo(() => {
     const q = repSearch.trim().toLowerCase()
     if (!q) return repMappings
-    return repMappings.filter((m) => `${m.positionCode} ${m.representativeName}`.toLowerCase().includes(q))
+    return repMappings.filter((m) => `${m.positionCode} ${m.representativeName} ${m.phoneNumber}`.toLowerCase().includes(q))
   }, [repMappings, repSearch])
 
   const selectedRepresentativeName = useMemo(() => {
@@ -1887,18 +1888,28 @@ export default function App() {
                 <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Temsilci</label>
                 <input value={repName} onChange={(e) => setRepName(e.target.value)} placeholder="Temsilci adı" />
               </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 180 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Telefon</label>
+                <input value={repPhone} onChange={(e) => setRepPhone(e.target.value)} placeholder="5xxxxxxxxx" />
+              </div>
               <button
                 className="btn btn-primary"
                 type="button"
                 onClick={async () => {
                   const pc = repPositionCode.trim()
                   const rn = repName.trim()
-                  if (!pc || !rn) {
-                    setStatus({ type: 'error', message: 'Pozisyon ve temsilci zorunlu' })
+                  const rp = repPhone.trim()
+                  if (!pc || !rn || !rp) {
+                    setStatus({ type: 'error', message: 'Pozisyon, temsilci ve telefon zorunlu' })
                     return
                   }
                   setStatus({ type: 'info', message: 'Kaydediliyor...' })
-                  const r = await savePositionRepresentative({ userName: currentUser.userName, positionCode: pc, representativeName: rn })
+                  const r = await savePositionRepresentative({
+                    userName: currentUser.userName,
+                    positionCode: pc,
+                    representativeName: rn,
+                    phoneNumber: rp,
+                  })
                   if (!r.ok || !r.mapping) {
                     setStatus({ type: 'error', message: r.message || 'Kaydedilemedi' })
                     return
@@ -1917,6 +1928,7 @@ export default function App() {
                   })
                   setRepPositionCode('')
                   setRepName('')
+                  setRepPhone('')
                   setStatus({ type: 'success', message: 'Kaydedildi' })
                 }}
               >
@@ -1931,7 +1943,7 @@ export default function App() {
               <div className="actions"></div>
             </div>
             <div className="table-search">
-              <input value={repSearch} onChange={(e) => setRepSearch(e.target.value)} placeholder="Ara (pozisyon / temsilci)" />
+              <input value={repSearch} onChange={(e) => setRepSearch(e.target.value)} placeholder="Ara (pozisyon / temsilci / telefon)" />
               <button className="btn btn-secondary" type="button" onClick={() => setRepSearch('')} disabled={!repSearch.trim()}>
                 Temizle
               </button>
@@ -1942,6 +1954,7 @@ export default function App() {
                   <tr>
                     <th>Pozisyon</th>
                     <th>Temsilci</th>
+                    <th>Telefon</th>
                     <th>Güncelleyen</th>
                     <th>Güncelleme Tarihi</th>
                     <th></th>
@@ -1950,13 +1963,13 @@ export default function App() {
                 <tbody>
                   {repMappingsLoading ? (
                     <tr>
-                      <td colSpan={5} style={{ textAlign: 'center', color: '#718096' }}>
+                      <td colSpan={6} style={{ textAlign: 'center', color: '#718096' }}>
                         Yükleniyor...
                       </td>
                     </tr>
                   ) : filteredRepMappings.length === 0 ? (
                     <tr>
-                      <td colSpan={5} style={{ textAlign: 'center', color: '#718096' }}>
+                      <td colSpan={6} style={{ textAlign: 'center', color: '#718096' }}>
                         Kayıt yok
                       </td>
                     </tr>
@@ -1965,6 +1978,7 @@ export default function App() {
                       <tr key={m.positionCode}>
                         <td>{m.positionCode}</td>
                         <td>{m.representativeName}</td>
+                        <td>{m.phoneNumber || '-'}</td>
                         <td>{m.updatedBy ?? '-'}</td>
                         <td>{m.updatedAt ? formatDateTr(m.updatedAt.slice(0, 10)) : '-'}</td>
                         <td>
@@ -1974,6 +1988,7 @@ export default function App() {
                             onClick={() => {
                               setRepPositionCode(m.positionCode)
                               setRepName(m.representativeName)
+                              setRepPhone(m.phoneNumber ?? '')
                             }}
                           >
                             Düzenle

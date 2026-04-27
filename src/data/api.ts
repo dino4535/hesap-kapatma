@@ -297,6 +297,7 @@ export async function completeMutabakat(args: {
 export interface PositionRepresentativeRow {
   positionCode: string
   representativeName: string
+  phoneNumber: string
   updatedAt?: string
   updatedBy?: string
 }
@@ -318,11 +319,12 @@ export async function savePositionRepresentative(args: {
   userName: string
   positionCode: string
   representativeName: string
+  phoneNumber: string
 }): Promise<{ ok: boolean; mapping?: PositionRepresentativeRow; message?: string }> {
   const res = await fetch('/api/position-representatives', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-user': args.userName },
-    body: JSON.stringify({ positionCode: args.positionCode, representativeName: args.representativeName }),
+    body: JSON.stringify({ positionCode: args.positionCode, representativeName: args.representativeName, phoneNumber: args.phoneNumber }),
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')

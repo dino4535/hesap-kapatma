@@ -1048,9 +1048,15 @@ BEGIN
   CREATE TABLE dbo.PositionRepresentativeMap (
     PositionCode NVARCHAR(64) NOT NULL PRIMARY KEY,
     RepresentativeName NVARCHAR(128) NOT NULL,
+    PhoneNumber NVARCHAR(32) NULL,
     UpdatedBy NVARCHAR(64) NULL,
     UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_PositionRepresentativeMap_UpdatedAt DEFAULT (SYSUTCDATETIME())
   );
+END
+
+IF COL_LENGTH('dbo.PositionRepresentativeMap', 'PhoneNumber') IS NULL
+BEGIN
+  ALTER TABLE dbo.PositionRepresentativeMap ADD PhoneNumber NVARCHAR(32) NULL;
 END
 
 IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'dist2k')
@@ -2313,6 +2319,7 @@ app.get('/api/position-representatives', async (req, res) => {
 SELECT
   PositionCode,
   RepresentativeName,
+  PhoneNumber,
   UpdatedBy,
   UpdatedAt
 FROM dbo.PositionRepresentativeMap
@@ -2322,6 +2329,7 @@ ORDER BY PositionCode
     const mappings = (r.recordset ?? []).map((row) => ({
       positionCode: String(row.PositionCode ?? ''),
       representativeName: String(row.RepresentativeName ?? ''),
+      phoneNumber: String(row.PhoneNumber ?? ''),
       updatedBy: row.UpdatedBy ?? undefined,
       updatedAt: row.UpdatedAt ? new Date(row.UpdatedAt).toISOString() : undefined,
     }))
@@ -2341,7 +2349,8 @@ app.post('/api/position-representatives', async (req, res) => {
     }
     const positionCode = String(req.body?.positionCode ?? '').trim()
     const representativeName = String(req.body?.representativeName ?? '').trim()
-    if (!positionCode || !representativeName) {
+    const phoneNumber = String(req.body?.phoneNumber ?? '').trim()
+    if (!positionCode || !representativeName || !phoneNumber) {
       res.status(400).send('Eksik alan')
       return
     }
@@ -2358,6 +2367,7 @@ app.post('/api/position-representatives', async (req, res) => {
       .request()
       .input('PositionCode', mssql.NVarChar(64), positionCode)
       .input('RepresentativeName', mssql.NVarChar(128), representativeName)
+      .input('PhoneNumber', mssql.NVarChar(32), phoneNumber)
       .input('UserName', mssql.NVarChar(64), userName)
       .query(
         `
@@ -2365,17 +2375,19 @@ MERGE dbo.PositionRepresentativeMap WITH (HOLDLOCK) AS t
 USING (SELECT
   @PositionCode AS PositionCode,
   @RepresentativeName AS RepresentativeName,
+  @PhoneNumber AS PhoneNumber,
   @UserName AS UserName
 ) AS s
 ON t.PositionCode = s.PositionCode
 WHEN MATCHED THEN
   UPDATE SET
     RepresentativeName = s.RepresentativeName,
+    PhoneNumber = s.PhoneNumber,
     UpdatedBy = s.UserName,
     UpdatedAt = SYSUTCDATETIME()
 WHEN NOT MATCHED THEN
-  INSERT (PositionCode, RepresentativeName, UpdatedBy)
-  VALUES (s.PositionCode, s.RepresentativeName, s.UserName);
+  INSERT (PositionCode, RepresentativeName, PhoneNumber, UpdatedBy)
+  VALUES (s.PositionCode, s.RepresentativeName, s.PhoneNumber, s.UserName);
 `,
       )
 
@@ -2384,12 +2396,14 @@ WHEN NOT MATCHED THEN
       .input('PositionCode', mssql.NVarChar(64), positionCode)
       .query(
         `
-SELECT TOP 1 PositionCode, RepresentativeName, UpdatedBy, UpdatedAt
+SELECT TOP 1 PositionCode, RepresentativeName, PhoneNumber, UpdatedBy, UpdatedAt
 FROM dbo.PositionRepresentativeMap
 WHERE PositionCode = @PositionCode
 `,
       )
-    const row = readBack.recordset?.[0] as { PositionCode: string; RepresentativeName: string; UpdatedBy: string | null; UpdatedAt: Date } | undefined
+    const row = readBack.recordset?.[0] as
+      | { PositionCode: string; RepresentativeName: string; PhoneNumber: string | null; UpdatedBy: string | null; UpdatedAt: Date }
+      | undefined
     if (!row) {
       res.status(500).send('Kayıt okunamadı')
       return
@@ -2399,6 +2413,7 @@ WHERE PositionCode = @PositionCode
       mapping: {
         positionCode: String(row.PositionCode ?? ''),
         representativeName: String(row.RepresentativeName ?? ''),
+        phoneNumber: String(row.PhoneNumber ?? ''),
         updatedBy: row.UpdatedBy ?? undefined,
         updatedAt: row.UpdatedAt ? new Date(row.UpdatedAt).toISOString() : undefined,
       },
