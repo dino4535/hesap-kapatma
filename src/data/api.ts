@@ -366,6 +366,10 @@ export interface UserRow {
   createdAt?: string
 }
 
+export interface MutabakatSettings {
+  diffLimitTl: number
+}
+
 export async function fetchUsers(args: {
   userName: string
 }): Promise<{ ok: boolean; users: UserRow[]; message?: string }> {
@@ -430,6 +434,35 @@ export async function deleteUserAsAdmin(args: {
     return { ok: false, message: text || `HTTP ${res.status}` }
   }
   return (await res.json()) as { ok: boolean }
+}
+
+export async function fetchMutabakatSettings(args: {
+  userName: string
+}): Promise<{ ok: boolean; settings?: MutabakatSettings; message?: string }> {
+  const res = await fetch('/api/settings/mutabakat', {
+    headers: { 'x-user': args.userName },
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; settings: MutabakatSettings }
+}
+
+export async function updateMutabakatSettings(args: {
+  userName: string
+  diffLimitTl: number
+}): Promise<{ ok: boolean; settings?: MutabakatSettings; message?: string }> {
+  const res = await fetch('/api/settings/mutabakat', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'x-user': args.userName },
+    body: JSON.stringify({ diffLimitTl: args.diffLimitTl }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; settings: MutabakatSettings }
 }
 
 export async function deleteDataByDateDepot(args: {

@@ -955,6 +955,25 @@ WHEN NOT MATCHED BY TARGET THEN
   INSERT (UserName, CanMain, CanMutabakat, CanBayiHavaleMatch, CanPositionRepresentative, CanUserAdmin)
   VALUES (s.UserName, s.CanMain, s.CanMutabakat, s.CanBayiHavaleMatch, s.CanPositionRepresentative, s.CanUserAdmin);
 
+IF OBJECT_ID('dbo.AppSettings', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.AppSettings (
+    SettingKey NVARCHAR(64) NOT NULL PRIMARY KEY,
+    SettingValue NVARCHAR(256) NULL,
+    UpdatedBy NVARCHAR(64) NULL,
+    UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_AppSettings_UpdatedAt DEFAULT (SYSUTCDATETIME())
+  );
+END
+
+MERGE dbo.AppSettings WITH (HOLDLOCK) AS t
+USING (
+  SELECT 'MutabakatDiffLimitTl' AS SettingKey, '0.01' AS SettingValue
+) AS s
+ON t.SettingKey = s.SettingKey
+WHEN NOT MATCHED THEN
+  INSERT (SettingKey, SettingValue)
+  VALUES (s.SettingKey, s.SettingValue);
+
 IF OBJECT_ID('dbo.ImportFiles', 'U') IS NULL
 BEGIN
   CREATE TABLE dbo.ImportFiles (
@@ -1316,6 +1335,16 @@ function defaultPermissionsForRole(roleCode: RoleCode): ScreenPermissions {
     return { canMain: true, canMutabakat: true, canBayiHavaleMatch: true, canPositionRepresentative: true, canUserAdmin: true }
   }
   return { canMain: true, canMutabakat: true, canBayiHavaleMatch: true, canPositionRepresentative: true, canUserAdmin: false }
+}
+
+const MUTABAKAT_DIFF_LIMIT_SETTING_KEY = 'MutabakatDiffLimitTl'
+const DEFAULT_MUTABAKAT_DIFF_LIMIT_TL = 0.01
+
+function normalizeMutabakatDiffLimitTl(value: unknown, fallback = DEFAULT_MUTABAKAT_DIFF_LIMIT_TL) {
+  const raw = toNumberFlexible(value) ?? toNumberOrUndef(value)
+  if (raw == null || !Number.isFinite(raw)) return fallback
+  const clamped = Math.max(0, raw)
+  return Math.round(clamped * 100) / 100
 }
 
 function normalizePermissions(input: unknown, fallback: ScreenPermissions): ScreenPermissions {
@@ -2024,6 +2053,86 @@ async function requireAdminUser(pool: mssql.ConnectionPool, userName: string) {
   const r = await requireActiveUser(pool, userName)
   return r.active && r.isAdmin
 }
+
+async function getMutabakatDiffLimitTl(pool: mssql.ConnectionPool) {
+  const r = await pool
+    .request()
+    .input('SettingKey', mssql.NVarChar(64), MUTABAKAT_DIFF_LIMIT_SETTING_KEY)
+    .query('SELECT TOP 1 SettingValue FROM dbo.AppSettings WHERE SettingKey = @SettingKey')
+  const row = r.recordset?.[0] as { SettingValue?: unknown } | undefined
+  return normalizeMutabakatDiffLimitTl(row?.SettingValue, DEFAULT_MUTABAKAT_DIFF_LIMIT_TL)
+}
+
+async function upsertMutabakatDiffLimitTl(pool: mssql.ConnectionPool, value: number, updatedBy: string) {
+  const normalized = normalizeMutabakatDiffLimitTl(value, DEFAULT_MUTABAKAT_DIFF_LIMIT_TL)
+  await pool
+    .request()
+    .input('SettingKey', mssql.NVarChar(64), MUTABAKAT_DIFF_LIMIT_SETTING_KEY)
+    .input('SettingValue', mssql.NVarChar(256), String(normalized))
+    .input('UpdatedBy', mssql.NVarChar(64), updatedBy)
+    .query(`
+MERGE dbo.AppSettings WITH (HOLDLOCK) AS t
+USING (SELECT @SettingKey AS SettingKey, @SettingValue AS SettingValue, @UpdatedBy AS UpdatedBy) AS s
+ON t.SettingKey = s.SettingKey
+WHEN MATCHED THEN
+  UPDATE SET SettingValue = s.SettingValue, UpdatedBy = s.UpdatedBy, UpdatedAt = SYSUTCDATETIME()
+WHEN NOT MATCHED THEN
+  INSERT (SettingKey, SettingValue, UpdatedBy)
+  VALUES (s.SettingKey, s.SettingValue, s.UpdatedBy);
+`)
+  return normalized
+}
+
+app.get('/api/settings/mutabakat', async (req, res) => {
+  try {
+    const userName = String(req.header('x-user') ?? '').trim()
+    if (!userName) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const active = await requireActiveUser(pool, userName)
+    if (!active.active) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+    const diffLimitTl = await getMutabakatDiffLimitTl(pool)
+    res.json({ ok: true, settings: { diffLimitTl } })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
+app.put('/api/settings/mutabakat', async (req, res) => {
+  try {
+    const actor = String(req.header('x-user') ?? '').trim()
+    if (!actor) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+    const diffLimitRaw = toNumberFlexible(req.body?.diffLimitTl) ?? toNumberOrUndef(req.body?.diffLimitTl)
+    if (diffLimitRaw == null || !Number.isFinite(diffLimitRaw) || diffLimitRaw < 0) {
+      res.status(400).send('Geçersiz limit')
+      return
+    }
+
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const ok = await requireAdminUser(pool, actor)
+    if (!ok) {
+      res.status(403).send('Yetkisiz')
+      return
+    }
+
+    const diffLimitTl = await upsertMutabakatDiffLimitTl(pool, diffLimitRaw, actor)
+    res.json({ ok: true, settings: { diffLimitTl } })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
 
 app.post('/api/auth/login', async (req, res) => {
   try {
@@ -4105,8 +4214,9 @@ WHERE SourceFileDate = @SourceFileDate
       return
     }
     const diff = Number(row.DiffAmount ?? 0)
-    if (Math.abs(diff) >= 0.01) {
-      res.status(400).send('Fark sıfır değil')
+    const diffLimitTl = await getMutabakatDiffLimitTl(pool)
+    if (Math.abs(diff) > diffLimitTl + 1e-9) {
+      res.status(400).send(`Fark izinli limit dışında (±${diffLimitTl})`)
       return
     }
 

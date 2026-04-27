@@ -11,6 +11,7 @@ import {
   fetchImportJobStatus,
   fetchImportFiles,
   fetchMutabakat,
+  fetchMutabakatSettings,
   fetchPositionData,
   fetchPositions,
   fetchPositionRepresentatives,
@@ -21,6 +22,7 @@ import {
   savePositionRepresentative,
   saveInvoiceAllocationsSql,
   savePaymentAllocationsSql,
+  updateMutabakatSettings,
   type ManimDekontCandidate,
   type ManimReceiptRow,
   type MutabakatAdjustment,
@@ -167,6 +169,13 @@ function defaultPermissionsForRole(roleCode: RoleCode): ScreenPermissions {
     return { canMain: true, canMutabakat: true, canBayiHavaleMatch: true, canPositionRepresentative: true, canUserAdmin: true }
   }
   return { canMain: true, canMutabakat: true, canBayiHavaleMatch: true, canPositionRepresentative: true, canUserAdmin: false }
+}
+
+function parseTrDecimalInput(value: string) {
+  const normalized = String(value ?? '').trim().replace(',', '.')
+  if (!normalized) return 0
+  const parsed = Number(normalized)
+  return Number.isFinite(parsed) ? parsed : 0
 }
 
 function LoginPage(props: { onLogin: (user: SessionUser) => void }) {
@@ -424,6 +433,8 @@ export default function App() {
   const [adminDeleteDate, setAdminDeleteDate] = useState('')
   const [adminDeleteDepot, setAdminDeleteDepot] = useState('')
   const [adminDeleteFileName, setAdminDeleteFileName] = useState('')
+  const [mutabakatDiffLimitTl, setMutabakatDiffLimitTl] = useState(0.01)
+  const [adminMutabakatDiffLimitInput, setAdminMutabakatDiffLimitInput] = useState('0.01')
 
   useEffect(() => {
     if (!currentUser) return
@@ -473,6 +484,23 @@ export default function App() {
       })
       .finally(() => setAdminUsersLoading(false))
   }, [currentUser, page])
+
+  useEffect(() => {
+    if (!currentUser) {
+      setMutabakatDiffLimitTl(0.01)
+      setAdminMutabakatDiffLimitInput('0.01')
+      return
+    }
+    fetchMutabakatSettings({ userName: currentUser.userName })
+      .then((r) => {
+        if (!r.ok || !r.settings) return
+        const next = Number(r.settings.diffLimitTl)
+        if (!Number.isFinite(next) || next < 0) return
+        setMutabakatDiffLimitTl(next)
+        setAdminMutabakatDiffLimitInput(String(next))
+      })
+      .catch(() => {})
+  }, [currentUser])
 
   useEffect(() => {
     if (!currentUser) {
@@ -1192,6 +1220,7 @@ export default function App() {
   const bankEnabled = mutabakatMode === 'BANKA' || mutabakatMode === 'KARMA'
   const enteredTotal = (cashEnabled ? cashTotal : 0) + (bankEnabled ? Number(yatanTutar) || 0 : 0)
   const mutabakatFark = enteredTotal + adjustmentTotal - torbaTutari
+  const isWithinMutabakatDiffLimit = Math.abs(mutabakatFark) <= mutabakatDiffLimitTl + 1e-9
   const mutabakatFarkClass = Math.abs(mutabakatFark) < 0.01 ? 'is-zero' : mutabakatFark > 0 ? 'is-positive' : 'is-negative'
 
   const validatePaymentInputs = () => {
@@ -1403,7 +1432,10 @@ export default function App() {
     setMutabakatRecord(r.record)
     setStatus({
       type: 'success',
-      message: Math.abs(Number(r.record.diffAmount) || 0) < 0.01 ? 'Mutabakat kaydedildi (Fark 0: Mutabakatı Tamamla aktif)' : 'Mutabakat kaydedildi',
+      message:
+        Math.abs(Number(r.record.diffAmount) || 0) <= mutabakatDiffLimitTl + 1e-9
+          ? `Mutabakat kaydedildi (Fark limit içinde: ${formatMoney(mutabakatDiffLimitTl)})`
+          : 'Mutabakat kaydedildi',
     })
   }
 
@@ -1411,8 +1443,8 @@ export default function App() {
     if (!currentUser) return
     if (!mutabakatSaved) return
     if (mutabakatSaved.status === 'COMPLETED') return
-    if (Math.abs(mutabakatFark) >= 0.01) {
-      setStatus({ type: 'error', message: 'Fark sıfır değil. Mutabakat tamamlanamaz.' })
+    if (!isWithinMutabakatDiffLimit) {
+      setStatus({ type: 'error', message: `Fark limit dışında. İzinli limit: ${formatMoney(mutabakatDiffLimitTl)}` })
       return
     }
 
@@ -2130,6 +2162,40 @@ export default function App() {
           ) : (
             <>
               <div className="upload-section">
+                <div className="upload-box" style={{ gap: 10, alignItems: 'end', marginBottom: 10 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 220 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Mutabakat Fark Limiti (TL)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={adminMutabakatDiffLimitInput}
+                      onChange={(e) => setAdminMutabakatDiffLimitInput(e.target.value)}
+                    />
+                  </div>
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    onClick={async () => {
+                      const value = parseTrDecimalInput(adminMutabakatDiffLimitInput)
+                      if (!Number.isFinite(value) || value < 0) {
+                        setAdminStatus({ type: 'error', message: 'Limit 0 veya daha büyük olmalı' })
+                        return
+                      }
+                      setAdminStatus({ type: 'info', message: 'Ayar kaydediliyor...' })
+                      const r = await updateMutabakatSettings({ userName: currentUser.userName, diffLimitTl: value })
+                      if (!r.ok || !r.settings) {
+                        setAdminStatus({ type: 'error', message: r.message || 'Ayar kaydedilemedi' })
+                        return
+                      }
+                      setMutabakatDiffLimitTl(r.settings.diffLimitTl)
+                      setAdminMutabakatDiffLimitInput(String(r.settings.diffLimitTl))
+                      setAdminStatus({ type: 'success', message: 'Mutabakat fark limiti güncellendi' })
+                    }}
+                  >
+                    Ayarı Kaydet
+                  </button>
+                </div>
                 <div className="upload-box" style={{ gap: 10, alignItems: 'end' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 220 }}>
                     <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Kullanıcı Adı</label>
@@ -2723,7 +2789,7 @@ export default function App() {
                       <button className="btn btn-secondary" type="button" onClick={addMutabakatAdjustment} disabled={mutabakatSaved?.status === 'COMPLETED'}>
                         Kayıt Ekle
                       </button>
-                      <div className="mutabakat-hint">{Math.abs(mutabakatFark) < 0.01 ? 'Fark 0. Mutabakatı tamamla aktif.' : ''}</div>
+                    <div className="mutabakat-hint">{isWithinMutabakatDiffLimit ? `Fark limit içinde (${formatMoney(mutabakatDiffLimitTl)}).` : ''}</div>
                     </div>
                     <table className="mini-table">
                       <thead>
@@ -2765,8 +2831,13 @@ export default function App() {
                               <td>
                                 <input
                                   type="number"
+                                  step="0.01"
                                   value={a.amount || ''}
-                                  onChange={(e) => setMutabakatAdjustments((prev) => prev.map((x) => (x.id === a.id ? { ...x, amount: Number(e.target.value || 0) } : x)))}
+                                  onChange={(e) =>
+                                    setMutabakatAdjustments((prev) =>
+                                      prev.map((x) => (x.id === a.id ? { ...x, amount: parseTrDecimalInput(e.target.value) } : x)),
+                                    )
+                                  }
                                   disabled={mutabakatSaved?.status === 'COMPLETED'}
                                 />
                               </td>
@@ -2966,7 +3037,7 @@ export default function App() {
                                       value={entered || ''}
                                       disabled={mutabakatSaved?.status === 'COMPLETED'}
                                       onChange={(e) => {
-                                        const next = Math.max(0, Number(e.target.value || 0))
+                                        const next = Math.max(0, parseTrDecimalInput(e.target.value))
                                         setBanknoteCounts((prev) => ({ ...prev, [d]: next }))
                                       }}
                                     />
@@ -2999,9 +3070,10 @@ export default function App() {
                             <label>Yatan Tutar</label>
                             <input
                               type="number"
+                              step="0.01"
                               value={yatanTutar || ''}
                               disabled={mutabakatSaved?.status === 'COMPLETED'}
-                              onChange={(e) => setYatanTutar(Number(e.target.value || 0))}
+                              onChange={(e) => setYatanTutar(parseTrDecimalInput(e.target.value))}
                             />
                           </div>
                           <div className="mutabakat-field">
@@ -3236,7 +3308,7 @@ export default function App() {
                         className="btn btn-secondary"
                         type="button"
                         onClick={completeMutabakatData}
-                        disabled={!mutabakatSaved || mutabakatSaved.status === 'COMPLETED' || Math.abs(mutabakatFark) >= 0.01}
+                        disabled={!mutabakatSaved || mutabakatSaved.status === 'COMPLETED' || !isWithinMutabakatDiffLimit}
                       >
                         Mutabakatı Tamamla
                       </button>
