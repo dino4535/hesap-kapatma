@@ -1204,7 +1204,8 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) return
     const date = selectedDataset.date
-    if (!date || mutabakatStep !== 2) {
+    const shouldLoadBayiMatch = Boolean(date) && Boolean(selectedPosition) && (mutabakatStep === 2 || page === 'bayi-havale-match')
+    if (!shouldLoadBayiMatch) {
       setManimBayiMatchLoading(false)
       setManimBayiMatchReceipts([])
       return
@@ -1235,7 +1236,7 @@ export default function App() {
     return () => {
       alive = false
     }
-  }, [currentUser, selectedDataset.date, mutabakatStep, selectedPosition])
+  }, [currentUser, selectedDataset.date, mutabakatStep, selectedPosition, page])
 
   const filteredManimReceipts = useMemo(() => {
     const q = manimReceiptSearch.trim().toLocaleLowerCase('tr-TR')
