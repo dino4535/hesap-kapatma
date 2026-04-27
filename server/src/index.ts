@@ -907,9 +907,23 @@ BEGIN
   ALTER TABLE dbo.Users ADD RoleCode NVARCHAR(32) NULL;
 END
 
+IF COL_LENGTH('dbo.Users', 'RoleCode') IS NOT NULL
+BEGIN
+  EXEC(N'
 UPDATE dbo.Users
-SET RoleCode = CASE WHEN IsAdmin = 1 THEN 'ADMIN' ELSE 'SHEF' END
-WHERE RoleCode IS NULL OR LTRIM(RTRIM(RoleCode)) = '';
+SET RoleCode = CASE WHEN IsAdmin = 1 THEN ''ADMIN'' ELSE ''SHEF'' END
+WHERE RoleCode IS NULL OR LTRIM(RTRIM(RoleCode)) = '''';
+');
+END
+
+IF COL_LENGTH('dbo.Users', 'RoleCode') IS NOT NULL
+BEGIN
+  EXEC(N'
+UPDATE dbo.Users
+SET IsAdmin = 1, RoleCode = ''ADMIN''
+WHERE UserName = ''hk_admin'';
+');
+END
 
 IF OBJECT_ID('dbo.UserScreenPermissions', 'U') IS NULL
 BEGIN
@@ -929,11 +943,11 @@ MERGE dbo.UserScreenPermissions WITH (HOLDLOCK) AS t
 USING (
   SELECT
     UserName,
-    CASE WHEN RoleCode = 'ADMIN' THEN CAST(1 AS BIT) ELSE CAST(1 AS BIT) END AS CanMain,
-    CASE WHEN RoleCode = 'ADMIN' THEN CAST(1 AS BIT) ELSE CAST(1 AS BIT) END AS CanMutabakat,
-    CASE WHEN RoleCode = 'ADMIN' THEN CAST(1 AS BIT) ELSE CAST(1 AS BIT) END AS CanBayiHavaleMatch,
-    CASE WHEN RoleCode = 'ADMIN' THEN CAST(1 AS BIT) ELSE CAST(1 AS BIT) END AS CanPositionRepresentative,
-    CASE WHEN RoleCode = 'ADMIN' THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS CanUserAdmin
+    CAST(1 AS BIT) AS CanMain,
+    CAST(1 AS BIT) AS CanMutabakat,
+    CAST(1 AS BIT) AS CanBayiHavaleMatch,
+    CAST(1 AS BIT) AS CanPositionRepresentative,
+    CASE WHEN IsAdmin = 1 THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS CanUserAdmin
   FROM dbo.Users
 ) AS s
 ON t.UserName = s.UserName
