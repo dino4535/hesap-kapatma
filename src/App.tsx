@@ -11,6 +11,7 @@ import {
   fetchImportJobStatus,
   fetchImportFiles,
   fetchMutabakat,
+  fetchEndOfDayReport,
   fetchMutabakatSettings,
   fetchPositionData,
   fetchPositions,
@@ -30,6 +31,7 @@ import {
   type MutabakatRecord,
   type ImportFileRow,
   type ImportResultFile,
+  type EndOfDayReport,
   type PositionRow,
   type PositionRepresentativeRow,
   type RoleCode,
@@ -176,6 +178,21 @@ function parseTrDecimalInput(value: string) {
   if (!normalized) return 0
   const parsed = Number(normalized)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function allocationSummaryFromJson(value?: string) {
+  if (!value) return '-'
+  try {
+    const parsed = JSON.parse(value) as Array<{ type?: unknown; amount?: unknown }>
+    if (!Array.isArray(parsed)) return '-'
+    const rows = parsed
+      .map((x) => ({ type: String(x?.type ?? '').trim() as PaymentType, amount: Number(x?.amount ?? 0) || 0 }))
+      .filter((x) => x.amount > 0 && PAYMENT_TYPES.includes(x.type))
+    if (rows.length === 0) return '-'
+    return rows.map((x) => `${paymentTypeLabel(x.type)}: ${formatMoney(x.amount)}`).join(' / ')
+  } catch {
+    return '-'
+  }
 }
 
 function buildIncomingByCorrespondentCode(receipts: ManimReceiptRow[]) {
@@ -382,7 +399,7 @@ export default function App() {
   const [uploadDepotMap, setUploadDepotMap] = useState<Record<string, string>>({})
   const [uploadBulkDepot, setUploadBulkDepot] = useState('')
   const [importJobFiles, setImportJobFiles] = useState<ImportResultFile[]>([])
-  const [page, setPage] = useState<'main' | 'mutabakat' | 'bayi-havale-match' | 'position-representative' | 'user-admin'>('main')
+  const [page, setPage] = useState<'main' | 'mutabakat' | 'bayi-havale-match' | 'position-representative' | 'end-of-day-report' | 'user-admin'>('main')
   const [selectedPosition, setSelectedPosition] = useState<string | null>(null)
   const [detailSearch, setDetailSearch] = useState('')
 
@@ -446,6 +463,10 @@ export default function App() {
   const [adminDeleteFileName, setAdminDeleteFileName] = useState('')
   const [mutabakatDiffLimitTl, setMutabakatDiffLimitTl] = useState(0.01)
   const [adminMutabakatDiffLimitInput, setAdminMutabakatDiffLimitInput] = useState('0.01')
+  const [endOfDayReport, setEndOfDayReport] = useState<EndOfDayReport | null>(null)
+  const [endOfDayLoading, setEndOfDayLoading] = useState(false)
+  const [endOfDayDepot, setEndOfDayDepot] = useState('')
+  const [endOfDayRefreshTick, setEndOfDayRefreshTick] = useState(0)
 
   useEffect(() => {
     if (!currentUser) return
@@ -626,6 +647,14 @@ export default function App() {
   }, [selectedDate, depotOptions, selectedDepot])
 
   useEffect(() => {
+    if (!selectedDepot) {
+      setEndOfDayDepot('')
+      return
+    }
+    setEndOfDayDepot((prev) => prev || selectedDepot)
+  }, [selectedDepot])
+
+  useEffect(() => {
     if (!currentUser) return
     if (!selectedDataset.date || !selectedDataset.depot) {
       setPositions([])
@@ -742,10 +771,11 @@ export default function App() {
 
   useEffect(() => {
     if (!currentUser) return
-    const allowedPages: Array<'main' | 'mutabakat' | 'bayi-havale-match' | 'position-representative' | 'user-admin'> = []
+    const allowedPages: Array<'main' | 'mutabakat' | 'bayi-havale-match' | 'position-representative' | 'end-of-day-report' | 'user-admin'> = []
     if (canMainPage) allowedPages.push('main')
     if (canMutabakatPage) allowedPages.push('mutabakat')
     if (canBayiHavaleMatchPage) allowedPages.push('bayi-havale-match')
+    if (canMutabakatPage) allowedPages.push('end-of-day-report')
     if (canPositionRepresentativePage) allowedPages.push('position-representative')
     if (canUserAdminPage) allowedPages.push('user-admin')
     if (allowedPages.length === 0) {
@@ -1363,6 +1393,43 @@ export default function App() {
     }
   }, [currentUser, selectedDataset.date, mutabakatStep, selectedPosition, page])
 
+  useEffect(() => {
+    if (!currentUser) return
+    if (page !== 'end-of-day-report') return
+    const reportDate = selectedDataset.date
+    if (!reportDate || !endOfDayDepot) {
+      setEndOfDayReport(null)
+      setEndOfDayLoading(false)
+      return
+    }
+
+    let alive = true
+    const load = () => {
+      setEndOfDayLoading(true)
+      fetchEndOfDayReport({ userName: currentUser.userName, date: reportDate, depot: endOfDayDepot })
+        .then((r) => {
+          if (!alive) return
+          if (!r.ok || !r.report) throw new Error(r.message || 'Gün sonu raporu alınamadı')
+          setEndOfDayReport(r.report)
+        })
+        .catch((e) => {
+          if (!alive) return
+          setStatus({ type: 'error', message: e instanceof Error ? e.message : 'Gün sonu raporu alınamadı' })
+          setEndOfDayReport(null)
+        })
+        .finally(() => {
+          if (!alive) return
+          setEndOfDayLoading(false)
+        })
+    }
+    load()
+    const timer = window.setInterval(load, 15_000)
+    return () => {
+      alive = false
+      window.clearInterval(timer)
+    }
+  }, [currentUser, page, selectedDataset.date, endOfDayDepot, endOfDayRefreshTick])
+
   const filteredManimReceipts = useMemo(() => {
     const q = manimReceiptSearch.trim().toLocaleLowerCase('tr-TR')
     if (!q) return manimReceipts
@@ -1874,6 +1941,8 @@ export default function App() {
       ? 'Mutabakat'
       : page === 'bayi-havale-match'
         ? 'Bayi Havale Eşleme'
+      : page === 'end-of-day-report'
+        ? 'Gün Sonu Raporu'
       : page === 'position-representative'
         ? 'Pozisyon - Temsilci'
         : page === 'user-admin'
@@ -1918,6 +1987,17 @@ export default function App() {
                 }}
               >
                 Mutabakat
+              </button>
+            ) : null}
+            {canMutabakatPage ? (
+              <button
+                className={`nav-item ${page === 'end-of-day-report' ? 'active' : ''}`}
+                type="button"
+                onClick={() => {
+                  setPage('end-of-day-report')
+                }}
+              >
+                Gün Sonu Raporu
               </button>
             ) : null}
             {canBayiHavaleMatchPage ? (
@@ -1979,6 +2059,8 @@ export default function App() {
                   ? 'Pozisyona göre temsilci tanımlama'
                   : page === 'bayi-havale-match'
                     ? 'Bayi havale eşleme kontrol ekranı'
+                  : page === 'end-of-day-report'
+                    ? 'Depo filtreli banka, nakit ve düzeltme raporları'
                   : page === 'mutabakat'
                     ? 'Mutabakat akışı'
                     : page === 'user-admin'
@@ -2010,7 +2092,304 @@ export default function App() {
           </div>
 
           <div className="app-container">
-            {page === 'position-representative' ? (
+            {page === 'end-of-day-report' ? (
+        <>
+          <div className="upload-section">
+            <div className="upload-box" style={{ gap: 10, alignItems: 'end', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 180 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Tarih</label>
+                <input value={selectedDataset.date ? formatDateTr(selectedDataset.date) : '-'} disabled />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 220 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Depo Filtresi</label>
+                <select value={endOfDayDepot} onChange={(e) => setEndOfDayDepot(e.target.value)} disabled={!selectedDataset.date}>
+                  <option value="">Depo seçiniz</option>
+                  {depotOptions.map((d) => (
+                    <option key={d} value={d}>
+                      {depotLabel(d)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button className="btn btn-secondary" type="button" onClick={() => setEndOfDayRefreshTick((x) => x + 1)} disabled={!selectedDataset.date || !endOfDayDepot}>
+                Yenile
+              </button>
+            </div>
+          </div>
+
+          {!selectedDataset.date ? (
+            <div className="empty-state">Rapor için önce tarih seçiniz.</div>
+          ) : !endOfDayDepot ? (
+            <div className="empty-state">Rapor için depo filtresi seçiniz.</div>
+          ) : endOfDayLoading && !endOfDayReport ? (
+            <div className="empty-state">Rapor yükleniyor...</div>
+          ) : !endOfDayReport ? (
+            <div className="empty-state">Rapor verisi bulunamadı.</div>
+          ) : (
+            <>
+              <div className="table-section">
+                <div className="table-header">
+                  <span className="table-title">Özet</span>
+                </div>
+                <div className="upload-box" style={{ gap: 20 }}>
+                  <div>
+                    <strong>Tamamlanan Mutabakat:</strong> {endOfDayReport.completedMutabakatCount}
+                  </div>
+                  <div>
+                    <strong>Toplam Yatan Tutar:</strong> {formatMoney(endOfDayReport.totalBankDeposit)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="table-section">
+                <div className="table-header">
+                  <span className="table-title">Banka Bazlı Yatan Tutar</span>
+                </div>
+                <div className="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Banka</th>
+                        <th>Adet</th>
+                        <th>Toplam Tutar</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {endOfDayReport.bankTotals.length === 0 ? (
+                        <tr>
+                          <td colSpan={3} style={{ textAlign: 'center', color: '#718096' }}>
+                            Kayıt yok
+                          </td>
+                        </tr>
+                      ) : (
+                        endOfDayReport.bankTotals.map((x) => (
+                          <tr key={x.bankName}>
+                            <td>{x.bankName}</td>
+                            <td>{x.recordCount}</td>
+                            <td>{formatMoney(x.totalAmount)}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="table-section">
+                <div className="table-header">
+                  <span className="table-title">Nakit Dökümü (Temsilci/Pozisyon)</span>
+                </div>
+                <div className="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Temsilci</th>
+                        <th>Pozisyon</th>
+                        <th>200</th>
+                        <th>100</th>
+                        <th>50</th>
+                        <th>20</th>
+                        <th>10</th>
+                        <th>5</th>
+                        <th>Nikel</th>
+                        <th>Toplam Nakit</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {endOfDayReport.cashByPosition.length === 0 ? (
+                        <tr>
+                          <td colSpan={10} style={{ textAlign: 'center', color: '#718096' }}>
+                            Kayıt yok
+                          </td>
+                        </tr>
+                      ) : (
+                        endOfDayReport.cashByPosition.map((x) => (
+                          <tr key={`${x.positionCode}|${x.representativeName}`}>
+                            <td>{x.representativeName || '-'}</td>
+                            <td>{x.positionCode || '-'}</td>
+                            <td>{formatMoney(x.denominationTotals['200'] ?? 0)}</td>
+                            <td>{formatMoney(x.denominationTotals['100'] ?? 0)}</td>
+                            <td>{formatMoney(x.denominationTotals['50'] ?? 0)}</td>
+                            <td>{formatMoney(x.denominationTotals['20'] ?? 0)}</td>
+                            <td>{formatMoney(x.denominationTotals['10'] ?? 0)}</td>
+                            <td>{formatMoney(x.denominationTotals['5'] ?? 0)}</td>
+                            <td>{formatMoney(x.denominationTotals['1'] ?? 0)}</td>
+                            <td>{formatMoney(x.totalCash)}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="table-section">
+                <div className="table-header">
+                  <span className="table-title">Nakit Dökümü (Toplu)</span>
+                </div>
+                <div className="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Tür</th>
+                        <th>Tutar</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {endOfDayReport.cashOverall.length === 0 ? (
+                        <tr>
+                          <td colSpan={2} style={{ textAlign: 'center', color: '#718096' }}>
+                            Kayıt yok
+                          </td>
+                        </tr>
+                      ) : (
+                        endOfDayReport.cashOverall.map((x) => (
+                          <tr key={x.denomination}>
+                            <td>{x.denomination === '1' ? 'Nikel' : `${x.denomination} TL`}</td>
+                            <td>{formatMoney(x.amount)}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="table-section">
+                <div className="table-header">
+                  <span className="table-title">Düzeltme Kayıtları</span>
+                </div>
+                <div className="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Tarih</th>
+                        <th>Güncelleyen</th>
+                        <th>Temsilci</th>
+                        <th>Pozisyon</th>
+                        <th>Tip</th>
+                        <th>Açıklama</th>
+                        <th>Tutar</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {endOfDayReport.adjustments.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} style={{ textAlign: 'center', color: '#718096' }}>
+                            Kayıt yok
+                          </td>
+                        </tr>
+                      ) : (
+                        endOfDayReport.adjustments.map((x, idx) => (
+                          <tr key={`${x.positionCode}|${x.updatedAt ?? ''}|${idx}`}>
+                            <td>{x.updatedAt ? formatDateTimeTr(x.updatedAt) : '-'}</td>
+                            <td>{x.updatedBy || '-'}</td>
+                            <td>{x.representativeName || '-'}</td>
+                            <td>{x.positionCode || '-'}</td>
+                            <td>{x.type || '-'}</td>
+                            <td>{x.description || '-'}</td>
+                            <td>{formatMoney(x.amount)}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="table-section">
+                <div className="table-header">
+                  <span className="table-title">Fatura Tipi Değişiklikleri</span>
+                </div>
+                <div className="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Tarih</th>
+                        <th>Kullanıcı</th>
+                        <th>Temsilci</th>
+                        <th>Pozisyon</th>
+                        <th>Fatura</th>
+                        <th>Müşteri</th>
+                        <th>Eski Dağılım</th>
+                        <th>Yeni Dağılım</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {endOfDayReport.invoiceAllocationChanges.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} style={{ textAlign: 'center', color: '#718096' }}>
+                            Kayıt yok
+                          </td>
+                        </tr>
+                      ) : (
+                        endOfDayReport.invoiceAllocationChanges.map((x, idx) => (
+                          <tr key={`${x.invoiceCode ?? ''}|${x.changedAt ?? ''}|${idx}`}>
+                            <td>{x.changedAt ? formatDateTimeTr(x.changedAt) : '-'}</td>
+                            <td>{x.changedBy || '-'}</td>
+                            <td>{x.representativeName || '-'}</td>
+                            <td>{x.positionCode || '-'}</td>
+                            <td>{x.invoiceCode || '-'}</td>
+                            <td>{x.customerName || '-'}</td>
+                            <td>{allocationSummaryFromJson(x.fromJson)}</td>
+                            <td>{allocationSummaryFromJson(x.toJson)}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="table-section">
+                <div className="table-header">
+                  <span className="table-title">Tahsilat Tipi Değişiklikleri</span>
+                </div>
+                <div className="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Tarih</th>
+                        <th>Kullanıcı</th>
+                        <th>Temsilci</th>
+                        <th>Pozisyon</th>
+                        <th>Tahsilat</th>
+                        <th>Fatura</th>
+                        <th>Müşteri</th>
+                        <th>Eski Dağılım</th>
+                        <th>Yeni Dağılım</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {endOfDayReport.paymentAllocationChanges.length === 0 ? (
+                        <tr>
+                          <td colSpan={9} style={{ textAlign: 'center', color: '#718096' }}>
+                            Kayıt yok
+                          </td>
+                        </tr>
+                      ) : (
+                        endOfDayReport.paymentAllocationChanges.map((x, idx) => (
+                          <tr key={`${x.paymentKey ?? ''}|${x.changedAt ?? ''}|${idx}`}>
+                            <td>{x.changedAt ? formatDateTimeTr(x.changedAt) : '-'}</td>
+                            <td>{x.changedBy || '-'}</td>
+                            <td>{x.representativeName || '-'}</td>
+                            <td>{x.positionCode || '-'}</td>
+                            <td>{x.paymentKey || '-'}</td>
+                            <td>{x.invoiceCode || '-'}</td>
+                            <td>{x.customerName || '-'}</td>
+                            <td>{allocationSummaryFromJson(x.fromJson)}</td>
+                            <td>{allocationSummaryFromJson(x.toJson)}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+        </>
+      ) : page === 'position-representative' ? (
         <>
           <div className="header">
             <h1>Pozisyon - Temsilci Eşleme</h1>

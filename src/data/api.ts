@@ -370,6 +370,59 @@ export interface MutabakatSettings {
   diffLimitTl: number
 }
 
+export interface EndOfDayBankTotalRow {
+  bankName: string
+  totalAmount: number
+  recordCount: number
+}
+
+export interface EndOfDayCashByPositionRow {
+  positionCode: string
+  representativeName: string
+  denominationTotals: Record<string, number>
+  totalCash: number
+}
+
+export interface EndOfDayCashOverallRow {
+  denomination: string
+  amount: number
+}
+
+export interface EndOfDayAllocationChangeRow {
+  changedAt?: string
+  changedBy?: string
+  positionCode: string
+  representativeName: string
+  invoiceCode?: string
+  paymentKey?: string
+  customerName: string
+  fromJson?: string
+  toJson?: string
+}
+
+export interface EndOfDayAdjustmentRow {
+  positionCode: string
+  representativeName: string
+  type: string
+  description: string
+  amount: number
+  updatedAt?: string
+  updatedBy?: string
+}
+
+export interface EndOfDayReport {
+  date: string
+  depotCode: string
+  completedMutabakatCount: number
+  totalBankDeposit: number
+  bankTotals: EndOfDayBankTotalRow[]
+  cashByPosition: EndOfDayCashByPositionRow[]
+  cashOverall: EndOfDayCashOverallRow[]
+  invoiceAllocationChanges: EndOfDayAllocationChangeRow[]
+  paymentAllocationChanges: EndOfDayAllocationChangeRow[]
+  adjustments: EndOfDayAdjustmentRow[]
+}
+
 export async function fetchUsers(args: {
   userName: string
 }): Promise<{ ok: boolean; users: UserRow[]; message?: string }> {
@@ -463,6 +516,24 @@ export async function updateMutabakatSettings(args: {
     return { ok: false, message: text || `HTTP ${res.status}` }
   }
   return (await res.json()) as { ok: boolean; settings: MutabakatSettings }
+}
+
+export async function fetchEndOfDayReport(args: {
+  userName: string
+  date: string
+  depot: string
+}): Promise<{ ok: boolean; report?: EndOfDayReport; message?: string }> {
+  const qs = new URLSearchParams()
+  qs.set('date', args.date)
+  qs.set('depot', args.depot)
+  const res = await fetch(`/api/reports/end-of-day?${qs.toString()}`, {
+    headers: { 'x-user': args.userName },
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; report: EndOfDayReport }
 }
 
 export async function deleteDataByDateDepot(args: {

@@ -4324,6 +4324,228 @@ WHERE SourceFileDate = @SourceFileDate
   }
 })
 
+app.get('/api/reports/end-of-day', async (req, res) => {
+  try {
+    const userName = String(req.header('x-user') ?? '').trim()
+    if (!userName) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+
+    const parsedDate = parseQueryDate(req.query.date)
+    if (!parsedDate.ok || !parsedDate.date) {
+      res.status(400).send(parsedDate.ok ? 'Tarih zorunlu' : parsedDate.error)
+      return
+    }
+    const depotCode = String(req.query.depot ?? '').trim()
+    if (!depotCode) {
+      res.status(400).send('Depo zorunlu')
+      return
+    }
+
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const active = await requireActiveUser(pool, userName)
+    if (!active.active) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+
+    const mutabakatRes = await pool
+      .request()
+      .input('SourceFileDate', mssql.Date, parsedDate.date)
+      .input('DepotCode', mssql.NVarChar(32), depotCode)
+      .query(`
+SELECT
+  m.PositionCode,
+  m.BankName,
+  m.BankDepositAmount,
+  m.CashJson,
+  m.AdjustmentsJson,
+  m.UpdatedBy,
+  m.UpdatedAt,
+  r.RepresentativeName
+FROM dbo.Mutabakat m
+LEFT JOIN dbo.PositionRepresentativeMap r ON r.PositionCode = m.PositionCode
+WHERE m.SourceFileDate = @SourceFileDate
+  AND m.DepotCode = @DepotCode
+  AND m.Status = 'COMPLETED'
+`)
+
+    const invoiceEditRes = await pool
+      .request()
+      .input('SourceFileDate', mssql.Date, parsedDate.date)
+      .input('DepotCode', mssql.NVarChar(32), depotCode)
+      .query(`
+SELECT TOP 5000
+  e.ChangedAt,
+  e.ChangedBy,
+  e.EntityKey AS InvoiceCode,
+  e.FromJson,
+  e.ToJson,
+  i.position_code AS PositionCode,
+  cu.registered_name AS CustomerName,
+  r.RepresentativeName
+FROM dbo.AllocationEdits e
+JOIN dist2k.FACT_INVOICE i ON i.invoice_code = e.EntityKey
+LEFT JOIN dist2k.DIM_CUSTOMER cu ON cu.customer_code = i.customer_code
+LEFT JOIN dbo.PositionRepresentativeMap r ON r.PositionCode = i.position_code
+WHERE e.EntityType = 'invoice'
+  AND i.source_file_date = @SourceFileDate
+  AND i.source_depot_code = @DepotCode
+ORDER BY e.ChangedAt DESC
+`)
+
+    const paymentEditRes = await pool
+      .request()
+      .input('SourceFileDate', mssql.Date, parsedDate.date)
+      .input('DepotCode', mssql.NVarChar(32), depotCode)
+      .query(`
+SELECT TOP 5000
+  e.ChangedAt,
+  e.ChangedBy,
+  e.EntityKey AS PaymentKey,
+  e.FromJson,
+  e.ToJson,
+  c.position_code AS PositionCode,
+  c.invoice_code AS InvoiceCode,
+  cu.registered_name AS CustomerName,
+  r.RepresentativeName
+FROM dbo.AllocationEdits e
+JOIN dist2k.FACT_COLLECTION c ON c.collection_code = e.EntityKey
+LEFT JOIN dist2k.DIM_CUSTOMER cu ON cu.customer_code = c.customer_code
+LEFT JOIN dbo.PositionRepresentativeMap r ON r.PositionCode = c.position_code
+WHERE e.EntityType = 'payment'
+  AND c.source_file_date = @SourceFileDate
+  AND c.source_depot_code = @DepotCode
+ORDER BY e.ChangedAt DESC
+`)
+
+    const bankTotals = new Map<string, { bankName: string; totalAmount: number; recordCount: number }>()
+    const cashByPositionMap = new Map<string, { positionCode: string; representativeName: string; denominationTotals: Record<string, number>; totalCash: number }>()
+    const cashOverallMap = new Map<string, number>()
+    const adjustmentRows: Array<{
+      positionCode: string
+      representativeName: string
+      type: string
+      description: string
+      amount: number
+      updatedAt?: string
+      updatedBy?: string
+    }> = []
+    const denoms = ['200', '100', '50', '20', '10', '5', '1']
+
+    for (const row of mutabakatRes.recordset ?? []) {
+      const bankName = String(row.BankName ?? '').trim() || '-'
+      const bankAmount = Number(row.BankDepositAmount ?? 0) || 0
+      if (bankAmount > 0) {
+        const prev = bankTotals.get(bankName) ?? { bankName, totalAmount: 0, recordCount: 0 }
+        prev.totalAmount += bankAmount
+        prev.recordCount += 1
+        bankTotals.set(bankName, prev)
+      }
+
+      const positionCode = String(row.PositionCode ?? '').trim()
+      const representativeName = String(row.RepresentativeName ?? '').trim() || '-'
+      const key = `${positionCode}|${representativeName}`
+      const pos = cashByPositionMap.get(key) ?? {
+        positionCode,
+        representativeName,
+        denominationTotals: { '200': 0, '100': 0, '50': 0, '20': 0, '10': 0, '5': 0, '1': 0 },
+        totalCash: 0,
+      }
+      let banknoteCounts: Record<string, unknown> = {}
+      if (row.CashJson) {
+        try {
+          const parsed = JSON.parse(String(row.CashJson)) as { banknoteCounts?: Record<string, unknown> }
+          if (parsed && parsed.banknoteCounts && typeof parsed.banknoteCounts === 'object') banknoteCounts = parsed.banknoteCounts
+        } catch {}
+      }
+      for (const d of denoms) {
+        const entered = Number(banknoteCounts[d] ?? 0) || 0
+        if (entered <= 0) continue
+        const lineTotal = d === '1' ? entered : Number(d) * entered
+        pos.denominationTotals[d] = (pos.denominationTotals[d] ?? 0) + lineTotal
+        pos.totalCash += lineTotal
+        cashOverallMap.set(d, (cashOverallMap.get(d) ?? 0) + lineTotal)
+      }
+      cashByPositionMap.set(key, pos)
+
+      let adjustments: Array<{ type?: unknown; description?: unknown; amount?: unknown }> = []
+      if (row.AdjustmentsJson) {
+        try {
+          const parsed = JSON.parse(String(row.AdjustmentsJson))
+          if (Array.isArray(parsed)) adjustments = parsed as Array<{ type?: unknown; description?: unknown; amount?: unknown }>
+        } catch {}
+      }
+      for (const a of adjustments) {
+        const amount = Number(a?.amount ?? 0) || 0
+        if (amount === 0) continue
+        adjustmentRows.push({
+          positionCode,
+          representativeName,
+          type: String(a?.type ?? ''),
+          description: String(a?.description ?? '').trim(),
+          amount,
+          updatedAt: row.UpdatedAt ? new Date(row.UpdatedAt).toISOString() : undefined,
+          updatedBy: row.UpdatedBy ? String(row.UpdatedBy) : undefined,
+        })
+      }
+    }
+
+    const bankTotalsRows = Array.from(bankTotals.values()).sort((a, b) => b.totalAmount - a.totalAmount)
+    const totalBankDeposit = bankTotalsRows.reduce((s, x) => s + x.totalAmount, 0)
+    const cashByPositionRows = Array.from(cashByPositionMap.values()).sort((a, b) => {
+      const repCmp = a.representativeName.localeCompare(b.representativeName, 'tr', { sensitivity: 'base' })
+      if (repCmp !== 0) return repCmp
+      return a.positionCode.localeCompare(b.positionCode, 'tr', { sensitivity: 'base' })
+    })
+    const cashOverallRows = denoms.map((d) => ({ denomination: d, amount: cashOverallMap.get(d) ?? 0 })).filter((x) => x.amount > 0)
+
+    const invoiceAllocationChanges = (invoiceEditRes.recordset ?? []).map((row) => ({
+      changedAt: row.ChangedAt ? new Date(row.ChangedAt).toISOString() : undefined,
+      changedBy: row.ChangedBy ? String(row.ChangedBy) : undefined,
+      positionCode: String(row.PositionCode ?? ''),
+      representativeName: String(row.RepresentativeName ?? '').trim() || '-',
+      invoiceCode: String(row.InvoiceCode ?? ''),
+      customerName: String(row.CustomerName ?? '').trim() || '-',
+      fromJson: row.FromJson != null ? String(row.FromJson) : undefined,
+      toJson: row.ToJson != null ? String(row.ToJson) : undefined,
+    }))
+
+    const paymentAllocationChanges = (paymentEditRes.recordset ?? []).map((row) => ({
+      changedAt: row.ChangedAt ? new Date(row.ChangedAt).toISOString() : undefined,
+      changedBy: row.ChangedBy ? String(row.ChangedBy) : undefined,
+      positionCode: String(row.PositionCode ?? ''),
+      representativeName: String(row.RepresentativeName ?? '').trim() || '-',
+      paymentKey: String(row.PaymentKey ?? ''),
+      invoiceCode: String(row.InvoiceCode ?? ''),
+      customerName: String(row.CustomerName ?? '').trim() || '-',
+      fromJson: row.FromJson != null ? String(row.FromJson) : undefined,
+      toJson: row.ToJson != null ? String(row.ToJson) : undefined,
+    }))
+
+    res.json({
+      ok: true,
+      report: {
+        date: parsedDate.date.toISOString().slice(0, 10),
+        depotCode,
+        completedMutabakatCount: (mutabakatRes.recordset ?? []).length,
+        totalBankDeposit,
+        bankTotals: bankTotalsRows,
+        cashByPosition: cashByPositionRows,
+        cashOverall: cashOverallRows,
+        invoiceAllocationChanges,
+        paymentAllocationChanges,
+        adjustments: adjustmentRows.sort((a, b) => String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? ''))),
+      },
+    })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
 app.post('/api/allocations/invoice', async (req, res) => {
   try {
     const userName = String(req.header('x-user') ?? '').trim()
