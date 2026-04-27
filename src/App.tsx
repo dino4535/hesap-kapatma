@@ -1933,22 +1933,6 @@ export default function App() {
               </div>
             </div>
             <div className="main-header-right">
-              {page === 'mutabakat' && selectedPosition ? (
-                <div className="mutabakat-header-totals">
-                  <div className="mutabakat-header-total-item">
-                    <div className="mutabakat-header-total-label">Girilen Toplam</div>
-                    <div className="mutabakat-header-total-value">{formatMoney(enteredTotal)}</div>
-                  </div>
-                  <div className="mutabakat-header-total-item">
-                    <div className="mutabakat-header-total-label">Düzeltme</div>
-                    <div className="mutabakat-header-total-value">{formatMoney(adjustmentTotal)}</div>
-                  </div>
-                  <div className={`mutabakat-header-total-item ${mutabakatFarkClass}`}>
-                    <div className="mutabakat-header-total-label">Fark</div>
-                    <div className="mutabakat-header-total-value">{formatMoney(mutabakatFark)}</div>
-                  </div>
-                </div>
-              ) : null}
               {selectedPosition ? (
                 <button
                   className="btn btn-secondary"
@@ -2662,6 +2646,22 @@ export default function App() {
           <div className="header">
             <h1>Mutabakat</h1>
             <p>{selectedPosition ? `${selectedPosition} • ${selectedDataset.date ? formatDateTr(selectedDataset.date) : '-'} • ${selectedDataset.depot ? depotLabel(selectedDataset.depot) : '-'}` : 'Lütfen önce pozisyon seçin'}</p>
+            {selectedPosition ? (
+              <div className="mutabakat-header-totals">
+                <div className="mutabakat-header-total-item">
+                  <div className="mutabakat-header-total-label">Girilen Toplam</div>
+                  <div className="mutabakat-header-total-value">{formatMoney(enteredTotal)}</div>
+                </div>
+                <div className="mutabakat-header-total-item">
+                  <div className="mutabakat-header-total-label">Düzeltme</div>
+                  <div className="mutabakat-header-total-value">{formatMoney(adjustmentTotal)}</div>
+                </div>
+                <div className={`mutabakat-header-total-item ${mutabakatFarkClass}`}>
+                  <div className="mutabakat-header-total-label">Fark</div>
+                  <div className="mutabakat-header-total-value">{formatMoney(mutabakatFark)}</div>
+                </div>
+              </div>
+            ) : null}
             {status ? <div className={`upload-status ${status.type}`}>{status.message}</div> : null}
           </div>
 
