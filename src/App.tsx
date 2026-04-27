@@ -1544,7 +1544,7 @@ export default function App() {
     .header { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; margin-bottom: 6px; }
     .title { font-size: 12px; font-weight: 700; }
     .sub { color: #4a5568; font-size: 9px; margin-top: 2px; }
-    .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 10px; font-size: 9px; }
+    .meta { display: grid; grid-template-columns: max-content max-content; gap: 2px 6px; justify-content: start; font-size: 9px; }
     .meta .k { color: #718096; }
     .meta .v { font-weight: 700; }
     .badge { display: inline-block; padding: 3px 8px; border-radius: 999px; background: #c6f6d5; color: #22543d; font-size: 10px; font-weight: 700; }
