@@ -1204,8 +1204,8 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) return
     const date = selectedDataset.date
-    const shouldLoadBayiMatch = Boolean(date) && Boolean(selectedPosition) && (mutabakatStep === 2 || page === 'bayi-havale-match')
-    if (!shouldLoadBayiMatch) {
+    const isBayiMatchPage = mutabakatStep === 2 || page === 'bayi-havale-match'
+    if (!date || !selectedPosition || !isBayiMatchPage) {
       setManimBayiMatchLoading(false)
       setManimBayiMatchReceipts([])
       return
