@@ -941,6 +941,16 @@ td {
   color: #1a365d;
 }
 
+.bayi-match-row-matched td {
+  background: #f0fff4;
+  color: #22543d;
+}
+
+.bayi-match-row-matched td:last-child {
+  color: #2f855a;
+  font-weight: 800;
+}
+
 @keyframes bayi-spin {
   to {
     transform: rotate(360deg);

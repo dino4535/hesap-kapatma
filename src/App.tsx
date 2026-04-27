@@ -324,7 +324,7 @@ export default function App() {
   const [uploadDepotMap, setUploadDepotMap] = useState<Record<string, string>>({})
   const [uploadBulkDepot, setUploadBulkDepot] = useState('')
   const [importJobFiles, setImportJobFiles] = useState<ImportResultFile[]>([])
-  const [page, setPage] = useState<'main' | 'mutabakat' | 'position-representative' | 'user-admin'>('main')
+  const [page, setPage] = useState<'main' | 'mutabakat' | 'bayi-havale-match' | 'position-representative' | 'user-admin'>('main')
   const [selectedPosition, setSelectedPosition] = useState<string | null>(null)
   const [detailSearch, setDetailSearch] = useState('')
 
@@ -1722,6 +1722,8 @@ export default function App() {
   const pageTitle =
     page === 'mutabakat'
       ? 'Mutabakat'
+      : page === 'bayi-havale-match'
+        ? 'Bayi Havale Eşleme'
       : page === 'position-representative'
         ? 'Pozisyon - Temsilci'
         : page === 'user-admin'
@@ -1765,6 +1767,18 @@ export default function App() {
               Mutabakat
             </button>
             <button
+              className={`nav-item ${page === 'bayi-havale-match' ? 'active' : ''}`}
+              type="button"
+              onClick={() => {
+                setPage('bayi-havale-match')
+                setTypeFilter(null)
+                setPositionTab('faturalar')
+                setDetailSearch('')
+              }}
+            >
+              Bayi Havale Eşleme
+            </button>
+            <button
               className={`nav-item ${page === 'position-representative' ? 'active' : ''}`}
               type="button"
               onClick={() => {
@@ -1805,6 +1819,8 @@ export default function App() {
               <div className="main-subtitle">
                 {page === 'position-representative'
                   ? 'Pozisyona göre temsilci tanımlama'
+                  : page === 'bayi-havale-match'
+                    ? 'Bayi havale eşleme kontrol ekranı'
                   : page === 'mutabakat'
                     ? 'Mutabakat akışı'
                     : page === 'user-admin'
@@ -2182,6 +2198,154 @@ export default function App() {
                 </div>
               </div>
             </>
+          )}
+        </>
+      ) : page === 'bayi-havale-match' ? (
+        <>
+          <div className="header">
+            <h1>Bayi Havale Eşleme</h1>
+            <p>{selectedPosition ? `${selectedPosition} • ${selectedDataset.date ? formatDateTr(selectedDataset.date) : '-'} • ${selectedDataset.depot ? depotLabel(selectedDataset.depot) : '-'}` : 'Tarih, depo ve pozisyon seçerek eşleme kontrolü yapın'}</p>
+            {status ? <div className={`upload-status ${status.type}`}>{status.message}</div> : null}
+          </div>
+
+          <div className="filters">
+            <div className="filter-group">
+              <label>Tarih</label>
+              <select
+                value={selectedDate}
+                onChange={(e) => {
+                  setSelectedDate(e.target.value)
+                  setSelectedPosition(null)
+                }}
+              >
+                <option value="">Seçiniz</option>
+                {dateOptions.map((d) => (
+                  <option key={d} value={d}>
+                    {formatDateTr(d)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="filter-group">
+              <label>Depo</label>
+              <select
+                value={selectedDepot}
+                disabled={!selectedDate.trim() || depotOptions.length === 0}
+                onChange={(e) => {
+                  setSelectedDepot(e.target.value)
+                  setSelectedPosition(null)
+                }}
+              >
+                <option value="">Seçiniz</option>
+                {depotOptions.map((d) => (
+                  <option key={d} value={d}>
+                    {depotLabel(d)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="filter-group">
+              <label>Pozisyon</label>
+              <select value={selectedPosition ?? ''} disabled={!selectedDataset.date || !selectedDataset.depot || positions.length === 0} onChange={(e) => setSelectedPosition(e.target.value || null)}>
+                <option value="">Seçiniz</option>
+                {positions.map((p) => (
+                  <option key={p.code} value={p.code}>
+                    {p.code}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {!selectedDataset.date ? (
+            <div className="upload-section">
+              <div className="empty">Önce tarih seçin.</div>
+            </div>
+          ) : !selectedDataset.depot ? (
+            <div className="upload-section">
+              <div className="empty">Önce depo seçin.</div>
+            </div>
+          ) : positionsLoading ? (
+            <div className="upload-section">
+              <div className="empty">Pozisyonlar yükleniyor...</div>
+            </div>
+          ) : positions.length === 0 ? (
+            <div className="upload-section">
+              <div className="empty">Seçilen tarih ve depoda pozisyon bulunamadı.</div>
+            </div>
+          ) : !selectedPosition ? (
+            <div className="upload-section">
+              <div className="empty">Kontrol için pozisyon seçin.</div>
+            </div>
+          ) : (
+            <div className="table-section">
+              <div className="mutabakat">
+                <div className="mutabakat-section-title">Bayi Havale Eşleme Kontrolü</div>
+                <div className="mutabakat-meta">
+                  <div className="mutabakat-meta-row">
+                    <div className="mutabakat-label">Mutabakat Tarihi</div>
+                    <div className="mutabakat-value">{selectedDataset.date ? formatDateTr(selectedDataset.date) : '-'}</div>
+                  </div>
+                  <div className="mutabakat-meta-row">
+                    <div className="mutabakat-label">Manim Tarih Aralığı</div>
+                    <div className="mutabakat-value">{selectedDataset.date ? `${formatDateTr(selectedDataset.date)} ve bir önceki gün` : '-'}</div>
+                  </div>
+                  <div className="mutabakat-meta-row">
+                    <div className="mutabakat-label">Beklenen Toplam</div>
+                    <div className="mutabakat-value">{formatMoney(bayiEslemeBeklenenToplam)}</div>
+                  </div>
+                  <div className="mutabakat-meta-row">
+                    <div className="mutabakat-label">Gelen Tutar Toplamı</div>
+                    <div className="mutabakat-value">{formatMoney(bayiEslemeGelenToplam)}</div>
+                  </div>
+                </div>
+
+                <div className="bayi-match-table-wrap">
+                  {manimBayiMatchLoading ? (
+                    <div className="bayi-match-loading">
+                      <div className="bayi-match-spinner" />
+                      <div className="bayi-match-loading-text">Eşleştirme yapılıyor, lütfen bekleyin...</div>
+                    </div>
+                  ) : null}
+                  <table className="mini-table">
+                    <thead>
+                      <tr>
+                        <th>Bayi Kodu</th>
+                        <th>Bayi Adı</th>
+                        <th>Havale Faturaları</th>
+                        <th>Vadeli Tahsilat Havaleleri</th>
+                        <th>Toplam</th>
+                        <th>Gelen Tutar Toplamı</th>
+                        <th>Fark</th>
+                        <th>Durum</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bayiHavaleEslemeRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} style={{ textAlign: 'center', color: '#718096' }}>
+                            {manimBayiMatchLoading ? 'Eşleştirme sürüyor...' : 'Kayıt yok'}
+                          </td>
+                        </tr>
+                      ) : (
+                        bayiHavaleEslemeRows.map((r) => (
+                          <tr key={`${r.bayiKodu}|${r.bayi}`} className={r.eslesti ? 'bayi-match-row-matched' : ''}>
+                            <td>{r.bayiKodu}</td>
+                            <td>{r.bayi}</td>
+                            <td>{formatMoney(r.havale)}</td>
+                            <td>{formatMoney(r.vadeli)}</td>
+                            <td>{formatMoney(r.toplam)}</td>
+                            <td>{formatMoney(r.gelenTutarToplami)}</td>
+                            <td>{formatMoney(r.fark)}</td>
+                            <td>{r.durum}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
           )}
         </>
       ) : page === 'mutabakat' ? (
@@ -2709,7 +2873,7 @@ export default function App() {
                             </tr>
                           ) : (
                             bayiHavaleEslemeRows.map((r) => (
-                              <tr key={`${r.bayiKodu}|${r.bayi}`}>
+                              <tr key={`${r.bayiKodu}|${r.bayi}`} className={r.eslesti ? 'bayi-match-row-matched' : ''}>
                                 <td>{r.bayiKodu}</td>
                                 <td>{r.bayi}</td>
                                 <td>{formatMoney(r.havale)}</td>
