@@ -2234,27 +2234,29 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {endOfDayReport.cashByPosition.length === 0 ? (
+                      {endOfDayReport.cashByPosition.filter((x) => (Number(x.totalCash) || 0) > 0).length === 0 ? (
                         <tr>
                           <td colSpan={10} style={{ textAlign: 'center', color: '#718096' }}>
                             Kayıt yok
                           </td>
                         </tr>
                       ) : (
-                        endOfDayReport.cashByPosition.map((x) => (
-                          <tr key={`${x.positionCode}|${x.representativeName}`}>
-                            <td>{x.representativeName || '-'}</td>
-                            <td>{x.positionCode || '-'}</td>
-                            <td>{formatMoney(x.denominationTotals['200'] ?? 0)}</td>
-                            <td>{formatMoney(x.denominationTotals['100'] ?? 0)}</td>
-                            <td>{formatMoney(x.denominationTotals['50'] ?? 0)}</td>
-                            <td>{formatMoney(x.denominationTotals['20'] ?? 0)}</td>
-                            <td>{formatMoney(x.denominationTotals['10'] ?? 0)}</td>
-                            <td>{formatMoney(x.denominationTotals['5'] ?? 0)}</td>
-                            <td>{formatMoney(x.denominationTotals['1'] ?? 0)}</td>
-                            <td>{formatMoney(x.totalCash)}</td>
-                          </tr>
-                        ))
+                        endOfDayReport.cashByPosition
+                          .filter((x) => (Number(x.totalCash) || 0) > 0)
+                          .map((x) => (
+                            <tr key={`${x.positionCode}|${x.representativeName}`}>
+                              <td>{x.representativeName || '-'}</td>
+                              <td>{x.positionCode || '-'}</td>
+                              <td>{Math.round((Number(x.denominationTotals['200'] ?? 0) || 0) / 200)}</td>
+                              <td>{Math.round((Number(x.denominationTotals['100'] ?? 0) || 0) / 100)}</td>
+                              <td>{Math.round((Number(x.denominationTotals['50'] ?? 0) || 0) / 50)}</td>
+                              <td>{Math.round((Number(x.denominationTotals['20'] ?? 0) || 0) / 20)}</td>
+                              <td>{Math.round((Number(x.denominationTotals['10'] ?? 0) || 0) / 10)}</td>
+                              <td>{Math.round((Number(x.denominationTotals['5'] ?? 0) || 0) / 5)}</td>
+                              <td>{formatMoney(x.denominationTotals['1'] ?? 0)}</td>
+                              <td>{formatMoney(x.totalCash)}</td>
+                            </tr>
+                          ))
                       )}
                     </tbody>
                   </table>
