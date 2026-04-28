@@ -822,7 +822,7 @@ export default function App() {
 
   useEffect(() => {
     const isCashEnabled = mutabakatMode === 'NAKIT' || mutabakatMode === 'KARMA'
-    if (!isCashEnabled || mutabakatStep !== 1) {
+    if (!isCashEnabled) {
       setCashCountReceipts([])
       setSelectedCashReceiptId('')
       setSelectedCashReceiptMeta(null)
@@ -830,9 +830,21 @@ export default function App() {
       setCashReceiptDateTime('')
       return
     }
+    if (mutabakatStep !== 1) {
+      setCashCountReceipts([])
+      return
+    }
     if (!currentUser || !selectedDataset.date || !selectedDataset.depot || !selectedPosition) return
     loadCashCountReceipts().catch(() => {})
   }, [mutabakatMode, mutabakatStep, currentUser, selectedDataset.date, selectedDataset.depot, selectedPosition])
+
+  useEffect(() => {
+    setCashCountReceipts([])
+    setSelectedCashReceiptId('')
+    setSelectedCashReceiptMeta(null)
+    setCashAutoReceiptNo('')
+    setCashReceiptDateTime('')
+  }, [selectedDataset.date, selectedDataset.depot, selectedPosition])
 
   useEffect(() => {
     if (!selectedPosition || !selectedDataset.date || !selectedDataset.depot) {
