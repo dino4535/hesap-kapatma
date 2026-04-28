@@ -1068,6 +1068,35 @@ BEGIN
     ADD CONSTRAINT UQ_MutabakatCashReceiptUsage_DeviceReceipt UNIQUE (DeviceIp, ReceiptId);
 END
 
+IF OBJECT_ID('dbo.MutabakatCashReceiptUsageItems', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.MutabakatCashReceiptUsageItems (
+    SourceFileDate DATE NOT NULL,
+    DepotCode NVARCHAR(32) NOT NULL,
+    PositionCode NVARCHAR(64) NOT NULL,
+    DeviceIp NVARCHAR(128) NOT NULL,
+    ReceiptId NVARCHAR(64) NOT NULL,
+    ReceiptDateTime DATETIME2(0) NULL,
+    AutoNo NVARCHAR(64) NULL,
+    SelectedBy NVARCHAR(64) NULL,
+    SelectedAt DATETIME2(0) NOT NULL CONSTRAINT DF_MutabakatCashReceiptUsageItems_SelectedAt DEFAULT (SYSUTCDATETIME()),
+    CONSTRAINT PK_MutabakatCashReceiptUsageItems PRIMARY KEY (SourceFileDate, DepotCode, PositionCode, DeviceIp, ReceiptId),
+    CONSTRAINT UQ_MutabakatCashReceiptUsageItems_DeviceReceipt UNIQUE (DeviceIp, ReceiptId)
+  );
+END
+
+IF OBJECT_ID('dbo.MutabakatCashReceiptUsageItems', 'U') IS NOT NULL
+   AND NOT EXISTS (
+     SELECT 1
+     FROM sys.key_constraints
+     WHERE [name] = 'UQ_MutabakatCashReceiptUsageItems_DeviceReceipt'
+       AND [parent_object_id] = OBJECT_ID('dbo.MutabakatCashReceiptUsageItems')
+   )
+BEGIN
+  ALTER TABLE dbo.MutabakatCashReceiptUsageItems
+    ADD CONSTRAINT UQ_MutabakatCashReceiptUsageItems_DeviceReceipt UNIQUE (DeviceIp, ReceiptId);
+END
+
 IF OBJECT_ID('dbo.ImportFiles', 'U') IS NULL
 BEGIN
   CREATE TABLE dbo.ImportFiles (
@@ -2326,7 +2355,7 @@ app.get('/api/cash-counts/receipts', async (req, res) => {
       .input('PositionCode', mssql.NVarChar(64), positionCode)
       .query(`
 SELECT ReceiptId, ReceiptDateTime
-FROM dbo.MutabakatCashReceiptUsage
+FROM dbo.MutabakatCashReceiptUsageItems
 WHERE DeviceIp = @DeviceIp
   AND NOT (SourceFileDate = @SourceFileDate AND DepotCode = @DepotCode AND PositionCode = @PositionCode)
 `)
@@ -4310,18 +4339,28 @@ app.post('/api/mutabakat', async (req, res) => {
 
     const cashJson = req.body?.cashJson
     const cashJsonStr = cashJson != null ? JSON.stringify(cashJson) : null
-    const cashCounterSelection =
-      cashJson && typeof cashJson === 'object' && (cashJson as any).counterSelection && typeof (cashJson as any).counterSelection === 'object'
-        ? ((cashJson as any).counterSelection as { deviceIp?: unknown; receiptId?: unknown; transactionDateTime?: unknown; autoNo?: unknown })
-        : null
-    let selectedDeviceIp = normalizeIpText(cashCounterSelection?.deviceIp)
-    const selectedReceiptIdRaw = String(cashCounterSelection?.receiptId ?? '').trim()
-    const selectedReceiptId = buildCounterId({
-      rawId: selectedReceiptIdRaw,
-      transactionDateTime: typeof cashCounterSelection?.transactionDateTime === 'string' ? cashCounterSelection.transactionDateTime : '',
-    })
-    const selectedAutoNo = String(cashCounterSelection?.autoNo ?? '').trim() || null
-    const selectedReceiptDateTime = safeDate(typeof cashCounterSelection?.transactionDateTime === 'string' ? cashCounterSelection.transactionDateTime : '')
+    const rawCounterSelections: Array<{ deviceIp?: unknown; receiptId?: unknown; transactionDateTime?: unknown; autoNo?: unknown }> = []
+    if (cashJson && typeof cashJson === 'object') {
+      const list = (cashJson as any).counterSelections
+      if (Array.isArray(list)) {
+        for (const item of list) {
+          if (item && typeof item === 'object') rawCounterSelections.push(item)
+        }
+      }
+      const single = (cashJson as any).counterSelection
+      if (single && typeof single === 'object') rawCounterSelections.push(single)
+    }
+    const cashCounterSelections = rawCounterSelections
+      .map((s) => {
+        const rawReceiptId = String(s?.receiptId ?? '').trim()
+        const transactionDateTime = typeof s?.transactionDateTime === 'string' ? s.transactionDateTime : ''
+        const receiptId = buildCounterId({ rawId: rawReceiptId, transactionDateTime })
+        const deviceIp = normalizeIpText(s?.deviceIp)
+        const autoNo = String(s?.autoNo ?? '').trim() || null
+        const receiptDateTime = safeDate(transactionDateTime)
+        return { deviceIp, receiptId, rawReceiptId, transactionDateTime, autoNo, receiptDateTime }
+      })
+      .filter((x) => !!x.receiptId)
     const bankName = String(req.body?.bankName ?? '').trim() || null
     const bankDepositAmount = toNumberFlexible(req.body?.bankDepositAmount) ?? toNumberOrUndef(req.body?.bankDepositAmount) ?? null
     const dekontNo = String(req.body?.dekontNo ?? '').trim() || null
@@ -4336,13 +4375,18 @@ app.post('/api/mutabakat', async (req, res) => {
       return
     }
 
-    if (!selectedDeviceIp && (mode === 'NAKIT' || mode === 'KARMA') && selectedReceiptId) {
+    if ((mode === 'NAKIT' || mode === 'KARMA') && cashCounterSelections.length > 0 && cashCounterSelections.some((x) => !x.deviceIp)) {
       const ipRes = await pool
         .request()
         .input('DepotCode', mssql.NVarChar(32), depotCode)
         .query('SELECT TOP 1 DeviceIp FROM dbo.DepotCashDeviceSettings WHERE DepotCode = @DepotCode')
       const ip = (ipRes.recordset?.[0] as { DeviceIp?: unknown } | undefined)?.DeviceIp
-      selectedDeviceIp = normalizeIpText(ip)
+      const depotDeviceIp = normalizeIpText(ip)
+      if (depotDeviceIp) {
+        for (const sel of cashCounterSelections) {
+          if (!sel.deviceIp) sel.deviceIp = depotDeviceIp
+        }
+      }
     }
 
     const existing = await pool
@@ -4365,40 +4409,42 @@ WHERE SourceFileDate = @SourceFileDate
       return
     }
 
-    if ((mode === 'NAKIT' || mode === 'KARMA') && selectedDeviceIp && selectedReceiptId) {
-      const usedCheck = await pool
-        .request()
-        .input('DeviceIp', mssql.NVarChar(128), selectedDeviceIp)
-        .input('SourceFileDate', mssql.Date, parsedDate.date)
-        .input('DepotCode', mssql.NVarChar(32), depotCode)
-        .input('PositionCode', mssql.NVarChar(64), positionCode)
-        .query(`
+    if ((mode === 'NAKIT' || mode === 'KARMA') && cashCounterSelections.length > 0) {
+      const deviceIps = Array.from(new Set(cashCounterSelections.map((x) => x.deviceIp).filter(Boolean)))
+      for (const deviceIp of deviceIps) {
+        const usedCheck = await pool
+          .request()
+          .input('DeviceIp', mssql.NVarChar(128), deviceIp)
+          .input('SourceFileDate', mssql.Date, parsedDate.date)
+          .input('DepotCode', mssql.NVarChar(32), depotCode)
+          .input('PositionCode', mssql.NVarChar(64), positionCode)
+          .query(`
 SELECT ReceiptId, ReceiptDateTime
-FROM dbo.MutabakatCashReceiptUsage
+FROM dbo.MutabakatCashReceiptUsageItems
 WHERE DeviceIp = @DeviceIp
   AND NOT (SourceFileDate = @SourceFileDate AND DepotCode = @DepotCode AND PositionCode = @PositionCode)
 `)
-      const selectedVariants = buildReceiptIdVariants({
-        rawId: selectedReceiptIdRaw || selectedReceiptId,
-        transactionDateTime: selectedReceiptDateTime ? selectedReceiptDateTime.toISOString() : '',
-      })
-      let inUseElsewhere = false
-      for (const row of usedCheck.recordset ?? []) {
-        const receiptId = String((row as any)?.ReceiptId ?? '').trim()
-        const dt = (row as any)?.ReceiptDateTime
-        const dtIso = dt instanceof Date ? dt.toISOString() : String(dt ?? '').trim()
-        const usedVariants = buildReceiptIdVariants({ rawId: receiptId, transactionDateTime: dtIso })
-        for (const v of selectedVariants) {
-          if (usedVariants.has(v)) {
-            inUseElsewhere = true
-            break
+        const usedIds = new Set<string>()
+        for (const row of usedCheck.recordset ?? []) {
+          const receiptId = String((row as any)?.ReceiptId ?? '').trim()
+          const dt = (row as any)?.ReceiptDateTime
+          const dtIso = dt instanceof Date ? dt.toISOString() : String(dt ?? '').trim()
+          const variants = buildReceiptIdVariants({ rawId: receiptId, transactionDateTime: dtIso })
+          for (const v of variants) usedIds.add(v)
+        }
+        const selectionsForIp = cashCounterSelections.filter((x) => x.deviceIp === deviceIp)
+        for (const sel of selectionsForIp) {
+          const selectedVariants = buildReceiptIdVariants({
+            rawId: sel.rawReceiptId || sel.receiptId,
+            transactionDateTime: sel.receiptDateTime ? sel.receiptDateTime.toISOString() : sel.transactionDateTime,
+          })
+          for (const v of selectedVariants) {
+            if (usedIds.has(v)) {
+              res.status(409).send('Secilen sayim daha once kullanilmis')
+              return
+            }
           }
         }
-        if (inUseElsewhere) break
-      }
-      if (inUseElsewhere) {
-        res.status(409).send('Secilen sayim daha once kullanilmis')
-        return
       }
     }
 
@@ -4481,30 +4527,33 @@ WHEN NOT MATCHED THEN
       .input('PositionCode', mssql.NVarChar(64), positionCode)
       .query(
         `
-DELETE FROM dbo.MutabakatCashReceiptUsage
+DELETE FROM dbo.MutabakatCashReceiptUsageItems
 WHERE SourceFileDate = @SourceFileDate
   AND DepotCode = @DepotCode
   AND PositionCode = @PositionCode
 `,
       )
 
-    if ((mode === 'NAKIT' || mode === 'KARMA') && selectedDeviceIp && selectedReceiptId) {
-      await pool
-        .request()
-        .input('SourceFileDate', mssql.Date, parsedDate.date)
-        .input('DepotCode', mssql.NVarChar(32), depotCode)
-        .input('PositionCode', mssql.NVarChar(64), positionCode)
-        .input('DeviceIp', mssql.NVarChar(128), selectedDeviceIp)
-        .input('ReceiptId', mssql.NVarChar(64), selectedReceiptId)
-        .input('ReceiptDateTime', mssql.DateTime2(0), selectedReceiptDateTime)
-        .input('AutoNo', mssql.NVarChar(64), selectedAutoNo)
-        .input('SelectedBy', mssql.NVarChar(64), userName)
-        .query(
-          `
-INSERT INTO dbo.MutabakatCashReceiptUsage (SourceFileDate, DepotCode, PositionCode, DeviceIp, ReceiptId, ReceiptDateTime, AutoNo, SelectedBy)
+    if (mode !== 'BANKA' && cashCounterSelections.length > 0) {
+      for (const sel of cashCounterSelections) {
+        if (!sel.deviceIp || !sel.receiptId) continue
+        await pool
+          .request()
+          .input('SourceFileDate', mssql.Date, parsedDate.date)
+          .input('DepotCode', mssql.NVarChar(32), depotCode)
+          .input('PositionCode', mssql.NVarChar(64), positionCode)
+          .input('DeviceIp', mssql.NVarChar(128), sel.deviceIp)
+          .input('ReceiptId', mssql.NVarChar(64), sel.receiptId)
+          .input('ReceiptDateTime', mssql.DateTime2(0), sel.receiptDateTime)
+          .input('AutoNo', mssql.NVarChar(64), sel.autoNo)
+          .input('SelectedBy', mssql.NVarChar(64), userName)
+          .query(
+            `
+INSERT INTO dbo.MutabakatCashReceiptUsageItems (SourceFileDate, DepotCode, PositionCode, DeviceIp, ReceiptId, ReceiptDateTime, AutoNo, SelectedBy)
 VALUES (@SourceFileDate, @DepotCode, @PositionCode, @DeviceIp, @ReceiptId, @ReceiptDateTime, @AutoNo, @SelectedBy)
 `,
-        )
+          )
+      }
     }
 
     const readBack = await pool

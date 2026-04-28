@@ -88,47 +88,61 @@ for (const row of mutabakatRows) {
     continue
   }
 
-  const sel = cash && typeof cash === 'object' ? (cash as any).counterSelection : null
-  if (!sel || typeof sel !== 'object') {
+  const rawSelections: any[] = []
+  if (cash && typeof cash === 'object') {
+    if (Array.isArray((cash as any).counterSelections)) rawSelections.push(...(cash as any).counterSelections)
+    if ((cash as any).counterSelection) rawSelections.push((cash as any).counterSelection)
+  }
+  const selections = rawSelections.filter((x) => x && typeof x === 'object')
+  if (selections.length === 0) {
     skipped += 1
     continue
   }
 
-  const receiptIdRaw = String((sel as any).receiptId ?? '').trim()
-  const tx = String((sel as any).transactionDateTime ?? '').trim()
-  const receiptId = buildCounterId({ rawId: receiptIdRaw, transactionDateTime: tx })
-  if (!receiptId) {
-    skipped += 1
-    continue
-  }
+  for (const sel of selections) {
+    const receiptIdRaw = String((sel as any).receiptId ?? '').trim()
+    const tx = String((sel as any).transactionDateTime ?? '').trim()
+    const receiptId = buildCounterId({ rawId: receiptIdRaw, transactionDateTime: tx })
+    if (!receiptId) {
+      skipped += 1
+      continue
+    }
 
-  const deviceIp = normalizeIpText((sel as any).deviceIp) || (depotCode ? deviceIpByDepot.get(depotCode) ?? '' : '')
-  if (!deviceIp) {
-    skipped += 1
-    continue
-  }
+    const deviceIp = normalizeIpText((sel as any).deviceIp) || (depotCode ? deviceIpByDepot.get(depotCode) ?? '' : '')
+    if (!deviceIp) {
+      skipped += 1
+      continue
+    }
 
-  const autoNo = String((sel as any).autoNo ?? '').trim() || null
-  const receiptDateTime = safeDate(tx)
+    const autoNo = String((sel as any).autoNo ?? '').trim() || null
+    const receiptDateTime = safeDate(tx)
 
-  try {
-    const r = await pool
-      .request()
-      .input('SourceFileDate', mssql.Date, row.SourceFileDate)
-      .input('DepotCode', mssql.NVarChar(32), depotCode)
-      .input('PositionCode', mssql.NVarChar(64), positionCode)
-      .input('DeviceIp', mssql.NVarChar(128), deviceIp)
-      .input('ReceiptId', mssql.NVarChar(64), receiptId)
-      .input('ReceiptDateTime', mssql.DateTime2(0), receiptDateTime)
-      .input('AutoNo', mssql.NVarChar(64), autoNo)
-      .query(`
-MERGE dbo.MutabakatCashReceiptUsage AS t
-USING (SELECT @SourceFileDate AS SourceFileDate, @DepotCode AS DepotCode, @PositionCode AS PositionCode) AS s
-  ON t.SourceFileDate = s.SourceFileDate AND t.DepotCode = s.DepotCode AND t.PositionCode = s.PositionCode
+    try {
+      const r = await pool
+        .request()
+        .input('SourceFileDate', mssql.Date, row.SourceFileDate)
+        .input('DepotCode', mssql.NVarChar(32), depotCode)
+        .input('PositionCode', mssql.NVarChar(64), positionCode)
+        .input('DeviceIp', mssql.NVarChar(128), deviceIp)
+        .input('ReceiptId', mssql.NVarChar(64), receiptId)
+        .input('ReceiptDateTime', mssql.DateTime2(0), receiptDateTime)
+        .input('AutoNo', mssql.NVarChar(64), autoNo)
+        .query(`
+MERGE dbo.MutabakatCashReceiptUsageItems AS t
+USING (SELECT
+  @SourceFileDate AS SourceFileDate,
+  @DepotCode AS DepotCode,
+  @PositionCode AS PositionCode,
+  @DeviceIp AS DeviceIp,
+  @ReceiptId AS ReceiptId
+) AS s
+  ON t.SourceFileDate = s.SourceFileDate
+ AND t.DepotCode = s.DepotCode
+ AND t.PositionCode = s.PositionCode
+ AND t.DeviceIp = s.DeviceIp
+ AND t.ReceiptId = s.ReceiptId
 WHEN MATCHED THEN
   UPDATE SET
-    DeviceIp = @DeviceIp,
-    ReceiptId = @ReceiptId,
     ReceiptDateTime = @ReceiptDateTime,
     AutoNo = @AutoNo,
     SelectedBy = 'backfill'
@@ -138,16 +152,17 @@ WHEN NOT MATCHED THEN
 OUTPUT $action AS action;
 `)
 
-    const action = String((r.recordset?.[0] as any)?.action ?? '')
-    if (action.toUpperCase() === 'UPDATE') updated += 1
-    else if (action.toUpperCase() === 'INSERT') inserted += 1
-    else updated += 1
-  } catch {
-    conflicted += 1
+      const action = String((r.recordset?.[0] as any)?.action ?? '')
+      if (action.toUpperCase() === 'UPDATE') updated += 1
+      else if (action.toUpperCase() === 'INSERT') inserted += 1
+      else updated += 1
+    } catch {
+      conflicted += 1
+    }
   }
 }
 
-const countRes = await pool.request().query('SELECT COUNT(1) AS usageCount FROM dbo.MutabakatCashReceiptUsage')
+const countRes = await pool.request().query('SELECT COUNT(1) AS usageCount FROM dbo.MutabakatCashReceiptUsageItems')
 const usageCount = Number((countRes.recordset?.[0] as any)?.usageCount ?? 0) || 0
 
 console.log(
