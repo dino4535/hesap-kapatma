@@ -266,6 +266,17 @@ function buildCounterId(args: { rawId?: unknown; transactionDateTime?: unknown }
   return digits || rawId
 }
 
+function buildReceiptIdVariants(args: { rawId?: unknown; transactionDateTime?: unknown }) {
+  const out = new Set<string>()
+  const rawId = String(args.rawId ?? '').trim()
+  const canonical = buildCounterId(args).trim()
+  if (canonical) out.add(canonical)
+  if (rawId) out.add(rawId)
+  const rawDigits = rawId.replace(/\D+/g, '').trim()
+  if (rawDigits) out.add(rawDigits)
+  return out
+}
+
 function mapReceiptBanknotes(details: Array<{ nominal?: number; qty?: number }> | undefined) {
   const out: Record<string, number> = { '200': 0, '100': 0, '50': 0, '20': 0, '10': 0, '5': 0, '1': 0 }
   for (const d of details ?? []) {
@@ -2313,23 +2324,30 @@ app.get('/api/cash-counts/receipts', async (req, res) => {
       .input('DepotCode', mssql.NVarChar(32), depotCode)
       .input('PositionCode', mssql.NVarChar(64), positionCode)
       .query(`
-SELECT ReceiptId
+SELECT ReceiptId, ReceiptDateTime
 FROM dbo.MutabakatCashReceiptUsage
 WHERE DeviceIp = @DeviceIp
   AND NOT (SourceFileDate = @SourceFileDate AND DepotCode = @DepotCode AND PositionCode = @PositionCode)
 `)
-    const usedIds = new Set((usedRes.recordset ?? []).map((r: any) => String(r.ReceiptId ?? '').trim()).filter(Boolean))
+    const usedIds = new Set<string>()
+    for (const r of usedRes.recordset ?? []) {
+      const receiptId = String((r as any)?.ReceiptId ?? '').trim()
+      const receiptDate = (r as any)?.ReceiptDateTime
+      const receiptDateIso = receiptDate instanceof Date ? receiptDate.toISOString() : String(receiptDate ?? '').trim()
+      const variants = buildReceiptIdVariants({ rawId: receiptId, transactionDateTime: receiptDateIso })
+      for (const v of variants) usedIds.add(v)
+    }
     const receipts = rawReceipts
       .filter((r) => {
-        const canonicalId = buildCounterId({ rawId: r.id, transactionDateTime: r.time })
-        const legacyId = String(r.id ?? '').trim()
-        if (!canonicalId && !legacyId) return false
+        const variants = buildReceiptIdVariants({ rawId: r.id, transactionDateTime: r.time })
+        if (variants.size === 0) return false
         const receiptDateKey = String(r.date_key ?? '').trim()
         // XML tarih parse edilemezse date_key bos/Unknown gelebilir.
         // Dosya adi zaten istenen gun (dateText) ile filtrelendigi icin bu durumda fişi eleme.
         if (receiptDateKey && receiptDateKey !== 'Unknown' && receiptDateKey !== dateText) return false
-        if (canonicalId && usedIds.has(canonicalId)) return false
-        if (legacyId && usedIds.has(legacyId)) return false
+        for (const v of variants) {
+          if (usedIds.has(v)) return false
+        }
         return true
       })
       .map((r) => ({
@@ -4301,7 +4319,6 @@ app.post('/api/mutabakat', async (req, res) => {
       rawId: selectedReceiptIdRaw,
       transactionDateTime: typeof cashCounterSelection?.transactionDateTime === 'string' ? cashCounterSelection.transactionDateTime : '',
     })
-    const selectedReceiptIdLegacy = selectedReceiptIdRaw && selectedReceiptIdRaw !== selectedReceiptId ? selectedReceiptIdRaw : ''
     const selectedAutoNo = String(cashCounterSelection?.autoNo ?? '').trim() || null
     const selectedReceiptDateTime = safeDate(typeof cashCounterSelection?.transactionDateTime === 'string' ? cashCounterSelection.transactionDateTime : '')
     const bankName = String(req.body?.bankName ?? '').trim() || null
@@ -4342,19 +4359,34 @@ WHERE SourceFileDate = @SourceFileDate
       const usedCheck = await pool
         .request()
         .input('DeviceIp', mssql.NVarChar(128), selectedDeviceIp)
-        .input('ReceiptId', mssql.NVarChar(64), selectedReceiptId)
-        .input('LegacyReceiptId', mssql.NVarChar(64), selectedReceiptIdLegacy)
         .input('SourceFileDate', mssql.Date, parsedDate.date)
         .input('DepotCode', mssql.NVarChar(32), depotCode)
         .input('PositionCode', mssql.NVarChar(64), positionCode)
         .query(`
-SELECT TOP 1 SourceFileDate, DepotCode, PositionCode
+SELECT ReceiptId, ReceiptDateTime
 FROM dbo.MutabakatCashReceiptUsage
 WHERE DeviceIp = @DeviceIp
-  AND (ReceiptId = @ReceiptId OR (@LegacyReceiptId <> '' AND ReceiptId = @LegacyReceiptId))
   AND NOT (SourceFileDate = @SourceFileDate AND DepotCode = @DepotCode AND PositionCode = @PositionCode)
 `)
-      if ((usedCheck.recordset ?? []).length > 0) {
+      const selectedVariants = buildReceiptIdVariants({
+        rawId: selectedReceiptIdRaw || selectedReceiptId,
+        transactionDateTime: selectedReceiptDateTime ? selectedReceiptDateTime.toISOString() : '',
+      })
+      let inUseElsewhere = false
+      for (const row of usedCheck.recordset ?? []) {
+        const receiptId = String((row as any)?.ReceiptId ?? '').trim()
+        const dt = (row as any)?.ReceiptDateTime
+        const dtIso = dt instanceof Date ? dt.toISOString() : String(dt ?? '').trim()
+        const usedVariants = buildReceiptIdVariants({ rawId: receiptId, transactionDateTime: dtIso })
+        for (const v of selectedVariants) {
+          if (usedVariants.has(v)) {
+            inUseElsewhere = true
+            break
+          }
+        }
+        if (inUseElsewhere) break
+      }
+      if (inUseElsewhere) {
         res.status(409).send('Secilen sayim daha once kullanilmis')
         return
       }
