@@ -1057,14 +1057,15 @@ BEGIN
 END
 
 IF OBJECT_ID('dbo.MutabakatCashReceiptUsage', 'U') IS NOT NULL
-   AND EXISTS (
+   AND NOT EXISTS (
      SELECT 1
      FROM sys.key_constraints
      WHERE [name] = 'UQ_MutabakatCashReceiptUsage_DeviceReceipt'
        AND [parent_object_id] = OBJECT_ID('dbo.MutabakatCashReceiptUsage')
    )
 BEGIN
-  ALTER TABLE dbo.MutabakatCashReceiptUsage DROP CONSTRAINT UQ_MutabakatCashReceiptUsage_DeviceReceipt;
+  ALTER TABLE dbo.MutabakatCashReceiptUsage
+    ADD CONSTRAINT UQ_MutabakatCashReceiptUsage_DeviceReceipt UNIQUE (DeviceIp, ReceiptId);
 END
 
 IF OBJECT_ID('dbo.ImportFiles', 'U') IS NULL
@@ -4313,7 +4314,7 @@ app.post('/api/mutabakat', async (req, res) => {
       cashJson && typeof cashJson === 'object' && (cashJson as any).counterSelection && typeof (cashJson as any).counterSelection === 'object'
         ? ((cashJson as any).counterSelection as { deviceIp?: unknown; receiptId?: unknown; transactionDateTime?: unknown; autoNo?: unknown })
         : null
-    const selectedDeviceIp = normalizeIpText(cashCounterSelection?.deviceIp)
+    let selectedDeviceIp = normalizeIpText(cashCounterSelection?.deviceIp)
     const selectedReceiptIdRaw = String(cashCounterSelection?.receiptId ?? '').trim()
     const selectedReceiptId = buildCounterId({
       rawId: selectedReceiptIdRaw,
@@ -4333,6 +4334,15 @@ app.post('/api/mutabakat', async (req, res) => {
     if (!active.active) {
       res.status(401).send('Yetkisiz')
       return
+    }
+
+    if (!selectedDeviceIp && (mode === 'NAKIT' || mode === 'KARMA') && selectedReceiptId) {
+      const ipRes = await pool
+        .request()
+        .input('DepotCode', mssql.NVarChar(32), depotCode)
+        .query('SELECT TOP 1 DeviceIp FROM dbo.DepotCashDeviceSettings WHERE DepotCode = @DepotCode')
+      const ip = (ipRes.recordset?.[0] as { DeviceIp?: unknown } | undefined)?.DeviceIp
+      selectedDeviceIp = normalizeIpText(ip)
     }
 
     const existing = await pool

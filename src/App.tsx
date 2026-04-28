@@ -1628,7 +1628,7 @@ export default function App() {
       cashEnabled && selectedCashReceiptId
         ? {
             receiptId: selectedCashReceiptId,
-            deviceIp: selectedCashReceiptMeta?.deviceIp ?? '',
+            deviceIp: selectedCashReceiptMeta?.deviceIp ?? selectedDepotCashDevice?.deviceIp ?? '',
             autoNo: cashAutoReceiptNo || undefined,
             transactionDateTime: cashReceiptDateTime || undefined,
           }
