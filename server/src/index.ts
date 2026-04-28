@@ -252,6 +252,20 @@ function normalizeDeviceCredentials(input: { ip?: unknown; user?: unknown; passw
   return { ip, user, password }
 }
 
+function buildCounterId(args: { rawId?: unknown; transactionDateTime?: unknown }) {
+  const rawId = String(args.rawId ?? '').trim()
+  const time = String(args.transactionDateTime ?? '').trim()
+  if (time) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?/.exec(time)
+    if (m) {
+      const ms = String(m[7] ?? '000').slice(0, 3).padEnd(3, '0')
+      return `${m[1]}${m[2]}${m[3]}${m[4]}${m[5]}${m[6]}${ms}`
+    }
+  }
+  const digits = rawId.replace(/\D+/g, '')
+  return digits || rawId
+}
+
 function mapReceiptBanknotes(details: Array<{ nominal?: number; qty?: number }> | undefined) {
   const out: Record<string, number> = { '200': 0, '100': 0, '50': 0, '20': 0, '10': 0, '5': 0, '1': 0 }
   for (const d of details ?? []) {
@@ -1029,6 +1043,17 @@ BEGIN
     CONSTRAINT PK_MutabakatCashReceiptUsage PRIMARY KEY (SourceFileDate, DepotCode, PositionCode),
     CONSTRAINT UQ_MutabakatCashReceiptUsage_DeviceReceipt UNIQUE (DeviceIp, ReceiptId)
   );
+END
+
+IF OBJECT_ID('dbo.MutabakatCashReceiptUsage', 'U') IS NOT NULL
+   AND EXISTS (
+     SELECT 1
+     FROM sys.key_constraints
+     WHERE [name] = 'UQ_MutabakatCashReceiptUsage_DeviceReceipt'
+       AND [parent_object_id] = OBJECT_ID('dbo.MutabakatCashReceiptUsage')
+   )
+BEGIN
+  ALTER TABLE dbo.MutabakatCashReceiptUsage DROP CONSTRAINT UQ_MutabakatCashReceiptUsage_DeviceReceipt;
 END
 
 IF OBJECT_ID('dbo.ImportFiles', 'U') IS NULL
@@ -2281,31 +2306,19 @@ app.get('/api/cash-counts/receipts', async (req, res) => {
     }
 
     const rawReceipts = await fetchKisanReceiptsFromDevice({ ip: creds.ip, user: creds.user, password: creds.password, dateYmd: dateText })
-    const usedRes = await pool
-      .request()
-      .input('DeviceIp', mssql.NVarChar(128), creds.ip)
-      .input('SourceFileDate', mssql.Date, parsedDate.date!)
-      .input('DepotCode', mssql.NVarChar(32), depotCode)
-      .input('PositionCode', mssql.NVarChar(64), positionCode)
-      .query(`
-SELECT ReceiptId
-FROM dbo.MutabakatCashReceiptUsage
-WHERE DeviceIp = @DeviceIp
-  AND NOT (SourceFileDate = @SourceFileDate AND DepotCode = @DepotCode AND PositionCode = @PositionCode)
-`)
-    const usedIds = new Set((usedRes.recordset ?? []).map((r: any) => String(r.ReceiptId ?? '').trim()).filter(Boolean))
     const receipts = rawReceipts
       .filter((r) => {
-        const id = String(r.id ?? '').trim()
+        const id = buildCounterId({ rawId: r.id, transactionDateTime: r.time })
         if (!id) return false
         const receiptDateKey = String(r.date_key ?? '').trim()
         // XML tarih parse edilemezse date_key bos/Unknown gelebilir.
         // Dosya adi zaten istenen gun (dateText) ile filtrelendigi icin bu durumda fişi eleme.
         if (receiptDateKey && receiptDateKey !== 'Unknown' && receiptDateKey !== dateText) return false
-        return !usedIds.has(id)
+        return true
       })
       .map((r) => ({
-        receiptId: String(r.id ?? '').trim(),
+        counterId: buildCounterId({ rawId: r.id, transactionDateTime: r.time }),
+        receiptId: buildCounterId({ rawId: r.id, transactionDateTime: r.time }),
         deviceIp: creds.ip,
         transactionDateTime: String(r.time ?? '').trim(),
         displayTime: String(r.display_time ?? '').trim(),
@@ -4302,27 +4315,6 @@ WHERE SourceFileDate = @SourceFileDate
     if (existingStatus === 'COMPLETED') {
       res.status(409).send('Mutabakat tamamlanmış')
       return
-    }
-
-    if ((mode === 'NAKIT' || mode === 'KARMA') && selectedDeviceIp && selectedReceiptId) {
-      const usedCheck = await pool
-        .request()
-        .input('DeviceIp', mssql.NVarChar(128), selectedDeviceIp)
-        .input('ReceiptId', mssql.NVarChar(64), selectedReceiptId)
-        .input('SourceFileDate', mssql.Date, parsedDate.date)
-        .input('DepotCode', mssql.NVarChar(32), depotCode)
-        .input('PositionCode', mssql.NVarChar(64), positionCode)
-        .query(`
-SELECT TOP 1 SourceFileDate, DepotCode, PositionCode
-FROM dbo.MutabakatCashReceiptUsage
-WHERE DeviceIp = @DeviceIp
-  AND ReceiptId = @ReceiptId
-  AND NOT (SourceFileDate = @SourceFileDate AND DepotCode = @DepotCode AND PositionCode = @PositionCode)
-`)
-      if ((usedCheck.recordset ?? []).length > 0) {
-        res.status(409).send('Secilen sayim daha once kullanilmis')
-        return
-      }
     }
 
     await pool

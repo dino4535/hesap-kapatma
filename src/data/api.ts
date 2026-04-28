@@ -107,6 +107,7 @@ export interface DepotCashDeviceSetting {
 }
 
 export interface CashCountReceipt {
+  counterId: string
   receiptId: string
   deviceIp: string
   transactionDateTime: string

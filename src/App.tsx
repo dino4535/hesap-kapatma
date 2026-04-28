@@ -3708,6 +3708,7 @@ export default function App() {
                               {cashCountReceipts.map((r) => (
                                 <option key={r.receiptId} value={r.receiptId}>
                                   {[
+                                    r.counterId ? `ID ${r.counterId}` : '',
                                     r.autoNo ? `No ${r.autoNo}` : '',
                                     r.displayTime || formatDateTimeTr(r.transactionDateTime),
                                     formatMoney(Number(r.totalAmount) || 0),
