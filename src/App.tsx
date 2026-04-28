@@ -471,7 +471,7 @@ export default function App() {
 
   useEffect(() => {
     if (!currentUser) return
-    fetchImportFiles()
+    fetchImportFiles({ userName: currentUser.userName })
       .then((r) => {
         if (!r.ok) throw new Error(r.message || 'Import listesi alınamadı')
         setImportFiles(r.files)
@@ -879,12 +879,12 @@ export default function App() {
     setStatus({ type: 'info', message: `Yükleme kuyruğa alınıyor: ${selectedFiles.length} dosya` })
     setImportJobFiles([])
     try {
-      const started = await importSalesFiles(selectedFiles, uploadDepotMap)
+      const started = await importSalesFiles({ userName: currentUser.userName, files: selectedFiles, depotMap: uploadDepotMap })
       if (!started.ok || !started.jobId) throw new Error(started.message || 'Import kuyruğa alınamadı')
 
       let finished: Awaited<ReturnType<typeof fetchImportJobStatus>>['job'] | undefined
       for (let i = 0; i < 2400; i += 1) {
-        const statusRes = await fetchImportJobStatus(started.jobId)
+        const statusRes = await fetchImportJobStatus({ userName: currentUser.userName, jobId: started.jobId })
         if (!statusRes.ok || !statusRes.job) throw new Error(statusRes.message || 'Import durumu alınamadı')
         const job = statusRes.job
         setImportJobFiles(job.files ?? [])
@@ -923,7 +923,7 @@ export default function App() {
             ? ` (Atlandı: ${skippedFileCount} dosya, ${skippedPositionsCount} pozisyon)`
             : ''),
       })
-      const list = await fetchImportFiles()
+      const list = await fetchImportFiles({ userName: currentUser.userName })
       if (list.ok) {
         setImportFiles(list.files)
         const firstImported = imported[0]
@@ -2855,7 +2855,7 @@ export default function App() {
                           setAdminStatus({ type: 'error', message: r.message || 'Silinemedi' })
                           return
                         }
-                        const list = await fetchImportFiles()
+                        const list = await fetchImportFiles({ userName: currentUser.userName })
                         if (list.ok) setImportFiles(list.files)
                         setSelectedPosition(null)
                         setAdminStatus({ type: 'success', message: 'Silindi' })
@@ -2894,7 +2894,7 @@ export default function App() {
                           setAdminStatus({ type: 'error', message: r.message || 'Silinemedi' })
                           return
                         }
-                        const list = await fetchImportFiles()
+                        const list = await fetchImportFiles({ userName: currentUser.userName })
                         if (list.ok) setImportFiles(list.files)
                         setSelectedPosition(null)
                         setAdminStatus({ type: 'success', message: 'Silindi' })

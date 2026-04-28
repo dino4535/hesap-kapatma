@@ -178,6 +178,7 @@ type QueuedImportFile = {
 type ImportJobStatus = 'queued' | 'running' | 'completed' | 'failed'
 type ImportJob = {
   id: string
+  ownerUserName: string
   status: ImportJobStatus
   files: QueuedImportFile[]
   results: ImportResultFile[]
@@ -2905,11 +2906,12 @@ function pruneImportJobs() {
   }
 }
 
-function enqueueImportJob(files: QueuedImportFile[]) {
+function enqueueImportJob(files: QueuedImportFile[], ownerUserName: string) {
   pruneImportJobs()
   const jobId = crypto.randomUUID()
   const job: ImportJob = {
     id: jobId,
+    ownerUserName,
     status: 'queued',
     files,
     results: [],
@@ -2971,6 +2973,21 @@ function enqueueImportJob(files: QueuedImportFile[]) {
 
 app.post('/api/import', upload.array('files'), async (req, res) => {
   try {
+    const userName = String(req.header('x-user') ?? '').trim()
+    if (!userName) {
+      await Promise.all(((req.files as Express.Multer.File[] | undefined) ?? []).map((f) => safeDeleteFile(f.path)))
+      res.status(401).send('Yetkisiz')
+      return
+    }
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const active = await requireActiveUser(pool, userName)
+    if (!active.active) {
+      await Promise.all(((req.files as Express.Multer.File[] | undefined) ?? []).map((f) => safeDeleteFile(f.path)))
+      res.status(401).send('Yetkisiz')
+      return
+    }
+
     const files = (req.files as Express.Multer.File[] | undefined) ?? []
     if (files.length === 0) {
       res.status(400).send('Dosya bulunamadı (files)')
@@ -3027,6 +3044,7 @@ app.post('/api/import', upload.array('files'), async (req, res) => {
 
     const job = enqueueImportJob(
       queuedFiles,
+      userName,
     )
     res.status(202).json({
       ok: true,
@@ -3042,56 +3060,90 @@ app.post('/api/import', upload.array('files'), async (req, res) => {
 })
 
 app.get('/api/import/jobs/:jobId', (req, res) => {
-  pruneImportJobs()
-  const jobId = String(req.params.jobId ?? '').trim()
-  if (!jobId) {
-    res.status(400).send('jobId zorunlu')
-    return
-  }
-  const job = importJobs.get(jobId)
-  if (!job) {
-    res.status(404).send('Import job bulunamadı')
-    return
-  }
-  res.json({
-    ok: true,
-    job: {
-      id: job.id,
-      status: job.status,
-      totalFiles: job.totalFiles,
-      processedFiles: job.processedFiles,
-      currentFileName: job.currentFileName,
-      createdAt: job.createdAt,
-      startedAt: job.startedAt,
-      finishedAt: job.finishedAt,
-      errorMessage: job.errorMessage,
-      files: job.files.map((f) => {
-        const done = f.positions.reduce((s, x) => s + x.processedInvoices + x.processedCollections, 0)
-        const total = f.positions.reduce((s, x) => s + x.totalInvoices + x.totalCollections, 0)
-        const progressPercent = total > 0 ? Math.round((done * 100) / total) : 0
-        const result = job.results.find((r) => r.fileName === f.fileName)
-        return {
-          fileName: f.fileName,
-          status: f.status,
-          errorMessage: f.errorMessage,
-          progressPercent,
-          positions: f.positions,
-          invoiceCount: result?.invoiceCount ?? 0,
-          paymentCount: result?.paymentCount ?? 0,
-          depotCode: result?.depotCode,
-          fileDate: result?.fileDate,
-          skipped: result?.skipped ?? false,
-          skippedPositions: result?.skippedPositions ?? [],
-        }
-      }),
-    },
-  })
+  ;(async () => {
+    try {
+      const userName = String(req.header('x-user') ?? '').trim()
+      if (!userName) {
+        res.status(401).send('Yetkisiz')
+        return
+      }
+      const pool = await getPool()
+      await ensureSchema(pool)
+      const active = await requireActiveUser(pool, userName)
+      if (!active.active) {
+        res.status(401).send('Yetkisiz')
+        return
+      }
+
+      pruneImportJobs()
+      const jobId = String(req.params.jobId ?? '').trim()
+      if (!jobId) {
+        res.status(400).send('jobId zorunlu')
+        return
+      }
+      const job = importJobs.get(jobId)
+      if (!job) {
+        res.status(404).send('Import job bulunamadı')
+        return
+      }
+      if (!active.isAdmin && job.ownerUserName !== userName) {
+        res.status(403).send('Bu import job için yetkiniz yok')
+        return
+      }
+      res.json({
+        ok: true,
+        job: {
+          id: job.id,
+          status: job.status,
+          totalFiles: job.totalFiles,
+          processedFiles: job.processedFiles,
+          currentFileName: job.currentFileName,
+          createdAt: job.createdAt,
+          startedAt: job.startedAt,
+          finishedAt: job.finishedAt,
+          errorMessage: job.errorMessage,
+          files: job.files.map((f) => {
+            const done = f.positions.reduce((s, x) => s + x.processedInvoices + x.processedCollections, 0)
+            const total = f.positions.reduce((s, x) => s + x.totalInvoices + x.totalCollections, 0)
+            const progressPercent = total > 0 ? Math.round((done * 100) / total) : 0
+            const result = job.results.find((r) => r.fileName === f.fileName)
+            return {
+              fileName: f.fileName,
+              status: f.status,
+              errorMessage: f.errorMessage,
+              progressPercent,
+              positions: f.positions,
+              invoiceCount: result?.invoiceCount ?? 0,
+              paymentCount: result?.paymentCount ?? 0,
+              depotCode: result?.depotCode,
+              fileDate: result?.fileDate,
+              skipped: result?.skipped ?? false,
+              skippedPositions: result?.skippedPositions ?? [],
+            }
+          }),
+        },
+      })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+      res.status(500).send(msg)
+    }
+  })()
 })
 
-app.get('/api/import-files', async (_req, res) => {
+app.get('/api/import-files', async (req, res) => {
   try {
+    const userName = String(req.header('x-user') ?? '').trim()
+    if (!userName) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
     const pool = await getPool()
     await ensureSchema(pool)
+    const active = await requireActiveUser(pool, userName)
+    if (!active.active) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
     const r = await pool.request().query(`
 SELECT
   FileName AS fileName,

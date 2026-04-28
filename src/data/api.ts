@@ -61,12 +61,16 @@ export interface ImportFileRow {
   paymentCount: number
 }
 
-export async function importSalesFiles(files: File[], depotMap: Record<string, string>): Promise<ImportJobStartResult> {
+export async function importSalesFiles(args: {
+  userName: string
+  files: File[]
+  depotMap: Record<string, string>
+}): Promise<ImportJobStartResult> {
   const form = new FormData()
-  for (const f of files) form.append('files', f, f.name)
-  form.append('depotMap', JSON.stringify(depotMap ?? {}))
+  for (const f of args.files) form.append('files', f, f.name)
+  form.append('depotMap', JSON.stringify(args.depotMap ?? {}))
 
-  const res = await fetch('/api/import', { method: 'POST', body: form })
+  const res = await fetch('/api/import', { method: 'POST', body: form, headers: { 'x-user': args.userName } })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     return { ok: false, message: text || `HTTP ${res.status}` }
@@ -74,10 +78,10 @@ export async function importSalesFiles(files: File[], depotMap: Record<string, s
   return (await res.json()) as ImportJobStartResult
 }
 
-export async function fetchImportJobStatus(jobId: string): Promise<ImportJobStatusResult> {
-  const id = String(jobId ?? '').trim()
+export async function fetchImportJobStatus(args: { userName: string; jobId: string }): Promise<ImportJobStatusResult> {
+  const id = String(args.jobId ?? '').trim()
   if (!id) return { ok: false, message: 'jobId zorunlu' }
-  const res = await fetch(`/api/import/jobs/${encodeURIComponent(id)}`)
+  const res = await fetch(`/api/import/jobs/${encodeURIComponent(id)}`, { headers: { 'x-user': args.userName } })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     return { ok: false, message: text || `HTTP ${res.status}` }
@@ -85,8 +89,8 @@ export async function fetchImportJobStatus(jobId: string): Promise<ImportJobStat
   return (await res.json()) as ImportJobStatusResult
 }
 
-export async function fetchImportFiles(): Promise<{ ok: boolean; files: ImportFileRow[]; message?: string }> {
-  const res = await fetch('/api/import-files')
+export async function fetchImportFiles(args: { userName: string }): Promise<{ ok: boolean; files: ImportFileRow[]; message?: string }> {
+  const res = await fetch('/api/import-files', { headers: { 'x-user': args.userName } })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     return { ok: false, files: [], message: text || `HTTP ${res.status}` }
