@@ -8,9 +8,8 @@ import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import http from 'node:http'
 import path from 'node:path'
-import { promisify } from 'node:util'
-import { execFile } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { fetchKisanReceiptsFromDevice } from './kisan/client.js'
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
 dotenv.config({ path: path.resolve(moduleDir, '../.env') })
@@ -193,21 +192,6 @@ type ImportJob = {
   finishedAt?: string
 }
 
-type KisanReceipt = {
-  id: string
-  time?: string
-  display_time?: string
-  date_key?: string
-  daily_seq?: number
-  auto_no?: string
-  source_file?: string
-  total_val?: number
-  total_qty?: number
-  details?: Array<{ nominal?: number; qty?: number }>
-}
-
-const execFileAsync = promisify(execFile)
-
 function sanitizeUploadFileName(fileName: string) {
   const safe = fileName.replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_').trim()
   return safe || 'upload.json'
@@ -266,24 +250,6 @@ function normalizeDeviceCredentials(input: { ip?: unknown; user?: unknown; passw
   const user = String(input.user ?? '').trim()
   const password = String(input.password ?? '').trim()
   return { ip, user, password }
-}
-
-async function fetchKisanReceiptsViaPython(args: { ip: string; user: string; password: string; dateYmd: string }) {
-  const scriptPath = path.resolve(moduleDir, '../../../make_dashboard_full.py')
-  const dateText = String(args.dateYmd ?? '').trim()
-  const cmdArgs = ['--host', args.ip, '--user', args.user, '--password', args.password, '--json']
-  if (dateText) cmdArgs.push('--date', dateText)
-
-  const { stdout } = await execFileAsync('python', [scriptPath, ...cmdArgs], { timeout: 25000, windowsHide: true, maxBuffer: 1024 * 1024 * 8 })
-  const lines = String(stdout ?? '')
-    .split(/\r?\n/)
-    .map((x) => x.trim())
-    .filter(Boolean)
-  if (lines.length === 0) throw new Error('Cihazdan yanit alinamadi')
-  const raw = lines[lines.length - 1]
-  const parsed = JSON.parse(raw) as { ok?: boolean; receipts?: KisanReceipt[] }
-  const receipts = Array.isArray(parsed?.receipts) ? parsed.receipts : []
-  return receipts
 }
 
 function mapReceiptBanknotes(details: Array<{ nominal?: number; qty?: number }> | undefined) {
@@ -2271,7 +2237,7 @@ app.post('/api/settings/cash-devices/test', async (req, res) => {
       return
     }
     const today = new Date().toISOString().slice(0, 10)
-    const receipts = await fetchKisanReceiptsViaPython({ ip: creds.ip, user: creds.user, password: creds.password, dateYmd: today })
+    const receipts = await fetchKisanReceiptsFromDevice({ ip: creds.ip, user: creds.user, password: creds.password, dateYmd: today })
     res.json({ ok: true, count: receipts.length })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Baglanti test edilemedi'
@@ -2314,7 +2280,7 @@ app.get('/api/cash-counts/receipts', async (req, res) => {
       return
     }
 
-    const rawReceipts = await fetchKisanReceiptsViaPython({ ip: creds.ip, user: creds.user, password: creds.password, dateYmd: dateText })
+    const rawReceipts = await fetchKisanReceiptsFromDevice({ ip: creds.ip, user: creds.user, password: creds.password, dateYmd: dateText })
     const usedRes = await pool
       .request()
       .input('DeviceIp', mssql.NVarChar(128), creds.ip)
