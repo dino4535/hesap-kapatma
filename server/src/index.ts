@@ -8,6 +8,8 @@ import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import http from 'node:http'
 import path from 'node:path'
+import { promisify } from 'node:util'
+import { execFile } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
@@ -191,6 +193,21 @@ type ImportJob = {
   finishedAt?: string
 }
 
+type KisanReceipt = {
+  id: string
+  time?: string
+  display_time?: string
+  date_key?: string
+  daily_seq?: number
+  auto_no?: string
+  source_file?: string
+  total_val?: number
+  total_qty?: number
+  details?: Array<{ nominal?: number; qty?: number }>
+}
+
+const execFileAsync = promisify(execFile)
+
 function sanitizeUploadFileName(fileName: string) {
   const safe = fileName.replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_').trim()
   return safe || 'upload.json'
@@ -236,6 +253,50 @@ async function safeDeleteFile(filePath: string) {
     const code = typeof e === 'object' && e ? String((e as { code?: unknown }).code ?? '') : ''
     if (code !== 'ENOENT') throw e
   }
+}
+
+function normalizeIpText(value: unknown) {
+  const raw = String(value ?? '').trim()
+  if (!raw) return ''
+  return raw.replace(/^https?:\/\//i, '').replace(/\/+$/, '')
+}
+
+function normalizeDeviceCredentials(input: { ip?: unknown; user?: unknown; password?: unknown }) {
+  const ip = normalizeIpText(input.ip)
+  const user = String(input.user ?? '').trim()
+  const password = String(input.password ?? '').trim()
+  return { ip, user, password }
+}
+
+async function fetchKisanReceiptsViaPython(args: { ip: string; user: string; password: string; dateYmd: string }) {
+  const scriptPath = path.resolve(moduleDir, '../../../make_dashboard_full.py')
+  const dateText = String(args.dateYmd ?? '').trim()
+  const cmdArgs = ['--host', args.ip, '--user', args.user, '--password', args.password, '--json']
+  if (dateText) cmdArgs.push('--date', dateText)
+
+  const { stdout } = await execFileAsync('python', [scriptPath, ...cmdArgs], { timeout: 25000, windowsHide: true, maxBuffer: 1024 * 1024 * 8 })
+  const lines = String(stdout ?? '')
+    .split(/\r?\n/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+  if (lines.length === 0) throw new Error('Cihazdan yanit alinamadi')
+  const raw = lines[lines.length - 1]
+  const parsed = JSON.parse(raw) as { ok?: boolean; receipts?: KisanReceipt[] }
+  const receipts = Array.isArray(parsed?.receipts) ? parsed.receipts : []
+  return receipts
+}
+
+function mapReceiptBanknotes(details: Array<{ nominal?: number; qty?: number }> | undefined) {
+  const out: Record<string, number> = { '200': 0, '100': 0, '50': 0, '20': 0, '10': 0, '5': 0, '1': 0 }
+  for (const d of details ?? []) {
+    const nominal = Number(d?.nominal ?? 0)
+    const qty = Number(d?.qty ?? 0)
+    if (!Number.isFinite(nominal) || !Number.isFinite(qty)) continue
+    const key = String(Math.round(nominal))
+    if (!(key in out)) continue
+    out[key] += qty
+  }
+  return out
 }
 
 function parseSalesFileName(fileName: string): SalesFileMeta {
@@ -974,6 +1035,35 @@ ON t.SettingKey = s.SettingKey
 WHEN NOT MATCHED THEN
   INSERT (SettingKey, SettingValue)
   VALUES (s.SettingKey, s.SettingValue);
+
+IF OBJECT_ID('dbo.DepotCashDeviceSettings', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.DepotCashDeviceSettings (
+    DepotCode NVARCHAR(32) NOT NULL PRIMARY KEY,
+    DeviceIp NVARCHAR(128) NOT NULL,
+    DeviceUser NVARCHAR(64) NOT NULL,
+    DevicePassword NVARCHAR(128) NOT NULL,
+    UpdatedBy NVARCHAR(64) NULL,
+    UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_DepotCashDeviceSettings_UpdatedAt DEFAULT (SYSUTCDATETIME())
+  );
+END
+
+IF OBJECT_ID('dbo.MutabakatCashReceiptUsage', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.MutabakatCashReceiptUsage (
+    SourceFileDate DATE NOT NULL,
+    DepotCode NVARCHAR(32) NOT NULL,
+    PositionCode NVARCHAR(64) NOT NULL,
+    DeviceIp NVARCHAR(128) NOT NULL,
+    ReceiptId NVARCHAR(64) NOT NULL,
+    ReceiptDateTime DATETIME2(0) NULL,
+    AutoNo NVARCHAR(64) NULL,
+    SelectedBy NVARCHAR(64) NULL,
+    SelectedAt DATETIME2(0) NOT NULL CONSTRAINT DF_MutabakatCashReceiptUsage_SelectedAt DEFAULT (SYSUTCDATETIME()),
+    CONSTRAINT PK_MutabakatCashReceiptUsage PRIMARY KEY (SourceFileDate, DepotCode, PositionCode),
+    CONSTRAINT UQ_MutabakatCashReceiptUsage_DeviceReceipt UNIQUE (DeviceIp, ReceiptId)
+  );
+END
 
 IF OBJECT_ID('dbo.ImportFiles', 'U') IS NULL
 BEGIN
@@ -2083,6 +2173,185 @@ WHEN NOT MATCHED THEN
 `)
   return normalized
 }
+
+app.get('/api/settings/cash-devices', async (req, res) => {
+  try {
+    const userName = String(req.header('x-user') ?? '').trim()
+    if (!userName) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const active = await requireActiveUser(pool, userName)
+    if (!active.active) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+    const rr = await pool.request().query(`
+SELECT DepotCode, DeviceIp, DeviceUser, UpdatedBy, UpdatedAt
+FROM dbo.DepotCashDeviceSettings
+ORDER BY DepotCode
+`)
+    const settings = (rr.recordset ?? []).map((row: any) => ({
+      depotCode: String(row.DepotCode ?? '').trim(),
+      deviceIp: String(row.DeviceIp ?? '').trim(),
+      deviceUser: String(row.DeviceUser ?? '').trim(),
+      updatedBy: row.UpdatedBy ? String(row.UpdatedBy) : undefined,
+      updatedAt: row.UpdatedAt ? new Date(row.UpdatedAt).toISOString() : undefined,
+    }))
+    res.json({ ok: true, settings })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
+app.put('/api/settings/cash-devices', async (req, res) => {
+  try {
+    const actor = String(req.header('x-user') ?? '').trim()
+    if (!actor) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+    const depotCode = normalizeDepotCode(req.body?.depotCode)
+    const creds = normalizeDeviceCredentials({ ip: req.body?.deviceIp, user: req.body?.deviceUser, password: req.body?.devicePassword })
+    if (!depotCode || !creds.ip || !creds.user || !creds.password) {
+      res.status(400).send('Eksik alan')
+      return
+    }
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const ok = await requireAdminUser(pool, actor)
+    if (!ok) {
+      res.status(403).send('Yetkisiz')
+      return
+    }
+    await pool
+      .request()
+      .input('DepotCode', mssql.NVarChar(32), depotCode)
+      .input('DeviceIp', mssql.NVarChar(128), creds.ip)
+      .input('DeviceUser', mssql.NVarChar(64), creds.user)
+      .input('DevicePassword', mssql.NVarChar(128), creds.password)
+      .input('UpdatedBy', mssql.NVarChar(64), actor)
+      .query(`
+MERGE dbo.DepotCashDeviceSettings WITH (HOLDLOCK) AS t
+USING (SELECT @DepotCode AS DepotCode, @DeviceIp AS DeviceIp, @DeviceUser AS DeviceUser, @DevicePassword AS DevicePassword, @UpdatedBy AS UpdatedBy) AS s
+ON t.DepotCode = s.DepotCode
+WHEN MATCHED THEN
+  UPDATE SET DeviceIp = s.DeviceIp, DeviceUser = s.DeviceUser, DevicePassword = s.DevicePassword, UpdatedBy = s.UpdatedBy, UpdatedAt = SYSUTCDATETIME()
+WHEN NOT MATCHED THEN
+  INSERT (DepotCode, DeviceIp, DeviceUser, DevicePassword, UpdatedBy)
+  VALUES (s.DepotCode, s.DeviceIp, s.DeviceUser, s.DevicePassword, s.UpdatedBy);
+`)
+    res.json({ ok: true })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
+app.post('/api/settings/cash-devices/test', async (req, res) => {
+  try {
+    const userName = String(req.header('x-user') ?? '').trim()
+    if (!userName) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+    const creds = normalizeDeviceCredentials({ ip: req.body?.deviceIp, user: req.body?.deviceUser, password: req.body?.devicePassword })
+    if (!creds.ip || !creds.user || !creds.password) {
+      res.status(400).send('Eksik alan')
+      return
+    }
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const active = await requireActiveUser(pool, userName)
+    if (!active.active) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+    const today = new Date().toISOString().slice(0, 10)
+    const receipts = await fetchKisanReceiptsViaPython({ ip: creds.ip, user: creds.user, password: creds.password, dateYmd: today })
+    res.json({ ok: true, count: receipts.length })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Baglanti test edilemedi'
+    res.status(500).send(msg)
+  }
+})
+
+app.get('/api/cash-counts/receipts', async (req, res) => {
+  try {
+    const userName = String(req.header('x-user') ?? '').trim()
+    if (!userName) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+    const parsedDate = parseQueryDate(req.query.date)
+    const dateText = parsedDate.ok && parsedDate.date ? parsedDate.date.toISOString().slice(0, 10) : ''
+    const depotCode = normalizeDepotCode(req.query.depot)
+    const positionCode = String(req.query.position ?? '').trim()
+    if (!dateText || !depotCode || !positionCode) {
+      res.status(400).send('Tarih, depo ve pozisyon zorunlu')
+      return
+    }
+
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const active = await requireActiveUser(pool, userName)
+    if (!active.active) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+
+    const deviceRes = await pool
+      .request()
+      .input('DepotCode', mssql.NVarChar(32), depotCode)
+      .query('SELECT TOP 1 DeviceIp, DeviceUser, DevicePassword FROM dbo.DepotCashDeviceSettings WHERE DepotCode = @DepotCode')
+    const drow = deviceRes.recordset?.[0] as { DeviceIp?: unknown; DeviceUser?: unknown; DevicePassword?: unknown } | undefined
+    const creds = normalizeDeviceCredentials({ ip: drow?.DeviceIp, user: drow?.DeviceUser, password: drow?.DevicePassword })
+    if (!creds.ip || !creds.user || !creds.password) {
+      res.status(400).send('Bu depo icin cihaz ayari bulunamadi')
+      return
+    }
+
+    const rawReceipts = await fetchKisanReceiptsViaPython({ ip: creds.ip, user: creds.user, password: creds.password, dateYmd: dateText })
+    const usedRes = await pool
+      .request()
+      .input('DeviceIp', mssql.NVarChar(128), creds.ip)
+      .input('SourceFileDate', mssql.Date, parsedDate.date!)
+      .input('DepotCode', mssql.NVarChar(32), depotCode)
+      .input('PositionCode', mssql.NVarChar(64), positionCode)
+      .query(`
+SELECT ReceiptId
+FROM dbo.MutabakatCashReceiptUsage
+WHERE DeviceIp = @DeviceIp
+  AND NOT (SourceFileDate = @SourceFileDate AND DepotCode = @DepotCode AND PositionCode = @PositionCode)
+`)
+    const usedIds = new Set((usedRes.recordset ?? []).map((r: any) => String(r.ReceiptId ?? '').trim()).filter(Boolean))
+    const receipts = rawReceipts
+      .filter((r) => {
+        const id = String(r.id ?? '').trim()
+        if (!id) return false
+        if ((r.date_key ?? '') !== dateText) return false
+        return !usedIds.has(id)
+      })
+      .map((r) => ({
+        receiptId: String(r.id ?? '').trim(),
+        deviceIp: creds.ip,
+        transactionDateTime: String(r.time ?? '').trim(),
+        displayTime: String(r.display_time ?? '').trim(),
+        autoNo: String(r.auto_no ?? '').trim(),
+        sequenceNo: Number(r.daily_seq ?? 0) || 0,
+        totalAmount: Number(r.total_val ?? 0) || 0,
+        totalQty: Number(r.total_qty ?? 0) || 0,
+        banknoteCounts: mapReceiptBanknotes(r.details),
+      }))
+    res.json({ ok: true, receipts })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
 
 app.get('/api/settings/mutabakat', async (req, res) => {
   try {
@@ -4024,6 +4293,14 @@ app.post('/api/mutabakat', async (req, res) => {
 
     const cashJson = req.body?.cashJson
     const cashJsonStr = cashJson != null ? JSON.stringify(cashJson) : null
+    const cashCounterSelection =
+      cashJson && typeof cashJson === 'object' && (cashJson as any).counterSelection && typeof (cashJson as any).counterSelection === 'object'
+        ? ((cashJson as any).counterSelection as { deviceIp?: unknown; receiptId?: unknown; transactionDateTime?: unknown; autoNo?: unknown })
+        : null
+    const selectedDeviceIp = normalizeIpText(cashCounterSelection?.deviceIp)
+    const selectedReceiptId = String(cashCounterSelection?.receiptId ?? '').trim()
+    const selectedAutoNo = String(cashCounterSelection?.autoNo ?? '').trim() || null
+    const selectedReceiptDateTime = safeDate(typeof cashCounterSelection?.transactionDateTime === 'string' ? cashCounterSelection.transactionDateTime : '')
     const bankName = String(req.body?.bankName ?? '').trim() || null
     const bankDepositAmount = toNumberFlexible(req.body?.bankDepositAmount) ?? toNumberOrUndef(req.body?.bankDepositAmount) ?? null
     const dekontNo = String(req.body?.dekontNo ?? '').trim() || null
@@ -4056,6 +4333,27 @@ WHERE SourceFileDate = @SourceFileDate
     if (existingStatus === 'COMPLETED') {
       res.status(409).send('Mutabakat tamamlanmış')
       return
+    }
+
+    if ((mode === 'NAKIT' || mode === 'KARMA') && selectedDeviceIp && selectedReceiptId) {
+      const usedCheck = await pool
+        .request()
+        .input('DeviceIp', mssql.NVarChar(128), selectedDeviceIp)
+        .input('ReceiptId', mssql.NVarChar(64), selectedReceiptId)
+        .input('SourceFileDate', mssql.Date, parsedDate.date)
+        .input('DepotCode', mssql.NVarChar(32), depotCode)
+        .input('PositionCode', mssql.NVarChar(64), positionCode)
+        .query(`
+SELECT TOP 1 SourceFileDate, DepotCode, PositionCode
+FROM dbo.MutabakatCashReceiptUsage
+WHERE DeviceIp = @DeviceIp
+  AND ReceiptId = @ReceiptId
+  AND NOT (SourceFileDate = @SourceFileDate AND DepotCode = @DepotCode AND PositionCode = @PositionCode)
+`)
+      if ((usedCheck.recordset ?? []).length > 0) {
+        res.status(409).send('Secilen sayim daha once kullanilmis')
+        return
+      }
     }
 
     await pool
@@ -4129,6 +4427,39 @@ WHEN NOT MATCHED THEN
   );
 `,
       )
+
+    await pool
+      .request()
+      .input('SourceFileDate', mssql.Date, parsedDate.date)
+      .input('DepotCode', mssql.NVarChar(32), depotCode)
+      .input('PositionCode', mssql.NVarChar(64), positionCode)
+      .query(
+        `
+DELETE FROM dbo.MutabakatCashReceiptUsage
+WHERE SourceFileDate = @SourceFileDate
+  AND DepotCode = @DepotCode
+  AND PositionCode = @PositionCode
+`,
+      )
+
+    if ((mode === 'NAKIT' || mode === 'KARMA') && selectedDeviceIp && selectedReceiptId) {
+      await pool
+        .request()
+        .input('SourceFileDate', mssql.Date, parsedDate.date)
+        .input('DepotCode', mssql.NVarChar(32), depotCode)
+        .input('PositionCode', mssql.NVarChar(64), positionCode)
+        .input('DeviceIp', mssql.NVarChar(128), selectedDeviceIp)
+        .input('ReceiptId', mssql.NVarChar(64), selectedReceiptId)
+        .input('ReceiptDateTime', mssql.DateTime2(0), selectedReceiptDateTime)
+        .input('AutoNo', mssql.NVarChar(64), selectedAutoNo)
+        .input('SelectedBy', mssql.NVarChar(64), userName)
+        .query(
+          `
+INSERT INTO dbo.MutabakatCashReceiptUsage (SourceFileDate, DepotCode, PositionCode, DeviceIp, ReceiptId, ReceiptDateTime, AutoNo, SelectedBy)
+VALUES (@SourceFileDate, @DepotCode, @PositionCode, @DeviceIp, @ReceiptId, @ReceiptDateTime, @AutoNo, @SelectedBy)
+`,
+        )
+    }
 
     const readBack = await pool
       .request()

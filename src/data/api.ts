@@ -98,6 +98,99 @@ export async function fetchImportFiles(args: { userName: string }): Promise<{ ok
   return (await res.json()) as { ok: boolean; files: ImportFileRow[] }
 }
 
+export interface DepotCashDeviceSetting {
+  depotCode: string
+  deviceIp: string
+  deviceUser: string
+  updatedBy?: string
+  updatedAt?: string
+}
+
+export interface CashCountReceipt {
+  receiptId: string
+  deviceIp: string
+  transactionDateTime: string
+  displayTime: string
+  autoNo: string
+  sequenceNo: number
+  totalAmount: number
+  totalQty: number
+  banknoteCounts: Record<string, number>
+}
+
+export async function fetchCashDeviceSettings(args: { userName: string }): Promise<{ ok: boolean; settings: DepotCashDeviceSetting[]; message?: string }> {
+  const res = await fetch('/api/settings/cash-devices', { headers: { 'x-user': args.userName } })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, settings: [], message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; settings: DepotCashDeviceSetting[] }
+}
+
+export async function saveCashDeviceSetting(args: {
+  userName: string
+  depotCode: string
+  deviceIp: string
+  deviceUser: string
+  devicePassword: string
+}): Promise<{ ok: boolean; message?: string }> {
+  const res = await fetch('/api/settings/cash-devices', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'x-user': args.userName },
+    body: JSON.stringify({
+      depotCode: args.depotCode,
+      deviceIp: args.deviceIp,
+      deviceUser: args.deviceUser,
+      devicePassword: args.devicePassword,
+    }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean }
+}
+
+export async function testCashDeviceConnection(args: {
+  userName: string
+  deviceIp: string
+  deviceUser: string
+  devicePassword: string
+}): Promise<{ ok: boolean; count?: number; message?: string }> {
+  const res = await fetch('/api/settings/cash-devices/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-user': args.userName },
+    body: JSON.stringify({
+      deviceIp: args.deviceIp,
+      deviceUser: args.deviceUser,
+      devicePassword: args.devicePassword,
+    }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; count?: number }
+}
+
+export async function fetchCashCountReceipts(args: {
+  userName: string
+  date: string
+  depot: string
+  position: string
+}): Promise<{ ok: boolean; receipts: CashCountReceipt[]; message?: string }> {
+  const qs = new URLSearchParams()
+  qs.set('date', args.date)
+  qs.set('depot', args.depot)
+  qs.set('position', args.position)
+  const res = await fetch(`/api/cash-counts/receipts?${qs.toString()}`, { headers: { 'x-user': args.userName } })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, receipts: [], message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; receipts: CashCountReceipt[] }
+}
+
 export interface PositionRow {
   code: string
   description?: string

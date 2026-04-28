@@ -12,6 +12,8 @@ import {
   fetchImportFiles,
   fetchMutabakat,
   fetchEndOfDayReport,
+  fetchCashCountReceipts,
+  fetchCashDeviceSettings,
   fetchMutabakatSettings,
   fetchPositionData,
   fetchPositions,
@@ -20,6 +22,7 @@ import {
   importSalesFiles,
   deletePositionRepresentative,
   saveMutabakat,
+  saveCashDeviceSetting,
   savePositionRepresentative,
   saveInvoiceAllocationsSql,
   savePaymentAllocationsSql,
@@ -31,6 +34,9 @@ import {
   type MutabakatRecord,
   type ImportFileRow,
   type ImportResultFile,
+  testCashDeviceConnection,
+  type CashCountReceipt,
+  type DepotCashDeviceSetting,
   type EndOfDayReport,
   type PositionRow,
   type PositionRepresentativeRow,
@@ -178,6 +184,18 @@ function parseTrDecimalInput(value: string) {
   if (!normalized) return 0
   const parsed = Number(normalized)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function banknotesFromReceipt(value?: Record<string, number>) {
+  return {
+    200: Number(value?.['200'] ?? 0) || 0,
+    100: Number(value?.['100'] ?? 0) || 0,
+    50: Number(value?.['50'] ?? 0) || 0,
+    20: Number(value?.['20'] ?? 0) || 0,
+    10: Number(value?.['10'] ?? 0) || 0,
+    5: Number(value?.['5'] ?? 0) || 0,
+    1: Number(value?.['1'] ?? 0) || 0,
+  } as Record<Banknote, number>
 }
 
 function allocationSummaryFromJson(value?: string) {
@@ -431,6 +449,12 @@ export default function App() {
   const [mutabakatRecord, setMutabakatRecord] = useState<MutabakatRecord | null>(null)
   const [mutabakatMode, setMutabakatMode] = useState<MutabakatMode>('NAKIT')
   const [banknoteCounts, setBanknoteCounts] = useState<Record<Banknote, number>>({ 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 1: 0 })
+  const [cashCountReceipts, setCashCountReceipts] = useState<CashCountReceipt[]>([])
+  const [cashCountLoading, setCashCountLoading] = useState(false)
+  const [selectedCashReceiptId, setSelectedCashReceiptId] = useState('')
+  const [selectedCashReceiptMeta, setSelectedCashReceiptMeta] = useState<{ deviceIp: string; autoNo: string; transactionDateTime: string } | null>(null)
+  const [cashAutoReceiptNo, setCashAutoReceiptNo] = useState('')
+  const [cashReceiptDateTime, setCashReceiptDateTime] = useState('')
   const [bankName, setBankName] = useState('')
   const [yatanTutar, setYatanTutar] = useState<number>(0)
   const [manimDekontNo, setManimDekontNo] = useState('')
@@ -461,6 +485,13 @@ export default function App() {
   const [adminDeleteDate, setAdminDeleteDate] = useState('')
   const [adminDeleteDepot, setAdminDeleteDepot] = useState('')
   const [adminDeleteFileName, setAdminDeleteFileName] = useState('')
+  const [cashDeviceSettings, setCashDeviceSettings] = useState<DepotCashDeviceSetting[]>([])
+  const [cashDeviceDepot, setCashDeviceDepot] = useState('')
+  const [cashDeviceIp, setCashDeviceIp] = useState('')
+  const [cashDeviceUser, setCashDeviceUser] = useState('')
+  const [cashDevicePassword, setCashDevicePassword] = useState('')
+  const [cashDeviceTesting, setCashDeviceTesting] = useState(false)
+  const [cashDeviceSaving, setCashDeviceSaving] = useState(false)
   const [mutabakatDiffLimitTl, setMutabakatDiffLimitTl] = useState(0.01)
   const [adminMutabakatDiffLimitInput, setAdminMutabakatDiffLimitInput] = useState('0.01')
   const [endOfDayReport, setEndOfDayReport] = useState<EndOfDayReport | null>(null)
@@ -595,6 +626,12 @@ export default function App() {
     depots.sort((a, b) => depotLabel(a).localeCompare(depotLabel(b)))
     return depots
   }, [importFiles])
+
+  const selectedDepotCashDevice = useMemo(() => {
+    const depot = (selectedDataset.depot ?? '').trim()
+    if (!depot) return null
+    return cashDeviceSettings.find((x) => x.depotCode === depot) ?? null
+  }, [selectedDataset.depot, cashDeviceSettings])
 
   const adminDeleteDepotOptions = useMemo(() => {
     const d = adminDeleteDate.trim()
@@ -736,6 +773,66 @@ export default function App() {
         setStatus({ type: 'error', message: e instanceof Error ? e.message : 'Pozisyon verisi alınamadı' })
       })
   }, [currentUser, selectedPosition, selectedDataset.date, selectedDataset.depot])
+
+  useEffect(() => {
+    if (!currentUser) {
+      setCashDeviceSettings([])
+      return
+    }
+    fetchCashDeviceSettings({ userName: currentUser.userName })
+      .then((r) => {
+        if (!r.ok) throw new Error(r.message || 'Cihaz ayarlari alinamadi')
+        setCashDeviceSettings(r.settings)
+      })
+      .catch(() => {
+        setCashDeviceSettings([])
+      })
+  }, [currentUser])
+
+  useEffect(() => {
+    if (!cashDeviceDepot && allDepotOptions.length > 0) setCashDeviceDepot(allDepotOptions[0])
+  }, [cashDeviceDepot, allDepotOptions])
+
+  useEffect(() => {
+    if (!cashDeviceDepot) return
+    const found = cashDeviceSettings.find((x) => x.depotCode === cashDeviceDepot) ?? null
+    setCashDeviceIp(found?.deviceIp ?? '')
+    setCashDeviceUser(found?.deviceUser ?? '')
+    setCashDevicePassword('')
+  }, [cashDeviceDepot, cashDeviceSettings])
+
+  const loadCashCountReceipts = async () => {
+    if (!currentUser || !selectedDataset.date || !selectedDataset.depot || !selectedPosition) return
+    setCashCountLoading(true)
+    const r = await fetchCashCountReceipts({
+      userName: currentUser.userName,
+      date: selectedDataset.date,
+      depot: selectedDataset.depot,
+      position: selectedPosition,
+    })
+    if (!r.ok) {
+      setCashCountReceipts([])
+      setStatus({ type: 'error', message: r.message || 'Kisan sayimlari alinamadi' })
+      setCashCountLoading(false)
+      return
+    }
+    setCashCountReceipts(r.receipts)
+    setCashCountLoading(false)
+  }
+
+  useEffect(() => {
+    const isCashEnabled = mutabakatMode === 'NAKIT' || mutabakatMode === 'KARMA'
+    if (!isCashEnabled || mutabakatStep !== 1) {
+      setCashCountReceipts([])
+      setSelectedCashReceiptId('')
+      setSelectedCashReceiptMeta(null)
+      setCashAutoReceiptNo('')
+      setCashReceiptDateTime('')
+      return
+    }
+    if (!currentUser || !selectedDataset.date || !selectedDataset.depot || !selectedPosition) return
+    loadCashCountReceipts().catch(() => {})
+  }, [mutabakatMode, mutabakatStep, currentUser, selectedDataset.date, selectedDataset.depot, selectedPosition])
 
   useEffect(() => {
     if (!selectedPosition || !selectedDataset.date || !selectedDataset.depot) {
@@ -1239,8 +1336,12 @@ export default function App() {
 
       setMutabakatMode(hasCash && hasBank ? 'KARMA' : hasBank ? 'BANKA' : 'NAKIT')
 
-      const cash = (mutabakatRecord.cashJson ?? {}) as { banknoteCounts?: Record<string, unknown> }
+      const cash = (mutabakatRecord.cashJson ?? {}) as {
+        banknoteCounts?: Record<string, unknown>
+        counterSelection?: { receiptId?: string; deviceIp?: string; autoNo?: string; transactionDateTime?: string }
+      }
       const bn = cash.banknoteCounts ?? {}
+      const sel = cash.counterSelection ?? {}
       if (hasCash) {
         setBanknoteCounts({
           200: Number(bn['200'] ?? 0),
@@ -1251,8 +1352,20 @@ export default function App() {
           5: Number(bn['5'] ?? 0),
           1: Number(bn['1'] ?? 0),
         })
+        setSelectedCashReceiptId(String(sel.receiptId ?? '').trim())
+        setSelectedCashReceiptMeta({
+          deviceIp: String(sel.deviceIp ?? '').trim(),
+          autoNo: String(sel.autoNo ?? '').trim(),
+          transactionDateTime: String(sel.transactionDateTime ?? '').trim(),
+        })
+        setCashAutoReceiptNo(String(sel.autoNo ?? '').trim())
+        setCashReceiptDateTime(String(sel.transactionDateTime ?? '').trim())
       } else {
         setBanknoteCounts({ 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 1: 0 })
+        setSelectedCashReceiptId('')
+        setSelectedCashReceiptMeta(null)
+        setCashAutoReceiptNo('')
+        setCashReceiptDateTime('')
       }
       setBankName(mutabakatRecord.bankName ?? '')
       setYatanTutar(mutabakatRecord.bankDepositAmount ?? 0)
@@ -1265,6 +1378,10 @@ export default function App() {
 
     setMutabakatMode('NAKIT')
     setBanknoteCounts({ 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 1: 0 })
+    setSelectedCashReceiptId('')
+    setSelectedCashReceiptMeta(null)
+    setCashAutoReceiptNo('')
+    setCashReceiptDateTime('')
     setBankName('')
     setYatanTutar(0)
     setManimDekontNo('')
@@ -1507,6 +1624,15 @@ export default function App() {
       description: (a.description ?? '').trim(),
       amount: Number(a.amount) || 0,
     }))
+    const cashCounterSelection =
+      cashEnabled && selectedCashReceiptId
+        ? {
+            receiptId: selectedCashReceiptId,
+            deviceIp: selectedCashReceiptMeta?.deviceIp ?? '',
+            autoNo: cashAutoReceiptNo || undefined,
+            transactionDateTime: cashReceiptDateTime || undefined,
+          }
+        : undefined
     const r = await saveMutabakat({
       userName: currentUser.userName,
       record: {
@@ -1516,7 +1642,12 @@ export default function App() {
         mode: mutabakatMode,
         torbaTutari,
         enteredAmount: enteredTotal,
-        cashJson: cashEnabled ? { banknoteCounts } : undefined,
+        cashJson: cashEnabled
+          ? {
+              banknoteCounts,
+              ...(cashCounterSelection ? { counterSelection: cashCounterSelection } : {}),
+            }
+          : undefined,
         bankName: bankEnabled ? bankName : undefined,
         bankDepositAmount: bankEnabled ? (Number(yatanTutar) || 0) : undefined,
         dekontNo: bankEnabled ? manimDekontNo : undefined,
@@ -2637,6 +2768,98 @@ export default function App() {
                     Ayarı Kaydet
                   </button>
                 </div>
+                <div className="upload-box" style={{ gap: 10, alignItems: 'end', marginBottom: 10 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 180 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Depo</label>
+                    <select value={cashDeviceDepot} onChange={(e) => setCashDeviceDepot(e.target.value)}>
+                      <option value="">Seçiniz</option>
+                      {allDepotOptions.map((d) => (
+                        <option key={d} value={d}>
+                          {depotLabel(d)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 180 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Cihaz IP</label>
+                    <input value={cashDeviceIp} onChange={(e) => setCashDeviceIp(e.target.value)} placeholder="192.168.1.10" />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 180 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Cihaz Kullanıcı</label>
+                    <input value={cashDeviceUser} onChange={(e) => setCashDeviceUser(e.target.value)} placeholder="admin" />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 180 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Cihaz Şifre</label>
+                    <input type="password" value={cashDevicePassword} onChange={(e) => setCashDevicePassword(e.target.value)} placeholder="şifre" />
+                  </div>
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    disabled={cashDeviceTesting || cashDeviceSaving}
+                    onClick={async () => {
+                      const ip = cashDeviceIp.trim()
+                      const user = cashDeviceUser.trim()
+                      const pass = cashDevicePassword
+                      if (!ip || !user || !pass) {
+                        setAdminStatus({ type: 'error', message: 'Test için IP, kullanıcı ve şifre zorunlu' })
+                        return
+                      }
+                      setCashDeviceTesting(true)
+                      setAdminStatus({ type: 'info', message: 'Cihaz bağlantısı test ediliyor...' })
+                      const r = await testCashDeviceConnection({
+                        userName: currentUser.userName,
+                        deviceIp: ip,
+                        deviceUser: user,
+                        devicePassword: pass,
+                      })
+                      if (!r.ok) {
+                        setAdminStatus({ type: 'error', message: r.message || 'Cihaz bağlantı testi başarısız' })
+                        setCashDeviceTesting(false)
+                        return
+                      }
+                      setAdminStatus({ type: 'success', message: `Bağlantı başarılı (${Number(r.count ?? 0)} sayım bulundu)` })
+                      setCashDeviceTesting(false)
+                    }}
+                  >
+                    {cashDeviceTesting ? 'Test Ediliyor...' : 'Bağlantı Test Et'}
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    type="button"
+                    disabled={cashDeviceTesting || cashDeviceSaving}
+                    onClick={async () => {
+                      const depot = cashDeviceDepot.trim()
+                      const ip = cashDeviceIp.trim()
+                      const user = cashDeviceUser.trim()
+                      const pass = cashDevicePassword
+                      if (!depot || !ip || !user || !pass) {
+                        setAdminStatus({ type: 'error', message: 'Depo, IP, kullanıcı ve şifre zorunlu' })
+                        return
+                      }
+                      setCashDeviceSaving(true)
+                      setAdminStatus({ type: 'info', message: 'Depo cihaz ayarı kaydediliyor...' })
+                      const r = await saveCashDeviceSetting({
+                        userName: currentUser.userName,
+                        depotCode: depot,
+                        deviceIp: ip,
+                        deviceUser: user,
+                        devicePassword: pass,
+                      })
+                      if (!r.ok) {
+                        setAdminStatus({ type: 'error', message: r.message || 'Cihaz ayarı kaydedilemedi' })
+                        setCashDeviceSaving(false)
+                        return
+                      }
+                      const list = await fetchCashDeviceSettings({ userName: currentUser.userName })
+                      if (list.ok) setCashDeviceSettings(list.settings)
+                      setCashDevicePassword('')
+                      setAdminStatus({ type: 'success', message: 'Depo cihaz ayarı kaydedildi' })
+                      setCashDeviceSaving(false)
+                    }}
+                  >
+                    {cashDeviceSaving ? 'Kaydediliyor...' : 'Cihaz Ayarını Kaydet'}
+                  </button>
+                </div>
                 <div className="upload-box" style={{ gap: 10, alignItems: 'end' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 220 }}>
                     <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Kullanıcı Adı</label>
@@ -3453,6 +3676,65 @@ export default function App() {
 
                     {cashEnabled ? (
                       <>
+                        <div className="mutabakat-section-title">Kisan Sayım Fişi</div>
+                        <div className="mutabakat-form">
+                          <div className="mutabakat-field">
+                            <label>Seçim</label>
+                            <select
+                              value={selectedCashReceiptId}
+                              disabled={mutabakatSaved?.status === 'COMPLETED' || cashCountLoading}
+                              onChange={(e) => {
+                                const id = e.target.value
+                                setSelectedCashReceiptId(id)
+                                if (!id) {
+                                  setSelectedCashReceiptMeta(null)
+                                  setCashAutoReceiptNo('')
+                                  setCashReceiptDateTime('')
+                                  return
+                                }
+                                const selected = cashCountReceipts.find((x) => x.receiptId === id) ?? null
+                                if (!selected) return
+                                setBanknoteCounts(banknotesFromReceipt(selected.banknoteCounts))
+                                setSelectedCashReceiptMeta({
+                                  deviceIp: selected.deviceIp,
+                                  autoNo: selected.autoNo,
+                                  transactionDateTime: selected.transactionDateTime,
+                                })
+                                setCashAutoReceiptNo(selected.autoNo)
+                                setCashReceiptDateTime(selected.transactionDateTime)
+                              }}
+                            >
+                              <option value="">Manuel giriş (sayım seçmeden)</option>
+                              {cashCountReceipts.map((r) => (
+                                <option key={r.receiptId} value={r.receiptId}>
+                                  {[
+                                    r.autoNo ? `No ${r.autoNo}` : '',
+                                    r.displayTime || formatDateTimeTr(r.transactionDateTime),
+                                    formatMoney(Number(r.totalAmount) || 0),
+                                  ]
+                                    .filter(Boolean)
+                                    .join(' • ')}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="mutabakat-field">
+                            <label>İşlem Tarih/Saat</label>
+                            <input value={cashReceiptDateTime ? formatDateTimeTr(cashReceiptDateTime) : ''} readOnly />
+                          </div>
+                          <div className="mutabakat-field">
+                            <label>Otomatik Sayım No</label>
+                            <input value={cashAutoReceiptNo} readOnly />
+                          </div>
+                          <div className="mutabakat-field">
+                            <label>Cihaz IP</label>
+                            <input value={selectedCashReceiptMeta?.deviceIp ?? selectedDepotCashDevice?.deviceIp ?? ''} readOnly />
+                          </div>
+                        </div>
+                        {cashCountLoading ? <div className="mutabakat-hint">Sayımlar yükleniyor...</div> : null}
+                        {!cashCountLoading && cashCountReceipts.length === 0 ? (
+                          <div className="mutabakat-hint">Bu depo/tarih için kullanılabilir sayım bulunamadı.</div>
+                        ) : null}
                         <div className="mutabakat-section-title">Banknot Döküm Listesi</div>
                         <table className="mini-table">
                           <thead>
