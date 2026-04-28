@@ -256,7 +256,7 @@ function buildCounterId(args: { rawId?: unknown; transactionDateTime?: unknown }
   const rawId = String(args.rawId ?? '').trim()
   const time = String(args.transactionDateTime ?? '').trim()
   if (time) {
-    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?/.exec(time)
+    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:[.:](\d{1,6}))?/.exec(time)
     if (m) {
       const ms = String(m[7] ?? '000').slice(0, 3).padEnd(3, '0')
       return `${m[1]}${m[2]}${m[3]}${m[4]}${m[5]}${m[6]}${ms}`
@@ -2321,13 +2321,16 @@ WHERE DeviceIp = @DeviceIp
     const usedIds = new Set((usedRes.recordset ?? []).map((r: any) => String(r.ReceiptId ?? '').trim()).filter(Boolean))
     const receipts = rawReceipts
       .filter((r) => {
-        const id = buildCounterId({ rawId: r.id, transactionDateTime: r.time })
-        if (!id) return false
+        const canonicalId = buildCounterId({ rawId: r.id, transactionDateTime: r.time })
+        const legacyId = String(r.id ?? '').trim()
+        if (!canonicalId && !legacyId) return false
         const receiptDateKey = String(r.date_key ?? '').trim()
         // XML tarih parse edilemezse date_key bos/Unknown gelebilir.
         // Dosya adi zaten istenen gun (dateText) ile filtrelendigi icin bu durumda fişi eleme.
         if (receiptDateKey && receiptDateKey !== 'Unknown' && receiptDateKey !== dateText) return false
-        return !usedIds.has(id)
+        if (canonicalId && usedIds.has(canonicalId)) return false
+        if (legacyId && usedIds.has(legacyId)) return false
+        return true
       })
       .map((r) => ({
         counterId: buildCounterId({ rawId: r.id, transactionDateTime: r.time }),
@@ -4293,7 +4296,12 @@ app.post('/api/mutabakat', async (req, res) => {
         ? ((cashJson as any).counterSelection as { deviceIp?: unknown; receiptId?: unknown; transactionDateTime?: unknown; autoNo?: unknown })
         : null
     const selectedDeviceIp = normalizeIpText(cashCounterSelection?.deviceIp)
-    const selectedReceiptId = String(cashCounterSelection?.receiptId ?? '').trim()
+    const selectedReceiptIdRaw = String(cashCounterSelection?.receiptId ?? '').trim()
+    const selectedReceiptId = buildCounterId({
+      rawId: selectedReceiptIdRaw,
+      transactionDateTime: typeof cashCounterSelection?.transactionDateTime === 'string' ? cashCounterSelection.transactionDateTime : '',
+    })
+    const selectedReceiptIdLegacy = selectedReceiptIdRaw && selectedReceiptIdRaw !== selectedReceiptId ? selectedReceiptIdRaw : ''
     const selectedAutoNo = String(cashCounterSelection?.autoNo ?? '').trim() || null
     const selectedReceiptDateTime = safeDate(typeof cashCounterSelection?.transactionDateTime === 'string' ? cashCounterSelection.transactionDateTime : '')
     const bankName = String(req.body?.bankName ?? '').trim() || null
@@ -4335,6 +4343,7 @@ WHERE SourceFileDate = @SourceFileDate
         .request()
         .input('DeviceIp', mssql.NVarChar(128), selectedDeviceIp)
         .input('ReceiptId', mssql.NVarChar(64), selectedReceiptId)
+        .input('LegacyReceiptId', mssql.NVarChar(64), selectedReceiptIdLegacy)
         .input('SourceFileDate', mssql.Date, parsedDate.date)
         .input('DepotCode', mssql.NVarChar(32), depotCode)
         .input('PositionCode', mssql.NVarChar(64), positionCode)
@@ -4342,7 +4351,7 @@ WHERE SourceFileDate = @SourceFileDate
 SELECT TOP 1 SourceFileDate, DepotCode, PositionCode
 FROM dbo.MutabakatCashReceiptUsage
 WHERE DeviceIp = @DeviceIp
-  AND ReceiptId = @ReceiptId
+  AND (ReceiptId = @ReceiptId OR (@LegacyReceiptId <> '' AND ReceiptId = @LegacyReceiptId))
   AND NOT (SourceFileDate = @SourceFileDate AND DepotCode = @DepotCode AND PositionCode = @PositionCode)
 `)
       if ((usedCheck.recordset ?? []).length > 0) {
