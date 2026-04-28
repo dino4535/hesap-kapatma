@@ -2298,7 +2298,10 @@ WHERE DeviceIp = @DeviceIp
       .filter((r) => {
         const id = String(r.id ?? '').trim()
         if (!id) return false
-        if ((r.date_key ?? '') !== dateText) return false
+        const receiptDateKey = String(r.date_key ?? '').trim()
+        // XML tarih parse edilemezse date_key bos/Unknown gelebilir.
+        // Dosya adi zaten istenen gun (dateText) ile filtrelendigi icin bu durumda fişi eleme.
+        if (receiptDateKey && receiptDateKey !== 'Unknown' && receiptDateKey !== dateText) return false
         return !usedIds.has(id)
       })
       .map((r) => ({
