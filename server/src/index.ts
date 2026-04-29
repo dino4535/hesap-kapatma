@@ -1018,7 +1018,6 @@ async function fetchCariBorcBakiyeleri(args: { asOfDateYmd: string; cariCodes: s
   const balanceColCandidate = pickColumnName(colsUpper, ['BAKIYE', 'CARIBAKIYE', 'CARI_BAKIYE', 'BAK', 'NETBAKIYE', 'NET_BAKIYE'])
   const borcCol = pickColumnName(colsUpper, ['BORC', 'BORC_TUTAR', 'BORC_TUTARI', 'DEBIT', 'DB'])
   const alacakCol = pickColumnName(colsUpper, ['ALACAK', 'ALACAK_TUTAR', 'ALACAK_TUTARI', 'CREDIT', 'CR'])
-  const vadeCol = pickColumnName(colsUpper, ['VADE_TARIHI', 'VADETARIHI', 'VADE_TAR', 'VADE', 'VADEGUNU', 'V_TARIH', 'VAD'])
 
   const values = args.cariCodes
     .map((x) => String(x ?? '').trim())
@@ -1062,48 +1061,7 @@ FROM base
 WHERE rn = 1
 `
   } else if (borcCol && alacakCol) {
-    if (vadeCol) {
-      query = `
-;WITH net AS (
-  SELECT
-    CAST(${codeCol} AS NVARCHAR(64)) AS code,
-    SUM(COALESCE(${borcCol}, 0) - COALESCE(${alacakCol}, 0)) AS netBalance
-  FROM dbo.TBLCAHAR WITH (NOLOCK)
-  WHERE ${dateCol} <= @AsOf
-    AND ${codeCol} IN (${inParams.join(', ')})
-  GROUP BY ${codeCol}
-),
-last_invoice AS (
-  SELECT
-    CAST(${codeCol} AS NVARCHAR(64)) AS code,
-    CASE WHEN CAST(${dateCol} AS DATE) = CAST(${vadeCol} AS DATE) THEN 1 ELSE 0 END AS isSameDay
-  FROM (
-    SELECT
-      ${codeCol},
-      ${dateCol},
-      ${vadeCol},
-      ROW_NUMBER() OVER (PARTITION BY ${codeCol} ORDER BY ${dateCol} DESC, ${vadeCol} DESC) AS rn
-    FROM dbo.TBLCAHAR WITH (NOLOCK)
-    WHERE ${dateCol} <= @AsOf
-      AND ${codeCol} IN (${inParams.join(', ')})
-      AND COALESCE(${borcCol}, 0) > 0
-  ) x
-  WHERE x.rn = 1
-)
-SELECT
-  n.code,
-  CAST(
-    CASE
-      WHEN ISNULL(li.isSameDay, 0) = 1 THEN
-        CASE WHEN n.netBalance > 0 THEN n.netBalance ELSE 0 END
-      ELSE 0
-    END
-  AS DECIMAL(18, 2)) AS balance
-FROM net n
-LEFT JOIN last_invoice li ON li.code = n.code
-`
-    } else {
-      query = `
+    query = `
 SELECT
   CAST(${codeCol} AS NVARCHAR(64)) AS code,
   CAST(CASE WHEN SUM(COALESCE(${borcCol}, 0) - COALESCE(${alacakCol}, 0)) > 0 THEN SUM(COALESCE(${borcCol}, 0) - COALESCE(${alacakCol}, 0)) ELSE 0 END AS DECIMAL(18, 2)) AS balance
@@ -1112,7 +1070,6 @@ WHERE ${dateCol} <= @AsOf
   AND ${codeCol} IN (${inParams.join(', ')})
 GROUP BY ${codeCol}
 `
-    }
   } else {
     throw new Error('TBLCAHAR kolonları tespit edilemedi (bakiye veya borç/alacak)')
   }
@@ -4062,11 +4019,8 @@ GROUP BY code
       }
     }
 
-    const cariTargets = Array.from(vadeliHavaleTotals.keys())
-    const map = cariTargets.length > 0 ? await fetchCariBorcBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: cariTargets }) : new Map<string, number>()
+    const map = await fetchCariBorcBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: codes })
     const balances = codes.map((code) => {
-      const hasVadeliHavale = vadeliHavaleTotals.has(code)
-      if (!hasVadeliHavale) return { code, balance: 0 }
       const base = Number(map.get(code) ?? 0) || 0
       const ded = Number(vadeliHavaleTotals.get(code) ?? 0) || 0
       const next = Math.max(0, base - ded)
