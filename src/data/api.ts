@@ -179,11 +179,17 @@ export async function fetchCashCountReceipts(args: {
   date: string
   depot: string
   position: string
+  excludeSourceFileDate?: string
+  excludeDepot?: string
+  excludePosition?: string
 }): Promise<{ ok: boolean; receipts: CashCountReceipt[]; message?: string }> {
   const qs = new URLSearchParams()
   qs.set('date', args.date)
   qs.set('depot', args.depot)
   qs.set('position', args.position)
+  if (args.excludeSourceFileDate) qs.set('excludeSourceFileDate', args.excludeSourceFileDate)
+  if (args.excludeDepot) qs.set('excludeDepot', args.excludeDepot)
+  if (args.excludePosition) qs.set('excludePosition', args.excludePosition)
   const res = await fetch(`/api/cash-counts/receipts?${qs.toString()}`, { headers: { 'x-user': args.userName } })
   if (!res.ok) {
     const text = await res.text().catch(() => '')

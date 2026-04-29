@@ -2326,6 +2326,10 @@ app.get('/api/cash-counts/receipts', async (req, res) => {
       res.status(400).send('Tarih, depo ve pozisyon zorunlu')
       return
     }
+    const excludeParsed = parseQueryDate(req.query.excludeSourceFileDate)
+    const excludeDate = excludeParsed.ok && excludeParsed.date ? excludeParsed.date : parsedDate.date!
+    const excludeDepot = normalizeDepotCode(req.query.excludeDepot) || depotCode
+    const excludePosition = String(req.query.excludePosition ?? '').trim() || positionCode
 
     const pool = await getPool()
     await ensureSchema(pool)
@@ -2350,9 +2354,9 @@ app.get('/api/cash-counts/receipts', async (req, res) => {
     const usedRes = await pool
       .request()
       .input('DeviceIp', mssql.NVarChar(128), creds.ip)
-      .input('SourceFileDate', mssql.Date, parsedDate.date!)
-      .input('DepotCode', mssql.NVarChar(32), depotCode)
-      .input('PositionCode', mssql.NVarChar(64), positionCode)
+      .input('SourceFileDate', mssql.Date, excludeDate)
+      .input('DepotCode', mssql.NVarChar(32), excludeDepot)
+      .input('PositionCode', mssql.NVarChar(64), excludePosition)
       .query(`
 SELECT ReceiptId, ReceiptDateTime
 FROM dbo.MutabakatCashReceiptUsageItems

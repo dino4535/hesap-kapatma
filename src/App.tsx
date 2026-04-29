@@ -451,8 +451,12 @@ export default function App() {
   const [banknoteCounts, setBanknoteCounts] = useState<Record<Banknote, number>>({ 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 1: 0 })
   const [cashCountReceipts, setCashCountReceipts] = useState<CashCountReceipt[]>([])
   const [cashCountLoading, setCashCountLoading] = useState(false)
-  const [cashReceiptPickerId, setCashReceiptPickerId] = useState('')
-  const [selectedCashReceiptIds, setSelectedCashReceiptIds] = useState<string[]>([])
+  const [selectedCashReceipts, setSelectedCashReceipts] = useState<CashCountReceipt[]>([])
+  const [cashReceiptModalOpen, setCashReceiptModalOpen] = useState(false)
+  const [cashReceiptModalDate, setCashReceiptModalDate] = useState('')
+  const [cashReceiptModalReceipts, setCashReceiptModalReceipts] = useState<CashCountReceipt[]>([])
+  const [cashReceiptModalLoading, setCashReceiptModalLoading] = useState(false)
+  const [cashReceiptModalSelectedIds, setCashReceiptModalSelectedIds] = useState<string[]>([])
   const [bankName, setBankName] = useState('')
   const [yatanTutar, setYatanTutar] = useState<number>(0)
   const [manimDekontNo, setManimDekontNo] = useState('')
@@ -631,22 +635,18 @@ export default function App() {
     return cashDeviceSettings.find((x) => x.depotCode === depot) ?? null
   }, [selectedDataset.depot, cashDeviceSettings])
 
-  const selectedCashReceipts = useMemo(() => {
-    const byId = new Map(cashCountReceipts.map((r) => [r.receiptId, r] as const))
-    return selectedCashReceiptIds.map((id) => byId.get(id)).filter(Boolean) as CashCountReceipt[]
-  }, [selectedCashReceiptIds, cashCountReceipts])
+  const selectedCashReceiptIds = useMemo(() => {
+    return selectedCashReceipts.map((r) => r.receiptId)
+  }, [selectedCashReceipts])
 
   const selectedCashDeviceIpText = useMemo(() => {
     const ips = Array.from(new Set(selectedCashReceipts.map((r) => String(r.deviceIp ?? '').trim()).filter(Boolean)))
     return ips.join(', ')
   }, [selectedCashReceipts])
 
-  const sumBanknoteCountsByReceiptIds = (ids: string[]) => {
+  const sumBanknoteCountsFromReceipts = (receipts: CashCountReceipt[]) => {
     const totals: Record<Banknote, number> = { 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 1: 0 }
-    const byId = new Map(cashCountReceipts.map((r) => [r.receiptId, r] as const))
-    for (const id of ids) {
-      const r = byId.get(id)
-      if (!r) continue
+    for (const r of receipts) {
       const bn = banknotesFromReceipt(r.banknoteCounts)
       for (const d of BANKNOTES) totals[d] = (totals[d] ?? 0) + (bn[d] ?? 0)
     }
@@ -825,8 +825,10 @@ export default function App() {
     const isCashEnabled = mutabakatMode === 'NAKIT' || mutabakatMode === 'KARMA'
     if (!isCashEnabled) {
       setCashCountReceipts([])
-      setCashReceiptPickerId('')
-      setSelectedCashReceiptIds([])
+      setSelectedCashReceipts([])
+      setCashReceiptModalOpen(false)
+      setCashReceiptModalSelectedIds([])
+      setCashReceiptModalReceipts([])
       return
     }
     if (mutabakatStep !== 1) {
@@ -836,6 +838,9 @@ export default function App() {
     if (!currentUser || !selectedDataset.date || !selectedDataset.depot || !selectedPosition) return
     const date = selectedDataset.date
     const depot = selectedDataset.depot
+    const excludeSourceFileDate = date
+    const excludeDepot = depot
+    const excludePosition = selectedPosition
     let alive = true
     const load = async () => {
       setCashCountLoading(true)
@@ -844,6 +849,9 @@ export default function App() {
         date,
         depot,
         position: selectedPosition,
+        excludeSourceFileDate,
+        excludeDepot,
+        excludePosition,
       })
       if (!alive) return
       if (!r.ok) {
@@ -863,9 +871,47 @@ export default function App() {
 
   useEffect(() => {
     setCashCountReceipts([])
-    setCashReceiptPickerId('')
-    setSelectedCashReceiptIds([])
+    setSelectedCashReceipts([])
+    setCashReceiptModalOpen(false)
+    setCashReceiptModalSelectedIds([])
+    setCashReceiptModalReceipts([])
   }, [selectedDataset.date, selectedDataset.depot, selectedPosition])
+
+  useEffect(() => {
+    if (!cashReceiptModalOpen) return
+    if (!currentUser) return
+    if (!cashReceiptModalDate || !selectedDataset.depot || !selectedPosition || !selectedDataset.date) return
+    const depot = selectedDataset.depot
+    const excludeSourceFileDate = selectedDataset.date
+    const excludeDepot = selectedDataset.depot
+    const excludePosition = selectedPosition
+    let alive = true
+    const load = async () => {
+      setCashReceiptModalLoading(true)
+      const r = await fetchCashCountReceipts({
+        userName: currentUser.userName,
+        date: cashReceiptModalDate,
+        depot,
+        position: selectedPosition,
+        excludeSourceFileDate,
+        excludeDepot,
+        excludePosition,
+      })
+      if (!alive) return
+      if (!r.ok) {
+        setCashReceiptModalReceipts([])
+        setStatus({ type: 'error', message: r.message || 'Kisan sayimlari alinamadi' })
+        setCashReceiptModalLoading(false)
+        return
+      }
+      setCashReceiptModalReceipts(r.receipts)
+      setCashReceiptModalLoading(false)
+    }
+    load().catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [cashReceiptModalOpen, cashReceiptModalDate, currentUser, selectedDataset.depot, selectedDataset.date, selectedPosition])
 
   useEffect(() => {
     if (!selectedPosition || !selectedDataset.date || !selectedDataset.depot) {
@@ -1377,11 +1423,10 @@ export default function App() {
       const bn = cash.banknoteCounts ?? {}
       const selectionsRaw = Array.isArray(cash.counterSelections) ? cash.counterSelections : []
       const single = cash.counterSelection ?? {}
-      const selectionIds = selectionsRaw
-        .map((x) => String(x?.receiptId ?? '').trim())
-        .filter(Boolean)
-        .concat(String(single.receiptId ?? '').trim() ? [String(single.receiptId ?? '').trim()] : [])
-      const uniqSelectionIds = Array.from(new Set(selectionIds))
+      const selectionObjects = selectionsRaw
+        .filter((x) => !!String(x?.receiptId ?? '').trim())
+        .concat(String(single.receiptId ?? '').trim() ? [single] : [])
+      const dedupedSelections = Array.from(new Map(selectionObjects.map((x) => [String(x?.receiptId ?? '').trim(), x] as const)).values())
       if (hasCash) {
         setBanknoteCounts({
           200: Number(bn['200'] ?? 0),
@@ -1392,12 +1437,26 @@ export default function App() {
           5: Number(bn['5'] ?? 0),
           1: Number(bn['1'] ?? 0),
         })
-        setSelectedCashReceiptIds(uniqSelectionIds)
-        setCashReceiptPickerId('')
+        setSelectedCashReceipts(
+          dedupedSelections.map((sel) => {
+            const receiptId = String(sel?.receiptId ?? '').trim()
+            return {
+              counterId: receiptId,
+              receiptId,
+              deviceIp: String(sel?.deviceIp ?? '').trim(),
+              transactionDateTime: String(sel?.transactionDateTime ?? '').trim(),
+              displayTime: '',
+              autoNo: String(sel?.autoNo ?? '').trim(),
+              sequenceNo: 0,
+              totalAmount: 0,
+              totalQty: 0,
+              banknoteCounts: {},
+            }
+          }),
+        )
       } else {
         setBanknoteCounts({ 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 1: 0 })
-        setSelectedCashReceiptIds([])
-        setCashReceiptPickerId('')
+        setSelectedCashReceipts([])
       }
       setBankName(mutabakatRecord.bankName ?? '')
       setYatanTutar(mutabakatRecord.bankDepositAmount ?? 0)
@@ -1410,8 +1469,7 @@ export default function App() {
 
     setMutabakatMode('NAKIT')
     setBanknoteCounts({ 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 1: 0 })
-    setSelectedCashReceiptIds([])
-    setCashReceiptPickerId('')
+    setSelectedCashReceipts([])
     setBankName('')
     setYatanTutar(0)
     setManimDekontNo('')
@@ -1655,16 +1713,13 @@ export default function App() {
       amount: Number(a.amount) || 0,
     }))
     const cashCounterSelections =
-      cashEnabled && selectedCashReceiptIds.length > 0
-        ? selectedCashReceiptIds.map((id) => {
-            const selected = cashCountReceipts.find((x) => x.receiptId === id) ?? null
-            return {
-              receiptId: id,
-              deviceIp: selected?.deviceIp ?? selectedDepotCashDevice?.deviceIp ?? '',
-              autoNo: selected?.autoNo || undefined,
-              transactionDateTime: selected?.transactionDateTime || undefined,
-            }
-          })
+      cashEnabled && selectedCashReceipts.length > 0
+        ? selectedCashReceipts.map((r) => ({
+            receiptId: r.receiptId,
+            deviceIp: r.deviceIp || selectedDepotCashDevice?.deviceIp || '',
+            autoNo: r.autoNo || undefined,
+            transactionDateTime: r.transactionDateTime || undefined,
+          }))
         : undefined
     const r = await saveMutabakat({
       userName: currentUser.userName,
@@ -3712,55 +3767,26 @@ export default function App() {
                         <div className="mutabakat-section-title">Kisan Sayım Fişi</div>
                         <div className="mutabakat-form">
                           <div className="mutabakat-field">
-                            <label>Seçim</label>
-                            <div style={{ display: 'flex', gap: 8 }}>
-                              <select
-                                value={cashReceiptPickerId}
-                                disabled={mutabakatSaved?.status === 'COMPLETED' || cashCountLoading}
-                                onChange={(e) => setCashReceiptPickerId(e.target.value)}
-                              >
-                                <option value="">Seçiniz</option>
-                                {cashCountReceipts
-                                  .filter((r) => !selectedCashReceiptIds.includes(r.receiptId))
-                                  .map((r) => (
-                                    <option key={r.receiptId} value={r.receiptId}>
-                                      {[
-                                        r.counterId ? `ID ${r.counterId}` : '',
-                                        r.autoNo ? `No ${r.autoNo}` : '',
-                                        r.displayTime || formatDateTimeTr(r.transactionDateTime),
-                                        formatMoney(Number(r.totalAmount) || 0),
-                                      ]
-                                        .filter(Boolean)
-                                        .join(' • ')}
-                                    </option>
-                                  ))}
-                              </select>
+                            <label>Sayım Fişi</label>
+                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                               <button
                                 className="btn btn-secondary"
                                 type="button"
-                                disabled={mutabakatSaved?.status === 'COMPLETED' || cashCountLoading || !cashReceiptPickerId}
+                                disabled={mutabakatSaved?.status === 'COMPLETED'}
                                 onClick={() => {
-                                  const id = cashReceiptPickerId
-                                  if (!id) return
-                                  setSelectedCashReceiptIds((prev) => {
-                                    if (prev.includes(id)) return prev
-                                    const next = prev.concat([id])
-                                    setBanknoteCounts(sumBanknoteCountsByReceiptIds(next))
-                                    return next
-                                  })
-                                  setCashReceiptPickerId('')
+                                  const d = cashReceiptModalDate || selectedDataset.date || new Date().toISOString().slice(0, 10)
+                                  setCashReceiptModalDate(d)
+                                  setCashReceiptModalSelectedIds(selectedCashReceiptIds)
+                                  setCashReceiptModalOpen(true)
                                 }}
                               >
-                                Ekle
+                                Sayım Fişi Ekle
                               </button>
                               <button
                                 className="btn btn-secondary"
                                 type="button"
-                                disabled={mutabakatSaved?.status === 'COMPLETED' || cashCountLoading || selectedCashReceiptIds.length === 0}
-                                onClick={() => {
-                                  setSelectedCashReceiptIds([])
-                                  setCashReceiptPickerId('')
-                                }}
+                                disabled={mutabakatSaved?.status === 'COMPLETED' || selectedCashReceipts.length === 0}
+                                onClick={() => setSelectedCashReceipts([])}
                               >
                                 Temizle
                               </button>
@@ -3768,7 +3794,7 @@ export default function App() {
                           </div>
                           <div className="mutabakat-field">
                             <label>Seçili Fiş</label>
-                            <input value={selectedCashReceiptIds.length ? String(selectedCashReceiptIds.length) : ''} readOnly />
+                            <input value={selectedCashReceipts.length ? String(selectedCashReceipts.length) : ''} readOnly />
                           </div>
                           <div className="mutabakat-field">
                             <label>Fiş Toplamı</label>
@@ -3801,10 +3827,9 @@ export default function App() {
                                       type="button"
                                       disabled={mutabakatSaved?.status === 'COMPLETED'}
                                       onClick={() => {
-                                        const id = r.receiptId
-                                        setSelectedCashReceiptIds((prev) => {
-                                          const next = prev.filter((x) => x !== id)
-                                          if (next.length > 0) setBanknoteCounts(sumBanknoteCountsByReceiptIds(next))
+                                        setSelectedCashReceipts((prev) => {
+                                          const next = prev.filter((x) => x.receiptId !== r.receiptId)
+                                          if (next.length > 0) setBanknoteCounts(sumBanknoteCountsFromReceipts(next))
                                           return next
                                         })
                                       }}
@@ -4691,6 +4716,99 @@ export default function App() {
 
         </>
       )}
+
+      <Modal title="Sayım Fişi Ekle" open={cashReceiptModalOpen} onClose={() => setCashReceiptModalOpen(false)} size="wide">
+        <div className="modal-content">
+          <div className="form-row">
+            <label>Tarih</label>
+            <input
+              type="date"
+              value={cashReceiptModalDate}
+              onChange={(e) => setCashReceiptModalDate(e.target.value)}
+              disabled={cashReceiptModalLoading}
+            />
+          </div>
+
+          <div className="mutabakat-hint">
+            Seçili: {cashReceiptModalReceipts.filter((r) => cashReceiptModalSelectedIds.includes(r.receiptId)).length} • Toplam:{' '}
+            {formatMoney(cashReceiptModalReceipts.filter((r) => cashReceiptModalSelectedIds.includes(r.receiptId)).reduce((s, r) => s + (Number(r.totalAmount) || 0), 0))}
+          </div>
+
+          <table className="mini-table">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Fiş</th>
+                <th>İşlem Zamanı</th>
+                <th>Tutar</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cashReceiptModalLoading ? (
+                <tr>
+                  <td colSpan={4} style={{ textAlign: 'center', color: '#718096' }}>
+                    Yükleniyor...
+                  </td>
+                </tr>
+              ) : cashReceiptModalReceipts.length === 0 ? (
+                <tr>
+                  <td colSpan={4} style={{ textAlign: 'center', color: '#718096' }}>
+                    Kayıt yok
+                  </td>
+                </tr>
+              ) : (
+                cashReceiptModalReceipts.map((r) => {
+                  const checked = cashReceiptModalSelectedIds.includes(r.receiptId)
+                  return (
+                    <tr key={r.receiptId}>
+                      <td style={{ width: 40 }}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            const nextChecked = e.target.checked
+                            setCashReceiptModalSelectedIds((prev) => {
+                              if (nextChecked) return prev.includes(r.receiptId) ? prev : prev.concat([r.receiptId])
+                              return prev.filter((x) => x !== r.receiptId)
+                            })
+                          }}
+                        />
+                      </td>
+                      <td>{[r.autoNo ? `No ${r.autoNo}` : '', r.counterId ? `ID ${r.counterId}` : ''].filter(Boolean).join(' • ') || r.receiptId}</td>
+                      <td>{r.displayTime || formatDateTimeTr(r.transactionDateTime)}</td>
+                      <td>{formatMoney(Number(r.totalAmount) || 0)}</td>
+                    </tr>
+                  )
+                })
+              )}
+            </tbody>
+          </table>
+
+          <div className="modal-actions">
+            <button className="btn btn-secondary" type="button" onClick={() => setCashReceiptModalOpen(false)}>
+              İptal
+            </button>
+            <button
+              className="btn btn-primary"
+              type="button"
+              disabled={cashReceiptModalLoading}
+              onClick={() => {
+                const picked = cashReceiptModalReceipts.filter((r) => cashReceiptModalSelectedIds.includes(r.receiptId))
+                setSelectedCashReceipts((prev) => {
+                  const byId = new Map(prev.map((x) => [x.receiptId, x] as const))
+                  for (const r of picked) byId.set(r.receiptId, r)
+                  const next = Array.from(byId.values())
+                  setBanknoteCounts(sumBanknoteCountsFromReceipts(next))
+                  return next
+                })
+                setCashReceiptModalOpen(false)
+              }}
+            >
+              Seçimleri Ekle
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal title={editingInvoice ? `Fatura Tip Dağılımı - ${editingInvoice.code}` : ''} open={!!editingInvoice} onClose={() => setEditingInvoice(null)} size="large">
         {editingInvoice ? (
