@@ -224,10 +224,27 @@ function allocationSummaryFromJson(value?: string) {
   }
 }
 
-function buildIncomingByCorrespondentCode(receipts: ManimReceiptRow[]) {
+function manimIstanbulDayKey(value?: string) {
+  const s = String(value ?? '').trim()
+  if (!s) return ''
+  const d = new Date(s)
+  if (Number.isNaN(d.getTime())) {
+    const m = /^(\d{4}-\d{2}-\d{2})/.exec(s)
+    return m ? m[1] : ''
+  }
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
+  } catch {
+    return d.toISOString().slice(0, 10)
+  }
+}
+
+function buildIncomingByCorrespondentCode(receipts: ManimReceiptRow[], onlyDay?: string) {
   const totals = new Map<string, number>()
+  const dayKey = String(onlyDay ?? '').trim()
   for (const r of receipts) {
     if (!isIncomingDirection(r.direction)) continue
+    if (dayKey && manimIstanbulDayKey(r.receiptDate) !== dayKey) continue
     const code = normalizeMatchCode(r.correspondentCode)
     if (!code) continue
     totals.set(code, (totals.get(code) ?? 0) + (Number(r.amount) || 0))
@@ -1332,7 +1349,17 @@ export default function App() {
       })
   }, [havaleInvoicesByBayi, vadeliTahsilatHavaleleriByBayi])
 
-  const manimIncomingByCorrespondentCode = useMemo(() => buildIncomingByCorrespondentCode(manimBayiMatchReceipts), [manimBayiMatchReceipts])
+  const manimIncomingTodayByCorrespondentCode = useMemo(() => {
+    if (!selectedDataset.date) return new Map<string, number>()
+    return buildIncomingByCorrespondentCode(manimBayiMatchReceipts, selectedDataset.date)
+  }, [manimBayiMatchReceipts, selectedDataset.date])
+
+  const manimIncomingPrevByCorrespondentCode = useMemo(() => {
+    if (!selectedDataset.date) return new Map<string, number>()
+    const prev = ymdAddDays(selectedDataset.date, -1)
+    if (!prev) return new Map<string, number>()
+    return buildIncomingByCorrespondentCode(manimBayiMatchReceipts, prev)
+  }, [manimBayiMatchReceipts, selectedDataset.date])
 
   const cariBalanceAsOfDate = useMemo(() => (selectedDataset.date ? ymdAddDays(selectedDataset.date, -1) : ''), [selectedDataset.date])
   const cariBalanceCodesKey = useMemo(() => {
@@ -1386,15 +1413,17 @@ export default function App() {
   const bayiHavaleEslemeRows = useMemo(() => {
     return havaleVadeliByBayiRows.map((r) => {
       const matchCode = normalizeMatchCode(r.bayiKodu)
-      const gelenTutarToplami = manimIncomingByCorrespondentCode.get(matchCode) ?? 0
+      const gelenBugun = manimIncomingTodayByCorrespondentCode.get(matchCode) ?? 0
+      const gelenOnceki = manimIncomingPrevByCorrespondentCode.get(matchCode) ?? 0
       const cariBorcBakiyesi = Number(cariBalancesByMatchCode[matchCode] ?? 0) || 0
       const toplam = (Number(r.toplam) || 0) + cariBorcBakiyesi
+      const gelenTutarToplami = Math.abs((Number(gelenBugun) || 0) - toplam) < 0.01 ? (Number(gelenBugun) || 0) : (Number(gelenBugun) || 0) + (Number(gelenOnceki) || 0)
       const fark = (Number(gelenTutarToplami) || 0) - toplam
       const eslesti = Math.abs(fark) < 0.01
       const durum = eslesti ? 'Tam eşleşti' : fark < 0 ? 'Eksik ödeme' : 'Fazla ödeme'
       return { ...r, cariBorcBakiyesi, toplam, gelenTutarToplami, fark, eslesti, durum }
     })
-  }, [havaleVadeliByBayiRows, manimIncomingByCorrespondentCode, cariBalancesByMatchCode])
+  }, [havaleVadeliByBayiRows, manimIncomingTodayByCorrespondentCode, manimIncomingPrevByCorrespondentCode, cariBalancesByMatchCode])
 
   const bayiEslemeBeklenenToplam = useMemo(() => bayiHavaleEslemeRows.reduce((s, r) => s + (Number(r.toplam) || 0), 0), [bayiHavaleEslemeRows])
   const bayiEslemeGelenToplam = useMemo(() => bayiHavaleEslemeRows.reduce((s, r) => s + (Number(r.gelenTutarToplami) || 0), 0), [bayiHavaleEslemeRows])
@@ -1988,7 +2017,10 @@ export default function App() {
       setStatus({ type: 'error', message: receiptsResp.message || 'PDF için Manim hareketleri alınamadı' })
       return
     }
-    const incomingByCorrespondentForPrint = buildIncomingByCorrespondentCode(Array.isArray(receiptsResp.receipts) ? receiptsResp.receipts : [])
+    const printReceipts = Array.isArray(receiptsResp.receipts) ? receiptsResp.receipts : []
+    const incomingTodayByCorrespondentForPrint = rec.sourceFileDate ? buildIncomingByCorrespondentCode(printReceipts, rec.sourceFileDate) : new Map<string, number>()
+    const prevPrintDay = rec.sourceFileDate ? ymdAddDays(rec.sourceFileDate, -1) : ''
+    const incomingPrevByCorrespondentForPrint = prevPrintDay ? buildIncomingByCorrespondentCode(printReceipts, prevPrintDay) : new Map<string, number>()
 
     const completedAt = formatDateTimeTr(rec.completedAt || rec.updatedAt)
     const completedBy = (rec.completedBy || rec.updatedBy || currentUser?.userName || '').trim() || '-'
@@ -2039,9 +2071,11 @@ export default function App() {
 
     const havaleEslemeRows = havaleVadeliRows.map((r) => {
       const matchCode = normalizeMatchCode(r.bayiKodu)
-      const gelenTutarToplami = incomingByCorrespondentForPrint.get(matchCode) ?? 0
+      const gelenBugun = incomingTodayByCorrespondentForPrint.get(matchCode) ?? 0
+      const gelenOnceki = incomingPrevByCorrespondentForPrint.get(matchCode) ?? 0
       const cariBorcBakiyesi = Number(cariBalancesByMatchCode[matchCode] ?? 0) || 0
       const toplam = (Number(r.toplam) || 0) + cariBorcBakiyesi
+      const gelenTutarToplami = Math.abs((Number(gelenBugun) || 0) - toplam) < 0.01 ? (Number(gelenBugun) || 0) : (Number(gelenBugun) || 0) + (Number(gelenOnceki) || 0)
       const fark = (Number(gelenTutarToplami) || 0) - toplam
       const eslesti = Math.abs(fark) < 0.01
       const durum = eslesti ? 'Tam eşleşti' : fark < 0 ? 'Eksik ödeme' : 'Fazla ödeme'
