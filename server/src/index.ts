@@ -4062,8 +4062,11 @@ GROUP BY code
       }
     }
 
-    const map = await fetchCariBorcBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: codes })
+    const cariTargets = Array.from(vadeliHavaleTotals.keys())
+    const map = cariTargets.length > 0 ? await fetchCariBorcBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: cariTargets }) : new Map<string, number>()
     const balances = codes.map((code) => {
+      const hasVadeliHavale = vadeliHavaleTotals.has(code)
+      if (!hasVadeliHavale) return { code, balance: 0 }
       const base = Number(map.get(code) ?? 0) || 0
       const ded = Number(vadeliHavaleTotals.get(code) ?? 0) || 0
       const next = Math.max(0, base - ded)
