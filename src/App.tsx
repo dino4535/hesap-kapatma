@@ -527,6 +527,8 @@ export default function App() {
   const [cashDeviceIp, setCashDeviceIp] = useState('')
   const [cashDeviceUser, setCashDeviceUser] = useState('')
   const [cashDevicePassword, setCashDevicePassword] = useState('')
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [helpTab, setHelpTab] = useState<'genel' | 'mutabakat' | 'nakit' | 'rapor' | 'yonetim' | 'kisayollar'>('genel')
   const [cashDeviceTesting, setCashDeviceTesting] = useState(false)
   const [cashDeviceSaving, setCashDeviceSaving] = useState(false)
   const [mutabakatDiffLimitTl, setMutabakatDiffLimitTl] = useState(0.01)
@@ -2334,7 +2336,8 @@ export default function App() {
                   setPage('main')
                 }}
               >
-                Pozisyon Hesabı
+                <span className="nav-icon">▦</span>
+                <span>Pozisyon Hesabı</span>
               </button>
             ) : null}
             {canMutabakatPage ? (
@@ -2346,7 +2349,8 @@ export default function App() {
                   setMutabakatStep(0)
                 }}
               >
-                Mutabakat
+                <span className="nav-icon">⇄</span>
+                <span>Mutabakat</span>
               </button>
             ) : null}
             {canMutabakatPage ? (
@@ -2357,7 +2361,8 @@ export default function App() {
                   setPage('end-of-day-report')
                 }}
               >
-                Gün Sonu Raporu
+                <span className="nav-icon">📊</span>
+                <span>Gün Sonu Raporu</span>
               </button>
             ) : null}
             {canBayiHavaleMatchPage ? (
@@ -2371,7 +2376,8 @@ export default function App() {
                   setDetailSearch('')
                 }}
               >
-                Bayi Havale Eşleme
+                <span className="nav-icon">🔎</span>
+                <span>Bayi Havale Eşleme</span>
               </button>
             ) : null}
             {canPositionRepresentativePage ? (
@@ -2386,7 +2392,8 @@ export default function App() {
                   setPage('position-representative')
                 }}
               >
-                Pozisyon - Temsilci
+                <span className="nav-icon">👤</span>
+                <span>Pozisyon - Temsilci</span>
               </button>
             ) : null}
             {canUserAdminPage ? (
@@ -2397,12 +2404,23 @@ export default function App() {
                   setPage('user-admin')
                 }}
               >
-                Kullanıcılar
+                <span className="nav-icon">⚙</span>
+                <span>Kullanıcılar</span>
               </button>
             ) : null}
           </nav>
 
           <div className="sidebar-footer">
+            <button
+              className="btn btn-secondary btn-help"
+              type="button"
+              onClick={() => {
+                setHelpTab(page === 'mutabakat' ? 'mutabakat' : page === 'end-of-day-report' ? 'rapor' : page === 'user-admin' ? 'yonetim' : 'genel')
+                setHelpOpen(true)
+              }}
+            >
+              Kullanım Kılavuzu
+            </button>
             {pageMeta ? <div className="sidebar-meta">{pageMeta}</div> : null}
             <button className="btn btn-secondary" type="button" onClick={onLogout}>
               Çıkış
@@ -2429,6 +2447,16 @@ export default function App() {
               </div>
             </div>
             <div className="main-header-right">
+              <button
+                className="btn btn-secondary btn-help"
+                type="button"
+                onClick={() => {
+                  setHelpTab(page === 'mutabakat' ? 'mutabakat' : page === 'end-of-day-report' ? 'rapor' : page === 'user-admin' ? 'yonetim' : 'genel')
+                  setHelpOpen(true)
+                }}
+              >
+                Kılavuz
+              </button>
               {selectedPosition ? (
                 <button
                   className="btn btn-secondary"
@@ -4926,6 +4954,134 @@ export default function App() {
             onChange={(next) => updatePaymentAllocations(editingPayment.key, next)}
           />
         ) : null}
+      </Modal>
+
+      <Modal title="Kullanım Kılavuzu" open={helpOpen} onClose={() => setHelpOpen(false)} size="wide">
+        <div className="help-modal">
+          <div className="help-tabs">
+            <button className={`help-tab ${helpTab === 'genel' ? 'active' : ''}`} type="button" onClick={() => setHelpTab('genel')}>
+              Genel
+            </button>
+            <button className={`help-tab ${helpTab === 'mutabakat' ? 'active' : ''}`} type="button" onClick={() => setHelpTab('mutabakat')}>
+              Mutabakat
+            </button>
+            <button className={`help-tab ${helpTab === 'nakit' ? 'active' : ''}`} type="button" onClick={() => setHelpTab('nakit')}>
+              Nakit / Sayım
+            </button>
+            <button className={`help-tab ${helpTab === 'rapor' ? 'active' : ''}`} type="button" onClick={() => setHelpTab('rapor')}>
+              Rapor
+            </button>
+            <button className={`help-tab ${helpTab === 'yonetim' ? 'active' : ''}`} type="button" onClick={() => setHelpTab('yonetim')}>
+              Yönetim
+            </button>
+            <button className={`help-tab ${helpTab === 'kisayollar' ? 'active' : ''}`} type="button" onClick={() => setHelpTab('kisayollar')}>
+              Kısayollar
+            </button>
+          </div>
+
+          <div className="help-body">
+            {helpTab === 'genel' ? (
+              <div className="help-section">
+                <div className="help-title">Genel Kullanım</div>
+                <div className="help-text">Sol menüden ekranlar arasında geçiş yapın. Ekran başlığında, bulunduğunuz ekranın amacı ve hızlı aksiyonlar yer alır.</div>
+                <div className="help-grid">
+                  <div className="help-card">
+                    <div className="help-card-title">Tarih & Depo</div>
+                    <div className="help-card-text">Pozisyon hesabı ve raporlarda önce tarih ve depo seçimi yapılır. Seçimler üstte görünür.</div>
+                  </div>
+                  <div className="help-card">
+                    <div className="help-card-title">Bildirimler</div>
+                    <div className="help-card-text">Sağ altta çıkan bildirimler, önemli durumları gösterir. Hata alırsanız mesajı kopyalayıp iletebilirsiniz.</div>
+                  </div>
+                  <div className="help-card">
+                    <div className="help-card-title">Kullanılmış Sayımlar</div>
+                    <div className="help-card-text">Başka mutabakatlarda kullanılan sayım fişleri otomatik filtrelenir, tekrar seçilemez.</div>
+                  </div>
+                </div>
+                <div className="help-title" style={{ marginTop: 12 }}>
+                  Sorun Giderme
+                </div>
+                <ul className="help-list">
+                  <li>PDF açılmıyorsa popup engeli olabilir. Tarayıcıda siteye popup izni verin.</li>
+                  <li>Liste boşsa önce tarih/depo seçin veya “Yenile” ile tekrar yükleyin.</li>
+                  <li>Sayım fişi görünmüyorsa başka mutabakatla eşleşmiş olabilir.</li>
+                </ul>
+              </div>
+            ) : null}
+
+            {helpTab === 'mutabakat' ? (
+              <div className="help-section">
+                <div className="help-title">Mutabakat Akışı</div>
+                <ol className="help-list">
+                  <li>
+                    <strong>1) Nakit:</strong> “Sayım Fişi Ekle” ile fiş seçin (birden fazla seçilebilir). Banknotlar otomatik toplanır.
+                  </li>
+                  <li>
+                    <strong>2) Banka:</strong> Banka adı ve yatan tutarı girin. Eksik/yanlış alanlar kırmızı uyarı verir.
+                  </li>
+                  <li>
+                    <strong>3) Eşleştirme:</strong> Gelen dekontları kontrol edin, gerekiyorsa arama ile dekont bulun.
+                  </li>
+                  <li>
+                    <strong>4) Düzeltmeler:</strong> Gerekli düzeltmeleri ekleyin ve “Tamamla” ile mutabakatı bitirin.
+                  </li>
+                </ol>
+                <div className="help-note">Not: Mutabakat tamamlandıktan sonra sayım fişleri başka hesaplarda listelenmez.</div>
+              </div>
+            ) : null}
+
+            {helpTab === 'nakit' ? (
+              <div className="help-section">
+                <div className="help-title">Nakit / Sayım Fişi Seçimi</div>
+                <ul className="help-list">
+                  <li>“Sayım Fişi Ekle” penceresinde önce tarih seçin, yalnızca o tarihteki fişler listelenir.</li>
+                  <li>Fişleri satır başındaki kutucuk ile seçin; seçili fiş adedi ve toplam tutar üstte görünür.</li>
+                  <li>“Sırala” seçeneği işlem zamanını (tarih+saat) dikkate alır.</li>
+                  <li>İşlem zamanı GG/AA/YYYY SS:DD:SN formatında gösterilir.</li>
+                </ul>
+              </div>
+            ) : null}
+
+            {helpTab === 'rapor' ? (
+              <div className="help-section">
+                <div className="help-title">Gün Sonu Raporu</div>
+                <ul className="help-list">
+                  <li>Tarih seçin, ardından depo filtresi seçin.</li>
+                  <li>“Yenile” ile güncel raporu tekrar yükleyin.</li>
+                  <li>Özet bölümünde tamamlanan mutabakat sayısı ve toplam yatan tutar görünür.</li>
+                </ul>
+              </div>
+            ) : null}
+
+            {helpTab === 'yonetim' ? (
+              <div className="help-section">
+                <div className="help-title">Yönetim</div>
+                <ul className="help-list">
+                  <li>Kullanıcı ekleme/düzenleme yetkisi yalnızca yönetici rolde görünür.</li>
+                  <li>Silme işlemleri geri alınamaz; doğru tarih/depo/dosya seçtiğinizden emin olun.</li>
+                  <li>Nakit cihaz ayarlarını depo bazlı kaydedebilirsiniz.</li>
+                </ul>
+              </div>
+            ) : null}
+
+            {helpTab === 'kisayollar' ? (
+              <div className="help-section">
+                <div className="help-title">Klavye Kısayolları</div>
+                <ul className="help-list">
+                  <li>
+                    <span className="kbd">Esc</span> Açık modal/pencereyi kapatır
+                  </li>
+                  <li>
+                    <span className="kbd">Ctrl</span>+<span className="kbd">F</span> Sayım fişi penceresinde arama alanına odaklar
+                  </li>
+                  <li>
+                    <span className="kbd">Ctrl</span>+<span className="kbd">S</span> Özet ekranında kaydetmeye çalışır
+                  </li>
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        </div>
       </Modal>
           </div>
         </main>
