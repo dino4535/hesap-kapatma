@@ -62,6 +62,7 @@ import type { Collection, Invoice } from './domain/models'
 import { PAYMENT_TYPES, normalizePaymentType, type PaymentType, paymentTypeLabel } from './domain/paymentTypes'
 import { Modal } from './components/Modal'
 import { CashReceiptPickerModal } from './components/CashReceiptPickerModal'
+import heroUrl from './assets/hero.png'
 
 type StatusType = 'success' | 'error' | 'info'
 
@@ -223,72 +224,129 @@ function buildIncomingByCorrespondentCode(receipts: ManimReceiptRow[]) {
 function LoginPage(props: { onLogin: (user: SessionUser) => void }) {
   const [userId, setUserId] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
   return (
     <div className="page">
-      <div className="login-card">
-        <h2>Giriş</h2>
-        <div className="form">
-          <label>Kullanıcı</label>
-          <input value={userId} onChange={(e) => setUserId(e.target.value)} placeholder="kullanıcı adı" />
-          <label>Şifre</label>
-          <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="şifre" type="password" />
-          <button
-            className="btn btn-primary"
-            type="button"
-            onClick={async () => {
-              const v = userId.trim()
-              if (!v || !password) return
-              setLoading(true)
-              setError(null)
-              try {
-                const res = await fetch('/api/auth/login', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ userName: v, password }),
-                })
-                if (!res.ok) {
-                  const text = await res.text().catch(() => '')
-                  throw new Error(text || `HTTP ${res.status}`)
-                }
-                const json = (await res.json()) as {
-                  ok: boolean
-                  userName: string
-                  isAdmin?: boolean
-                  roleCode?: RoleCode
-                  permissions?: ScreenPermissions
-                }
-                if (!json.ok) throw new Error('Giriş başarısız')
-                const roleCode: RoleCode = json.roleCode === 'ADMIN' || json.roleCode === 'PLAN_MUHASEBE' ? json.roleCode : 'SHEF'
-                const base = defaultPermissionsForRole(roleCode)
-                const p = json.permissions
-                props.onLogin({
-                  userName: json.userName,
-                  isAdmin: roleCode === 'ADMIN' || Boolean(json.isAdmin),
-                  roleCode,
-                  permissions: {
-                    canMain: typeof p?.canMain === 'boolean' ? p.canMain : base.canMain,
-                    canMutabakat: typeof p?.canMutabakat === 'boolean' ? p.canMutabakat : base.canMutabakat,
-                    canBayiHavaleMatch: typeof p?.canBayiHavaleMatch === 'boolean' ? p.canBayiHavaleMatch : base.canBayiHavaleMatch,
-                    canPositionRepresentative:
-                      typeof p?.canPositionRepresentative === 'boolean' ? p.canPositionRepresentative : base.canPositionRepresentative,
-                    canUserAdmin: typeof p?.canUserAdmin === 'boolean' ? p.canUserAdmin : roleCode === 'ADMIN',
-                  },
-                })
-              } catch (e) {
-                const msg = e instanceof Error ? e.message : 'Giriş sırasında hata oluştu'
-                setError(msg)
-                logUiEvent({ userName: v, type: 'error', message: msg, context: { page: 'login' } }).catch(() => {})
-              } finally {
-                setLoading(false)
-              }
-            }}
-          >
-            {loading ? 'Giriş yapılıyor...' : 'Giriş Yap'}
-          </button>
-          <div className="upload-status error">{error ?? ''}</div>
+      <div className="login-shell">
+        <div className="login-left">
+          <div className="login-brand">
+            <div className="login-badge">HK</div>
+            <div>
+              <div className="login-product">Hesap Kapatma</div>
+              <div className="login-tagline">Mutabakat • Tahsilat • Rapor</div>
+            </div>
+          </div>
+          <div className="login-hero">
+            <img src={heroUrl} alt="" />
+          </div>
+          <div className="login-features">
+            <div className="login-feature">
+              <div className="login-feature-title">Hızlı Akış</div>
+              <div className="login-feature-text">Sayım fişleri, banka yatışı ve düzeltmeleri tek ekranda tamamlayın.</div>
+            </div>
+            <div className="login-feature">
+              <div className="login-feature-title">Kontrollü Kullanım</div>
+              <div className="login-feature-text">Kullanılmış sayımlar otomatik filtrelenir, hatalar azaltılır.</div>
+            </div>
+            <div className="login-feature">
+              <div className="login-feature-title">Kayıt & İzleme</div>
+              <div className="login-feature-text">Önemli bildirimler loglanır, sorunlar daha hızlı çözülür.</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="login-right">
+          <div className="login-card">
+            <div className="login-card-header">
+              <h2>Hoş geldiniz</h2>
+              <div className="login-subtitle">Devam etmek için giriş yapın</div>
+            </div>
+            <div className="form">
+              <label>Kullanıcı</label>
+              <input
+                value={userId}
+                onChange={(e) => setUserId(e.target.value)}
+                placeholder="kullanıcı adı"
+                autoComplete="username"
+                spellCheck={false}
+              />
+              <label>Şifre</label>
+              <div className="password-row">
+                <input
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="şifre"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                />
+                <button className="btn btn-secondary btn-icon" type="button" onClick={() => setShowPassword((v) => !v)} disabled={loading}>
+                  {showPassword ? 'Gizle' : 'Göster'}
+                </button>
+              </div>
+              <button
+                className="btn btn-primary"
+                type="button"
+                disabled={!userId.trim() || !password || loading}
+                onClick={async () => {
+                  const v = userId.trim()
+                  if (!v || !password) return
+                  setLoading(true)
+                  setError(null)
+                  try {
+                    const res = await fetch('/api/auth/login', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ userName: v, password }),
+                    })
+                    if (!res.ok) {
+                      const text = await res.text().catch(() => '')
+                      throw new Error(text || `HTTP ${res.status}`)
+                    }
+                    const json = (await res.json()) as {
+                      ok: boolean
+                      userName: string
+                      isAdmin?: boolean
+                      roleCode?: RoleCode
+                      permissions?: ScreenPermissions
+                    }
+                    if (!json.ok) throw new Error('Giriş başarısız')
+                    const roleCode: RoleCode = json.roleCode === 'ADMIN' || json.roleCode === 'PLAN_MUHASEBE' ? json.roleCode : 'SHEF'
+                    const base = defaultPermissionsForRole(roleCode)
+                    const p = json.permissions
+                    props.onLogin({
+                      userName: json.userName,
+                      isAdmin: roleCode === 'ADMIN' || Boolean(json.isAdmin),
+                      roleCode,
+                      permissions: {
+                        canMain: typeof p?.canMain === 'boolean' ? p.canMain : base.canMain,
+                        canMutabakat: typeof p?.canMutabakat === 'boolean' ? p.canMutabakat : base.canMutabakat,
+                        canBayiHavaleMatch: typeof p?.canBayiHavaleMatch === 'boolean' ? p.canBayiHavaleMatch : base.canBayiHavaleMatch,
+                        canPositionRepresentative:
+                          typeof p?.canPositionRepresentative === 'boolean' ? p.canPositionRepresentative : base.canPositionRepresentative,
+                        canUserAdmin: typeof p?.canUserAdmin === 'boolean' ? p.canUserAdmin : roleCode === 'ADMIN',
+                      },
+                    })
+                  } catch (e) {
+                    const msg = e instanceof Error ? e.message : 'Giriş sırasında hata oluştu'
+                    setError(msg)
+                    logUiEvent({ userName: v, type: 'error', message: msg, context: { page: 'login' } }).catch(() => {})
+                  } finally {
+                    setLoading(false)
+                  }
+                }}
+              >
+                {loading ? 'Giriş yapılıyor...' : 'Giriş Yap'}
+              </button>
+              {error ? <div className="field-error">{error}</div> : null}
+              <div className="login-footer">
+                <div>İpucu: Kullanıcı adınızı doğru yazdığınızdan emin olun.</div>
+                <div>Güncelleme: {formatDateTimeTr(new Date().toISOString())}</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
