@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   completeMutabakat,
   createUserAsAdmin,
@@ -431,6 +431,7 @@ export default function App() {
   const [cashReceiptModalSelectedIds, setCashReceiptModalSelectedIds] = useState<string[]>([])
   const [bankName, setBankName] = useState('')
   const [yatanTutar, setYatanTutar] = useState<number>(0)
+  const [fieldErrors, setFieldErrors] = useState<{ bankName?: string; yatanTutar?: string; enteredTotal?: string }>({})
   const [manimDekontNo, setManimDekontNo] = useState('')
   const [autoDekontNo, setAutoDekontNo] = useState<string | null>(null)
   const [bankReceiptDateTime, setBankReceiptDateTime] = useState<string>('')
@@ -460,6 +461,7 @@ export default function App() {
   const [adminDeleteDepot, setAdminDeleteDepot] = useState('')
   const [adminDeleteFileName, setAdminDeleteFileName] = useState('')
   const [cashDeviceSettings, setCashDeviceSettings] = useState<DepotCashDeviceSetting[]>([])
+  const saveMutabakatDataRef = useRef<null | (() => Promise<void>)>(null)
   const [cashDeviceDepot, setCashDeviceDepot] = useState('')
   const [cashDeviceIp, setCashDeviceIp] = useState('')
   const [cashDeviceUser, setCashDeviceUser] = useState('')
@@ -779,7 +781,7 @@ export default function App() {
       .catch(() => {
         setCashDeviceSettings([])
       })
-  }, [currentUser])
+  }, [currentUser, setCashDeviceSettings])
 
   useEffect(() => {
     if (!cashDeviceDepot && allDepotOptions.length > 0) setCashDeviceDepot(allDepotOptions[0])
@@ -884,6 +886,42 @@ export default function App() {
       alive = false
     }
   }, [cashReceiptModalOpen, cashReceiptModalDate, currentUser, selectedDataset.depot, selectedDataset.date, selectedPosition])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (cashReceiptModalOpen) {
+          e.preventDefault()
+          setCashReceiptModalOpen(false)
+        }
+        if (editingInvoice) {
+          e.preventDefault()
+          setEditingInvoice(null)
+        }
+        if (editingPayment) {
+          e.preventDefault()
+          setEditingPayment(null)
+        }
+      }
+      const key = e.key.toLowerCase()
+      if ((e.ctrlKey || e.metaKey) && key === 's') {
+        if (page === 'mutabakat' && mutabakatStep === 3) {
+          e.preventDefault()
+          saveMutabakatDataRef.current?.().catch(() => {})
+        }
+      }
+      if ((e.ctrlKey || e.metaKey) && key === 'f') {
+        if (cashReceiptModalOpen) {
+          e.preventDefault()
+          const el = document.getElementById('cash-receipt-search') as HTMLInputElement | null
+          el?.focus()
+          el?.select()
+        }
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [cashReceiptModalOpen, editingInvoice, editingPayment, mutabakatStep, page])
 
   useEffect(() => {
     if (!selectedPosition || !selectedDataset.date || !selectedDataset.depot) {
@@ -1489,6 +1527,8 @@ export default function App() {
       ? mutabakatRecord
       : null
 
+  const mutabakatLastSavedText = mutabakatSaved?.updatedAt ? formatDateTimeTr(mutabakatSaved.updatedAt) : ''
+
   useEffect(() => {
     if (!currentUser) return
     if (!bankEnabled) return
@@ -1658,21 +1698,27 @@ export default function App() {
     if (!currentUser) return
     if (!selectedDataset.date || !selectedDataset.depot || !selectedPosition) return
     if (!summaryTotals) return
+    setFieldErrors({})
     if (mutabakatSaved?.status === 'COMPLETED') {
       setStatus({ type: 'error', message: 'Bu pozisyon için mutabakat tamamlanmış. Değişiklik yapılamaz.' })
       return
     }
     if (bankEnabled) {
       if (!bankName) {
+        setFieldErrors({ bankName: 'Lütfen banka seçin' })
         setStatus({ type: 'error', message: 'Lütfen banka seçin' })
+        window.setTimeout(() => document.getElementById('bankNameInput')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 0)
         return
       }
       if ((Number(yatanTutar) || 0) <= 0) {
+        setFieldErrors({ yatanTutar: 'Lütfen yatan tutarı girin' })
         setStatus({ type: 'error', message: 'Lütfen yatan tutarı girin' })
+        window.setTimeout(() => document.getElementById('yatanTutarInput')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 0)
         return
       }
     }
     if (enteredTotal <= 0) {
+      setFieldErrors({ enteredTotal: 'Girilen toplam 0 olamaz' })
       setStatus({ type: 'error', message: 'Girilen toplam 0 olamaz' })
       return
     }
@@ -1729,6 +1775,8 @@ export default function App() {
           : 'Mutabakat kaydedildi',
     })
   }
+
+  saveMutabakatDataRef.current = saveMutabakatData
 
   const completeMutabakatData = async () => {
     if (!currentUser) return
@@ -2625,7 +2673,16 @@ export default function App() {
           <div className="header">
             <h1>Pozisyon - Temsilci Eşleme</h1>
             <p>Pozisyona göre temsilci tanımlama</p>
-            {status ? <div className={`upload-status ${status.type}`}>{status.message}</div> : null}
+            <div className="toast-stack">
+              {status ? (
+                <div className={`toast ${status.type}`}>
+                  <div className="toast-message">{status.message}</div>
+                  <button className="toast-close" type="button" onClick={() => setStatus(null)}>
+                    ×
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
 
           <div className="upload-section">
@@ -3288,7 +3345,16 @@ export default function App() {
           <div className="header">
             <h1>Bayi Havale Eşleme</h1>
             <p>{selectedPosition ? `${selectedPosition} • ${selectedDataset.date ? formatDateTr(selectedDataset.date) : '-'} • ${selectedDataset.depot ? depotLabel(selectedDataset.depot) : '-'}` : 'Tarih, depo ve pozisyon seçerek eşleme kontrolü yapın'}</p>
-            {status ? <div className={`upload-status ${status.type}`}>{status.message}</div> : null}
+            <div className="toast-stack">
+              {status ? (
+                <div className={`toast ${status.type}`}>
+                  <div className="toast-message">{status.message}</div>
+                  <button className="toast-close" type="button" onClick={() => setStatus(null)}>
+                    ×
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
 
           <div className="filters">
@@ -3452,7 +3518,16 @@ export default function App() {
                 </div>
               </div>
             ) : null}
-            {status ? <div className={`upload-status ${status.type}`}>{status.message}</div> : null}
+            <div className="toast-stack">
+              {status ? (
+                <div className={`toast ${status.type}`}>
+                  <div className="toast-message">{status.message}</div>
+                  <button className="toast-close" type="button" onClick={() => setStatus(null)}>
+                    ×
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
 
           {!selectedPosition ? (
@@ -3865,7 +3940,16 @@ export default function App() {
                         <div className="mutabakat-form">
                           <div className="mutabakat-field">
                             <label>Banka</label>
-                            <select value={bankName} onChange={(e) => setBankName(e.target.value)} disabled={mutabakatSaved?.status === 'COMPLETED'}>
+                            <select
+                              id="bankNameInput"
+                              className={fieldErrors.bankName ? 'input-error' : ''}
+                              value={bankName}
+                              onChange={(e) => {
+                                setBankName(e.target.value)
+                                if (fieldErrors.bankName) setFieldErrors((prev) => ({ ...prev, bankName: undefined }))
+                              }}
+                              disabled={mutabakatSaved?.status === 'COMPLETED'}
+                            >
                               <option value="">Seçiniz</option>
                               {BANKS.map((b) => (
                                 <option key={b} value={b}>
@@ -3873,16 +3957,23 @@ export default function App() {
                                 </option>
                               ))}
                             </select>
+                            {fieldErrors.bankName ? <div className="field-error">{fieldErrors.bankName}</div> : null}
                           </div>
                           <div className="mutabakat-field">
                             <label>Yatan Tutar</label>
                             <input
+                              id="yatanTutarInput"
+                              className={fieldErrors.yatanTutar ? 'input-error' : ''}
                               type="number"
                               step="0.01"
                               value={yatanTutar || ''}
                               disabled={mutabakatSaved?.status === 'COMPLETED'}
-                              onChange={(e) => setYatanTutar(parseTrDecimalInput(e.target.value))}
+                              onChange={(e) => {
+                                setYatanTutar(parseTrDecimalInput(e.target.value))
+                                if (fieldErrors.yatanTutar) setFieldErrors((prev) => ({ ...prev, yatanTutar: undefined }))
+                              }}
                             />
+                            {fieldErrors.yatanTutar ? <div className="field-error">{fieldErrors.yatanTutar}</div> : null}
                           </div>
                           <div className="mutabakat-field">
                             <label>Manim Dekont No</label>
@@ -4103,7 +4194,8 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="mutabakat-actions">
+                    <div className="mutabakat-actions-bar">
+                      <div className="mutabakat-actions">
                       <button
                         className="btn btn-primary"
                         type="button"
@@ -4123,7 +4215,11 @@ export default function App() {
                       <button className="btn btn-secondary" type="button" onClick={printMutabakatPdf} disabled={!mutabakatSaved || mutabakatSaved.status !== 'COMPLETED'}>
                         PDF Çıktı Al (A4)
                       </button>
-                      <div className="mutabakat-status">{mutabakatSaved ? (mutabakatSaved.status === 'COMPLETED' ? 'Durum: Tamamlandı' : 'Durum: Taslak') : 'Durum: Kayıt yok'}</div>
+                      <div className="mutabakat-status">
+                        {mutabakatSaved ? (mutabakatSaved.status === 'COMPLETED' ? 'Durum: Tamamlandı' : 'Durum: Taslak') : 'Durum: Kayıt yok'}
+                        {mutabakatLastSavedText ? ` • Son kayıt: ${mutabakatLastSavedText}` : ''}
+                      </div>
+                      </div>
                     </div>
 
                     <details className="mutabakat-details">
@@ -4503,7 +4599,16 @@ export default function App() {
           <div className="header">
             <h1>{selectedPosition}</h1>
             <p>Pozisyon hesabı</p>
-            {status ? <div className={`upload-status ${status.type}`}>{status.message}</div> : null}
+            <div className="toast-stack">
+              {status ? (
+                <div className={`toast ${status.type}`}>
+                  <div className="toast-message">{status.message}</div>
+                  <button className="toast-close" type="button" onClick={() => setStatus(null)}>
+                    ×
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
 
           <div className="table-section">

@@ -265,6 +265,59 @@ body {
   color: #3182ce;
 }
 
+.toast-stack {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: min(520px, calc(100vw - 28px));
+}
+
+.toast {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.toast.success {
+  border-color: rgba(47, 133, 90, 0.35);
+}
+
+.toast.error {
+  border-color: rgba(197, 48, 48, 0.35);
+}
+
+.toast.info {
+  border-color: rgba(49, 130, 206, 0.35);
+}
+
+.toast-message {
+  font-size: 13px;
+  font-weight: 800;
+  color: #1a365d;
+  line-height: 1.35;
+}
+
+.toast-close {
+  border: 0;
+  background: transparent;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  color: #718096;
+  padding: 0 4px;
+}
+
 .filters {
   display: flex;
   gap: 15px;
@@ -839,6 +892,20 @@ td {
   border-collapse: collapse;
 }
 
+.mini-table thead th {
+  background: #f8fafc;
+  color: #4a5568;
+  font-weight: 800;
+}
+
+.mini-table tbody tr:nth-child(even) td {
+  background: rgba(247, 250, 252, 0.65);
+}
+
+.mini-table tbody tr:hover td {
+  background: rgba(235, 248, 255, 0.65);
+}
+
 .mini-table th,
 .mini-table td {
   padding: 8px 10px;
@@ -930,6 +997,17 @@ td {
   font-weight: 700;
 }
 
+.input-error {
+  border-color: #e53e3e !important;
+  box-shadow: 0 0 0 2px rgba(229, 62, 62, 0.18);
+}
+
+.field-error {
+  font-size: 12px;
+  color: #c53030;
+  font-weight: 700;
+}
+
 .mutabakat-totals {
   display: flex;
   justify-content: space-between;
@@ -946,6 +1024,38 @@ td {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.mutabakat-actions-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 15;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid rgba(226, 232, 240, 0.85);
+  padding: 10px 12px;
+  border-radius: 10px;
+}
+
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #edf2f7 25%, #e2e8f0 37%, #edf2f7 63%);
+  background-size: 400% 100%;
+  animation: skeleton-loading 1.2s ease-in-out infinite;
+  border-radius: 6px;
+}
+
+@keyframes skeleton-loading {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
 }
 
 .bayi-match-table-wrap {
