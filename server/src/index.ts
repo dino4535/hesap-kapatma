@@ -974,6 +974,19 @@ function parseYmdDateText(value: unknown) {
   return { ok: true as const, date: s }
 }
 
+function ymdAddDays(ymd: string, deltaDays: number) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd ?? '').trim())
+  if (!m) return ''
+  const yyyy = Number(m[1])
+  const mm = Number(m[2])
+  const dd = Number(m[3])
+  if (!Number.isFinite(yyyy) || !Number.isFinite(mm) || !Number.isFinite(dd)) return ''
+  const d = new Date(Date.UTC(yyyy, mm - 1, dd))
+  if (Number.isNaN(d.getTime())) return ''
+  d.setUTCDate(d.getUTCDate() + deltaDays)
+  return d.toISOString().slice(0, 10)
+}
+
 function pickColumnName(colsUpper: Set<string>, candidates: string[]) {
   for (const c of candidates) {
     const u = c.toUpperCase()
@@ -4007,8 +4020,55 @@ app.post('/api/cari-balances', async (req, res) => {
       return
     }
 
+    const datasetDate = ymdAddDays(parsedAsOf.date, 1)
+    const vadeliHavaleTotals = new Map<string, number>()
+    if (datasetDate && codes.length > 0) {
+      const req2 = pool.request()
+      req2.input('DatasetDate', mssql.Date, datasetDate)
+      const inParams: string[] = []
+      codes.forEach((v, idx) => {
+        const name = `cc${idx}`
+        inParams.push(`@${name}`)
+        req2.input(name, mssql.NVarChar(30), v)
+      })
+      const r2 = await req2.query(`
+;WITH inv AS (
+  SELECT
+    c.customer_code AS code,
+    LEFT(RIGHT(c.invoice_code, 16), 7) + RIGHT(c.invoice_code, 8) AS invoice15,
+    SUM(COALESCE(c.amount, 0)) AS total
+  FROM dist2k.FACT_COLLECTION c WITH (NOLOCK)
+  WHERE c.source_file_date = @DatasetDate
+    AND c.customer_code IN (${inParams.join(', ')})
+    AND (
+      UPPER(LTRIM(RTRIM(ISNULL(c.paymentform_code, '')))) = 'VADETAHHAV'
+      OR LOWER(LTRIM(RTRIM(ISNULL(c.paymentform_desc, '')))) LIKE '%vadeli%havale%'
+    )
+    AND c.invoice_code IS NOT NULL AND LTRIM(RTRIM(c.invoice_code)) <> ''
+    AND LEN(c.invoice_code) >= 16
+  GROUP BY c.customer_code, LEFT(RIGHT(c.invoice_code, 16), 7) + RIGHT(c.invoice_code, 8)
+)
+SELECT
+  code,
+  CAST(SUM(COALESCE(total, 0)) AS DECIMAL(18, 2)) AS total
+FROM inv
+GROUP BY code
+`)
+      for (const row of (r2.recordset ?? []) as Array<{ code?: unknown; total?: unknown }>) {
+        const code = String(row.code ?? '').trim()
+        if (!code) continue
+        const total = Number(row.total ?? 0) || 0
+        if (total !== 0) vadeliHavaleTotals.set(code, total)
+      }
+    }
+
     const map = await fetchCariBorcBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: codes })
-    const balances = codes.map((code) => ({ code, balance: map.get(code) ?? 0 }))
+    const balances = codes.map((code) => {
+      const base = Number(map.get(code) ?? 0) || 0
+      const ded = Number(vadeliHavaleTotals.get(code) ?? 0) || 0
+      const next = Math.max(0, base - ded)
+      return { code, balance: next }
+    })
     res.json({ ok: true, balances })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
