@@ -1417,7 +1417,9 @@ export default function App() {
       const gelenOnceki = manimIncomingPrevByCorrespondentCode.get(matchCode) ?? 0
       const cariBorcBakiyesi = Number(cariBalancesByMatchCode[matchCode] ?? 0) || 0
       const toplam = (Number(r.toplam) || 0) + cariBorcBakiyesi
-      const gelenTutarToplami = Math.abs((Number(gelenBugun) || 0) - toplam) < 0.01 ? (Number(gelenBugun) || 0) : (Number(gelenBugun) || 0) + (Number(gelenOnceki) || 0)
+      const diffToday = (Number(gelenBugun) || 0) - toplam
+      const gelenTutarToplami =
+        Math.abs(diffToday) < 0.01 ? Number(gelenBugun) || 0 : diffToday > 0.01 ? Number(gelenBugun) || 0 : (Number(gelenBugun) || 0) + (Number(gelenOnceki) || 0)
       const fark = (Number(gelenTutarToplami) || 0) - toplam
       const eslesti = Math.abs(fark) < 0.01
       const durum = eslesti ? 'Tam eşleşti' : fark < 0 ? 'Eksik ödeme' : 'Fazla ödeme'
@@ -2075,7 +2077,9 @@ export default function App() {
       const gelenOnceki = incomingPrevByCorrespondentForPrint.get(matchCode) ?? 0
       const cariBorcBakiyesi = Number(cariBalancesByMatchCode[matchCode] ?? 0) || 0
       const toplam = (Number(r.toplam) || 0) + cariBorcBakiyesi
-      const gelenTutarToplami = Math.abs((Number(gelenBugun) || 0) - toplam) < 0.01 ? (Number(gelenBugun) || 0) : (Number(gelenBugun) || 0) + (Number(gelenOnceki) || 0)
+      const diffToday = (Number(gelenBugun) || 0) - toplam
+      const gelenTutarToplami =
+        Math.abs(diffToday) < 0.01 ? Number(gelenBugun) || 0 : diffToday > 0.01 ? Number(gelenBugun) || 0 : (Number(gelenBugun) || 0) + (Number(gelenOnceki) || 0)
       const fark = (Number(gelenTutarToplami) || 0) - toplam
       const eslesti = Math.abs(fark) < 0.01
       const durum = eslesti ? 'Tam eşleşti' : fark < 0 ? 'Eksik ödeme' : 'Fazla ödeme'
