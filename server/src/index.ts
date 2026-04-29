@@ -3979,6 +3979,7 @@ app.post('/api/cari-balances', async (req, res) => {
 
     const datasetDate = ymdAddDays(parsedAsOf.date, 1)
     const vadeliHavaleTotals = new Map<string, number>()
+    const vadeliTahsilatTotals = new Map<string, number>()
     if (datasetDate && codes.length > 0) {
       const req2 = pool.request()
       req2.input('DatasetDate', mssql.Date, datasetDate)
@@ -4017,13 +4018,34 @@ GROUP BY code
         const total = Number(row.total ?? 0) || 0
         if (total !== 0) vadeliHavaleTotals.set(code, total)
       }
+
+      const r3 = await req2.query(`
+SELECT
+  c.customer_code AS code,
+  CAST(SUM(COALESCE(c.amount, 0)) AS DECIMAL(18, 2)) AS total
+FROM dist2k.FACT_COLLECTION c WITH (NOLOCK)
+WHERE c.source_file_date = @DatasetDate
+  AND c.customer_code IN (${inParams.join(', ')})
+  AND (
+    UPPER(LTRIM(RTRIM(ISNULL(c.paymentform_code, '')))) = 'VADETAH'
+    OR LOWER(LTRIM(RTRIM(ISNULL(c.paymentform_desc, '')))) = 'vadeli tahsilat'
+  )
+GROUP BY c.customer_code
+`)
+      for (const row of (r3.recordset ?? []) as Array<{ code?: unknown; total?: unknown }>) {
+        const code = String(row.code ?? '').trim()
+        if (!code) continue
+        const total = Number(row.total ?? 0) || 0
+        if (total !== 0) vadeliTahsilatTotals.set(code, total)
+      }
     }
 
     const map = await fetchCariBorcBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: codes })
     const balances = codes.map((code) => {
       const base = Number(map.get(code) ?? 0) || 0
-      const ded = Number(vadeliHavaleTotals.get(code) ?? 0) || 0
-      const next = Math.max(0, base - ded)
+      const dedHav = Number(vadeliHavaleTotals.get(code) ?? 0) || 0
+      const dedVad = Number(vadeliTahsilatTotals.get(code) ?? 0) || 0
+      const next = Math.max(0, base - dedHav - dedVad)
       return { code, balance: next }
     })
     res.json({ ok: true, balances })
