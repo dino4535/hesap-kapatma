@@ -86,7 +86,25 @@ function formatDateTimeTr(value?: string) {
   if (!value) return '-'
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return value
-  return d.toLocaleString('tr-TR')
+  const parts = new Intl.DateTimeFormat('tr-TR', {
+    timeZone: 'Europe/Istanbul',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(d)
+  const byType = new Map(parts.map((p) => [p.type, p.value] as const))
+  const dd = byType.get('day') ?? ''
+  const mm = byType.get('month') ?? ''
+  const yyyy = byType.get('year') ?? ''
+  const hh = byType.get('hour') ?? ''
+  const min = byType.get('minute') ?? ''
+  const ss = byType.get('second') ?? ''
+  if (!dd || !mm || !yyyy) return d.toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })
+  return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`
 }
 
 function isPlainVadeliTahsilat(formCode?: string, formDescription?: string) {
@@ -4719,6 +4737,30 @@ export default function App() {
 
       <Modal title="Sayım Fişi Ekle" open={cashReceiptModalOpen} onClose={() => setCashReceiptModalOpen(false)} size="wide">
         <div className="modal-content">
+          <div className="modal-actions">
+            <button className="btn btn-secondary" type="button" onClick={() => setCashReceiptModalOpen(false)}>
+              İptal
+            </button>
+            <button
+              className="btn btn-primary"
+              type="button"
+              disabled={cashReceiptModalLoading}
+              onClick={() => {
+                const picked = cashReceiptModalReceipts.filter((r) => cashReceiptModalSelectedIds.includes(r.receiptId))
+                setSelectedCashReceipts((prev) => {
+                  const byId = new Map(prev.map((x) => [x.receiptId, x] as const))
+                  for (const r of picked) byId.set(r.receiptId, r)
+                  const next = Array.from(byId.values())
+                  setBanknoteCounts(sumBanknoteCountsFromReceipts(next))
+                  return next
+                })
+                setCashReceiptModalOpen(false)
+              }}
+            >
+              Sayım Fişi Ekle
+            </button>
+          </div>
+
           <div className="form-row">
             <label>Tarih</label>
             <input
@@ -4783,30 +4825,6 @@ export default function App() {
               )}
             </tbody>
           </table>
-
-          <div className="modal-actions">
-            <button className="btn btn-secondary" type="button" onClick={() => setCashReceiptModalOpen(false)}>
-              İptal
-            </button>
-            <button
-              className="btn btn-primary"
-              type="button"
-              disabled={cashReceiptModalLoading}
-              onClick={() => {
-                const picked = cashReceiptModalReceipts.filter((r) => cashReceiptModalSelectedIds.includes(r.receiptId))
-                setSelectedCashReceipts((prev) => {
-                  const byId = new Map(prev.map((x) => [x.receiptId, x] as const))
-                  for (const r of picked) byId.set(r.receiptId, r)
-                  const next = Array.from(byId.values())
-                  setBanknoteCounts(sumBanknoteCountsFromReceipts(next))
-                  return next
-                })
-                setCashReceiptModalOpen(false)
-              }}
-            >
-              Seçimleri Ekle
-            </button>
-          </div>
         </div>
       </Modal>
 
