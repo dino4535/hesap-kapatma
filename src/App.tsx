@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   completeMutabakat,
   createUserAsAdmin,
@@ -56,9 +56,11 @@ import {
   getPaymentAllocations,
   invoiceTotalAmount,
 } from './domain/allocations'
-import { formatDateTr, formatMoney } from './domain/format'
+import { formatDateTr, formatDateTimeTr, formatMoney } from './domain/format'
 import type { Collection, Invoice } from './domain/models'
 import { PAYMENT_TYPES, normalizePaymentType, type PaymentType, paymentTypeLabel } from './domain/paymentTypes'
+import { Modal } from './components/Modal'
+import { CashReceiptPickerModal } from './components/CashReceiptPickerModal'
 
 type StatusType = 'success' | 'error' | 'info'
 
@@ -80,31 +82,6 @@ function escapeHtml(value: string) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;')
-}
-
-function formatDateTimeTr(value?: string) {
-  if (!value) return '-'
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return value
-  const parts = new Intl.DateTimeFormat('tr-TR', {
-    timeZone: 'Europe/Istanbul',
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).formatToParts(d)
-  const byType = new Map(parts.map((p) => [p.type, p.value] as const))
-  const dd = byType.get('day') ?? ''
-  const mm = byType.get('month') ?? ''
-  const yyyy = byType.get('year') ?? ''
-  const hh = byType.get('hour') ?? ''
-  const min = byType.get('minute') ?? ''
-  const ss = byType.get('second') ?? ''
-  if (!dd || !mm || !yyyy) return d.toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })
-  return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`
 }
 
 function isPlainVadeliTahsilat(formCode?: string, formDescription?: string) {
@@ -310,29 +287,6 @@ function LoginPage(props: { onLogin: (user: SessionUser) => void }) {
           </button>
           <div className="upload-status error">{error ?? ''}</div>
         </div>
-      </div>
-    </div>
-  )
-}
-
-function Modal(props: { title: string; open: boolean; onClose: () => void; children: ReactNode; size?: 'default' | 'large' | 'wide' }) {
-  if (!props.open) return null
-  const modalClass = props.size === 'wide' ? 'modal modal-wide' : props.size === 'large' ? 'modal modal-large' : 'modal'
-  return (
-    <div className="modal-backdrop" onClick={props.onClose} role="presentation">
-      <div
-        className={modalClass}
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-      >
-        <div className="modal-header">
-          <div className="modal-title">{props.title}</div>
-          <button className="modal-close" type="button" onClick={props.onClose}>
-            ×
-          </button>
-        </div>
-        {props.children}
       </div>
     </div>
   )
@@ -4735,98 +4689,27 @@ export default function App() {
         </>
       )}
 
-      <Modal title="Sayım Fişi Ekle" open={cashReceiptModalOpen} onClose={() => setCashReceiptModalOpen(false)} size="wide">
-        <div className="modal-content">
-          <div className="modal-actions">
-            <button className="btn btn-secondary" type="button" onClick={() => setCashReceiptModalOpen(false)}>
-              İptal
-            </button>
-            <button
-              className="btn btn-primary"
-              type="button"
-              disabled={cashReceiptModalLoading}
-              onClick={() => {
-                const picked = cashReceiptModalReceipts.filter((r) => cashReceiptModalSelectedIds.includes(r.receiptId))
-                setSelectedCashReceipts((prev) => {
-                  const byId = new Map(prev.map((x) => [x.receiptId, x] as const))
-                  for (const r of picked) byId.set(r.receiptId, r)
-                  const next = Array.from(byId.values())
-                  setBanknoteCounts(sumBanknoteCountsFromReceipts(next))
-                  return next
-                })
-                setCashReceiptModalOpen(false)
-              }}
-            >
-              Sayım Fişi Ekle
-            </button>
-          </div>
-
-          <div className="form-row">
-            <label>Tarih</label>
-            <input
-              type="date"
-              value={cashReceiptModalDate}
-              onChange={(e) => setCashReceiptModalDate(e.target.value)}
-              disabled={cashReceiptModalLoading}
-            />
-          </div>
-
-          <div className="mutabakat-hint">
-            Seçili: {cashReceiptModalReceipts.filter((r) => cashReceiptModalSelectedIds.includes(r.receiptId)).length} • Toplam:{' '}
-            {formatMoney(cashReceiptModalReceipts.filter((r) => cashReceiptModalSelectedIds.includes(r.receiptId)).reduce((s, r) => s + (Number(r.totalAmount) || 0), 0))}
-          </div>
-
-          <table className="mini-table">
-            <thead>
-              <tr>
-                <th></th>
-                <th>Fiş</th>
-                <th>İşlem Zamanı</th>
-                <th>Tutar</th>
-              </tr>
-            </thead>
-            <tbody>
-              {cashReceiptModalLoading ? (
-                <tr>
-                  <td colSpan={4} style={{ textAlign: 'center', color: '#718096' }}>
-                    Yükleniyor...
-                  </td>
-                </tr>
-              ) : cashReceiptModalReceipts.length === 0 ? (
-                <tr>
-                  <td colSpan={4} style={{ textAlign: 'center', color: '#718096' }}>
-                    Kayıt yok
-                  </td>
-                </tr>
-              ) : (
-                cashReceiptModalReceipts.map((r) => {
-                  const checked = cashReceiptModalSelectedIds.includes(r.receiptId)
-                  return (
-                    <tr key={r.receiptId}>
-                      <td style={{ width: 40 }}>
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(e) => {
-                            const nextChecked = e.target.checked
-                            setCashReceiptModalSelectedIds((prev) => {
-                              if (nextChecked) return prev.includes(r.receiptId) ? prev : prev.concat([r.receiptId])
-                              return prev.filter((x) => x !== r.receiptId)
-                            })
-                          }}
-                        />
-                      </td>
-                      <td>{[r.autoNo ? `No ${r.autoNo}` : '', r.counterId ? `ID ${r.counterId}` : ''].filter(Boolean).join(' • ') || r.receiptId}</td>
-                      <td>{r.displayTime || formatDateTimeTr(r.transactionDateTime)}</td>
-                      <td>{formatMoney(Number(r.totalAmount) || 0)}</td>
-                    </tr>
-                  )
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Modal>
+      <CashReceiptPickerModal
+        open={cashReceiptModalOpen}
+        loading={cashReceiptModalLoading}
+        date={cashReceiptModalDate}
+        receipts={cashReceiptModalReceipts}
+        selectedIds={cashReceiptModalSelectedIds}
+        onClose={() => setCashReceiptModalOpen(false)}
+        onDateChange={setCashReceiptModalDate}
+        onSelectedIdsChange={setCashReceiptModalSelectedIds}
+        onConfirm={() => {
+          const picked = cashReceiptModalReceipts.filter((r) => cashReceiptModalSelectedIds.includes(r.receiptId))
+          setSelectedCashReceipts((prev) => {
+            const byId = new Map(prev.map((x) => [x.receiptId, x] as const))
+            for (const r of picked) byId.set(r.receiptId, r)
+            const next = Array.from(byId.values())
+            setBanknoteCounts(sumBanknoteCountsFromReceipts(next))
+            return next
+          })
+          setCashReceiptModalOpen(false)
+        }}
+      />
 
       <Modal title={editingInvoice ? `Fatura Tip Dağılımı - ${editingInvoice.code}` : ''} open={!!editingInvoice} onClose={() => setEditingInvoice(null)} size="large">
         {editingInvoice ? (
