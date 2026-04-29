@@ -43,6 +43,7 @@ import {
   type RoleCode,
   type ScreenPermissions,
   type UserRow,
+  logUiEvent,
 } from './data/api'
 import { clearSessionUser, loadSessionUser, saveSessionUser, type SessionUser } from './data/local'
 import {
@@ -277,7 +278,9 @@ function LoginPage(props: { onLogin: (user: SessionUser) => void }) {
                   },
                 })
               } catch (e) {
-                setError(e instanceof Error ? e.message : 'Giriş sırasında hata oluştu')
+                const msg = e instanceof Error ? e.message : 'Giriş sırasında hata oluştu'
+                setError(msg)
+                logUiEvent({ userName: v, type: 'error', message: msg, context: { page: 'login' } }).catch(() => {})
               } finally {
                 setLoading(false)
               }
@@ -560,6 +563,33 @@ export default function App() {
   const selectedDataset = useMemo(() => {
     return { date: selectedDate || null, depot: selectedDepot || null }
   }, [selectedDate, selectedDepot])
+
+  useEffect(() => {
+    if (!status) return
+    logUiEvent({
+      userName: currentUser?.userName,
+      type: status.type,
+      message: status.message,
+      context: {
+        page,
+        selectedDate: selectedDataset.date ?? '',
+        selectedDepot: selectedDataset.depot ?? '',
+        selectedPosition: selectedPosition ?? '',
+        mutabakatStep,
+        mutabakatMode,
+      },
+    }).catch(() => {})
+  }, [status, currentUser?.userName, page, selectedDataset.date, selectedDataset.depot, selectedPosition, mutabakatStep, mutabakatMode])
+
+  useEffect(() => {
+    if (!adminStatus) return
+    logUiEvent({
+      userName: currentUser?.userName,
+      type: adminStatus.type,
+      message: adminStatus.message,
+      context: { page: 'admin' },
+    }).catch(() => {})
+  }, [adminStatus, currentUser?.userName])
 
   const dateOptions = useMemo(() => {
     const seen = new Set<string>()
@@ -1737,6 +1767,8 @@ export default function App() {
             deviceIp: r.deviceIp || selectedDepotCashDevice?.deviceIp || '',
             autoNo: r.autoNo || undefined,
             transactionDateTime: r.transactionDateTime || undefined,
+            totalAmount: Number(r.totalAmount) || 0,
+            totalQty: Number(r.totalQty) || 0,
           }))
         : undefined
     const r = await saveMutabakat({
@@ -3866,7 +3898,7 @@ export default function App() {
                               {selectedCashReceipts.map((r) => (
                                 <tr key={r.receiptId}>
                                   <td>{[r.autoNo ? `No ${r.autoNo}` : '', r.counterId ? `ID ${r.counterId}` : ''].filter(Boolean).join(' • ') || r.receiptId}</td>
-                                  <td>{r.displayTime || formatDateTimeTr(r.transactionDateTime)}</td>
+                                  <td>{formatDateTimeTr(r.transactionDateTime || r.displayTime)}</td>
                                   <td>{formatMoney(Number(r.totalAmount) || 0)}</td>
                                   <td>
                                     <button

@@ -1097,6 +1097,18 @@ BEGIN
     ADD CONSTRAINT UQ_MutabakatCashReceiptUsageItems_DeviceReceipt UNIQUE (DeviceIp, ReceiptId);
 END
 
+IF OBJECT_ID('dbo.UiEventLog', 'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.UiEventLog (
+    Id INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    CreatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_UiEventLog_CreatedAt DEFAULT (SYSUTCDATETIME()),
+    UserName NVARCHAR(64) NULL,
+    EventType NVARCHAR(16) NOT NULL,
+    Message NVARCHAR(1024) NOT NULL,
+    ContextJson NVARCHAR(MAX) NULL
+  );
+END
+
 IF OBJECT_ID('dbo.ImportFiles', 'U') IS NULL
 BEGIN
   CREATE TABLE dbo.ImportFiles (
@@ -2471,6 +2483,44 @@ app.post('/api/auth/login', async (req, res) => {
       return
     }
     res.json({ ok: true, userName: info.userName, isAdmin: info.isAdmin, roleCode: info.roleCode, permissions: info.permissions })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
+app.post('/api/ui-events', async (req, res) => {
+  try {
+    const actor = String(req.header('x-user') ?? '').trim() || null
+    const eventType = String(req.body?.type ?? '').trim().toLowerCase()
+    const message = String(req.body?.message ?? '').trim()
+    const context = req.body?.context
+    if ((eventType !== 'success' && eventType !== 'error' && eventType !== 'info') || !message) {
+      res.status(400).send('Eksik alan')
+      return
+    }
+    const contextJson =
+      context && typeof context === 'object'
+        ? (() => {
+            try {
+              const s = JSON.stringify(context)
+              return s.length > 10000 ? s.slice(0, 10000) : s
+            } catch {
+              return null
+            }
+          })()
+        : null
+
+    const pool = await getPool()
+    await ensureSchema(pool)
+    await pool
+      .request()
+      .input('UserName', mssql.NVarChar(64), actor)
+      .input('EventType', mssql.NVarChar(16), eventType)
+      .input('Message', mssql.NVarChar(1024), message.slice(0, 1024))
+      .input('ContextJson', mssql.NVarChar(mssql.MAX), contextJson)
+      .query('INSERT INTO dbo.UiEventLog (UserName, EventType, Message, ContextJson) VALUES (@UserName, @EventType, @Message, @ContextJson)')
+    res.json({ ok: true })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
     res.status(500).send(msg)

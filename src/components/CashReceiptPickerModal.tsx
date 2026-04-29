@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Modal } from './Modal'
 import type { CashCountReceipt } from '../data/api'
-import { formatDateTimeTr, formatMoney } from '../domain/format'
+import { dateTimeToMs, formatDateTimeTr, formatMoney } from '../domain/format'
 
 export function CashReceiptPickerModal(props: {
   open: boolean
@@ -30,8 +30,7 @@ export function CashReceiptPickerModal(props: {
         })
       : props.receipts
     const byTime = (r: CashCountReceipt) => {
-      const t = new Date(r.transactionDateTime || '').getTime()
-      return Number.isFinite(t) ? t : 0
+      return dateTimeToMs(r.transactionDateTime || r.displayTime || '')
     }
     const byAmount = (r: CashCountReceipt) => Number(r.totalAmount) || 0
     const sorted = [...rows]
@@ -146,7 +145,7 @@ export function CashReceiptPickerModal(props: {
                         />
                       </td>
                       <td>{[r.autoNo ? `No ${r.autoNo}` : '', r.counterId ? `ID ${r.counterId}` : ''].filter(Boolean).join(' • ') || r.receiptId}</td>
-                      <td>{r.displayTime || formatDateTimeTr(r.transactionDateTime)}</td>
+                    <td>{formatDateTimeTr(r.transactionDateTime || r.displayTime)}</td>
                       <td>{formatMoney(Number(r.totalAmount) || 0)}</td>
                     </tr>
                   )

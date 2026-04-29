@@ -2,6 +2,12 @@ export function formatMoney(amount: number) {
   return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(amount)
 }
 
+function normalizeDateTimeText(value: string) {
+  const s = String(value ?? '').trim()
+  if (!s) return ''
+  return s.replace(/T(\d{2}:\d{2}:\d{2}):(\d{1,6})(?=(?:Z|[+-]\d{2}:?\d{2})?$)/, (_m, hms, ms) => `T${hms}.${ms}`)
+}
+
 export function formatDateTr(value?: string) {
   if (!value) return '-'
   const d = new Date(value)
@@ -14,7 +20,7 @@ export function formatDateTr(value?: string) {
 
 export function formatDateTimeTr(value?: string) {
   if (!value) return '-'
-  const d = new Date(value)
+  const d = new Date(normalizeDateTimeText(value))
   if (Number.isNaN(d.getTime())) return value
   const parts = new Intl.DateTimeFormat('tr-TR', {
     timeZone: 'Europe/Istanbul',
@@ -35,4 +41,11 @@ export function formatDateTimeTr(value?: string) {
   const ss = byType.get('second') ?? ''
   if (!dd || !mm || !yyyy) return d.toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' })
   return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`
+}
+
+export function dateTimeToMs(value?: string) {
+  const s = normalizeDateTimeText(String(value ?? '').trim())
+  if (!s) return 0
+  const t = new Date(s).getTime()
+  return Number.isFinite(t) ? t : 0
 }

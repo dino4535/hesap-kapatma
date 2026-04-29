@@ -119,6 +119,24 @@ export interface CashCountReceipt {
   banknoteCounts: Record<string, number>
 }
 
+export async function logUiEvent(args: {
+  userName?: string
+  type: 'success' | 'error' | 'info'
+  message: string
+  context?: Record<string, unknown>
+}): Promise<{ ok: boolean; message?: string }> {
+  const res = await fetch('/api/ui-events', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(args.userName ? { 'x-user': args.userName } : {}) },
+    body: JSON.stringify({ type: args.type, message: args.message, context: args.context ?? {} }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean }
+}
+
 export async function fetchCashDeviceSettings(args: { userName: string }): Promise<{ ok: boolean; settings: DepotCashDeviceSetting[]; message?: string }> {
   const res = await fetch('/api/settings/cash-devices', { headers: { 'x-user': args.userName } })
   if (!res.ok) {
