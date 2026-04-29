@@ -31,6 +31,12 @@ const env = {
   sqlDatabase: process.env.SQL_DATABASE ?? 'HesapKapatma',
   sqlPort: process.env.SQL_PORT ? Number(process.env.SQL_PORT) : undefined,
   sqlTrustServerCertificate: (process.env.SQL_TRUST_SERVER_CERT ?? 'true').toLowerCase() !== 'false',
+  cariSqlServer: process.env.CARI_SQL_SERVER ?? process.env.DINO_SQL_SERVER ?? '192.168.12.192',
+  cariSqlUser: process.env.CARI_SQL_USER ?? process.env.DINO_SQL_USER ?? process.env.SQL_USER ?? '',
+  cariSqlPassword: process.env.CARI_SQL_PASSWORD ?? process.env.DINO_SQL_PASSWORD ?? process.env.SQL_PASSWORD ?? '',
+  cariSqlDatabase: process.env.CARI_SQL_DATABASE ?? process.env.DINO_SQL_DATABASE ?? 'DINO2026',
+  cariSqlPort: process.env.CARI_SQL_PORT ? Number(process.env.CARI_SQL_PORT) : undefined,
+  cariSqlTrustServerCertificate: (process.env.CARI_SQL_TRUST_SERVER_CERT ?? process.env.SQL_TRUST_SERVER_CERT ?? 'true').toLowerCase() !== 'false',
   port: process.env.PORT ? Number(process.env.PORT) : 3001,
   adminSecret: process.env.ADMIN_SECRET ?? '',
   manimDir: process.env.MANIM_DIR ?? '',
@@ -915,6 +921,7 @@ async function loadManimReceiptsRemote(args: {
 }
 
 let poolPromise: Promise<mssql.ConnectionPool> | null = null
+let cariPoolPromise: Promise<mssql.ConnectionPool> | null = null
 
 function getPool() {
   if (!poolPromise) {
@@ -933,6 +940,127 @@ function getPool() {
     }).connect()
   }
   return poolPromise
+}
+
+function getCariPool() {
+  if (!cariPoolPromise) {
+    if (!env.cariSqlServer || !env.cariSqlUser || !env.cariSqlPassword || !env.cariSqlDatabase) {
+      throw new Error('Cari SQL bağlantı env değişkenleri eksik: CARI_SQL_SERVER, CARI_SQL_USER, CARI_SQL_PASSWORD, CARI_SQL_DATABASE')
+    }
+    cariPoolPromise = new mssql.ConnectionPool({
+      server: env.cariSqlServer,
+      port: env.cariSqlPort,
+      user: env.cariSqlUser,
+      password: env.cariSqlPassword,
+      database: env.cariSqlDatabase,
+      options: {
+        trustServerCertificate: env.cariSqlTrustServerCertificate,
+      },
+    }).connect()
+  }
+  return cariPoolPromise
+}
+
+function parseYmdDateText(value: unknown) {
+  const s = String(value ?? '').trim()
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
+  if (!m) return { ok: false as const, error: 'Tarih formatı YYYY-MM-DD olmalı' }
+  const yyyy = Number(m[1])
+  const mm = Number(m[2])
+  const dd = Number(m[3])
+  if (!Number.isFinite(yyyy) || !Number.isFinite(mm) || !Number.isFinite(dd)) return { ok: false as const, error: 'Tarih formatı geçersiz' }
+  const d = new Date(Date.UTC(yyyy, mm - 1, dd))
+  if (Number.isNaN(d.getTime())) return { ok: false as const, error: 'Tarih formatı geçersiz' }
+  return { ok: true as const, date: s }
+}
+
+function pickColumnName(colsUpper: Set<string>, candidates: string[]) {
+  for (const c of candidates) {
+    const u = c.toUpperCase()
+    if (colsUpper.has(u)) return c
+  }
+  for (const col of colsUpper.values()) {
+    const normalized = col.replace(/\s+/g, '').toUpperCase()
+    for (const c of candidates) {
+      if (normalized === c.replace(/\s+/g, '').toUpperCase()) return col
+    }
+  }
+  return null
+}
+
+async function fetchCariBorcBakiyeleri(args: { asOfDateYmd: string; cariCodes: string[] }) {
+  const pool = await getCariPool()
+  const colsRes = await pool
+    .request()
+    .input('TableName', mssql.NVarChar(128), 'TBLCAHAR')
+    .query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @TableName`)
+  const colsUpper = new Set<string>((colsRes.recordset ?? []).map((r) => String((r as any).COLUMN_NAME ?? '').trim().toUpperCase()).filter(Boolean))
+
+  const codeCol = pickColumnName(colsUpper, ['CARKOD', 'CARIKOD', 'CARI_KOD', 'CARI_KODU', 'CHKODU', 'CH_KODU', 'CARI_CODE', 'CUST_CODE'])
+  const dateCol = pickColumnName(colsUpper, ['TARIH', 'TAR', 'ISLEM_TARIHI', 'ISLEMTARIHI', 'TARIHSAAT', 'TARIH_SAAT', 'DATE_', 'TRH'])
+  if (!codeCol || !dateCol) {
+    throw new Error('TBLCAHAR kolonları tespit edilemedi (cari kodu / tarih)')
+  }
+
+  const balanceCol = pickColumnName(colsUpper, ['BAKIYE', 'CARIBAKIYE', 'CARI_BAKIYE', 'BAK', 'NETBAKIYE', 'NET_BAKIYE'])
+  const borcCol = pickColumnName(colsUpper, ['BORC', 'BORC_TUTAR', 'BORC_TUTARI', 'DEBIT', 'DB'])
+  const alacakCol = pickColumnName(colsUpper, ['ALACAK', 'ALACAK_TUTAR', 'ALACAK_TUTARI', 'CREDIT', 'CR'])
+
+  const values = args.cariCodes
+    .map((x) => String(x ?? '').trim())
+    .filter((x) => !!x)
+    .slice(0, 800)
+
+  if (values.length === 0) return new Map<string, number>()
+
+  const req = pool.request()
+  req.input('AsOf', mssql.Date, args.asOfDateYmd)
+  const inParams: string[] = []
+  values.forEach((v, idx) => {
+    const name = `c${idx}`
+    inParams.push(`@${name}`)
+    req.input(name, mssql.NVarChar(64), v)
+  })
+
+  let query: string
+  if (balanceCol) {
+    query = `
+;WITH base AS (
+  SELECT
+    CAST(${codeCol} AS NVARCHAR(64)) AS CariCode,
+    CAST(${balanceCol} AS DECIMAL(18, 2)) AS Balance,
+    ROW_NUMBER() OVER (PARTITION BY ${codeCol} ORDER BY ${dateCol} DESC) AS rn
+  FROM dbo.TBLCAHAR WITH (NOLOCK)
+  WHERE ${dateCol} <= @AsOf
+    AND ${codeCol} IN (${inParams.join(', ')})
+)
+SELECT CariCode AS code, Balance AS balance
+FROM base
+WHERE rn = 1
+`
+  } else if (borcCol && alacakCol) {
+    query = `
+SELECT
+  CAST(${codeCol} AS NVARCHAR(64)) AS code,
+  CAST(SUM(COALESCE(${borcCol}, 0) - COALESCE(${alacakCol}, 0)) AS DECIMAL(18, 2)) AS balance
+FROM dbo.TBLCAHAR WITH (NOLOCK)
+WHERE ${dateCol} <= @AsOf
+  AND ${codeCol} IN (${inParams.join(', ')})
+GROUP BY ${codeCol}
+`
+  } else {
+    throw new Error('TBLCAHAR kolonları tespit edilemedi (bakiye veya borç/alacak)')
+  }
+
+  const r = await req.query(query)
+  const map = new Map<string, number>()
+  for (const row of (r.recordset ?? []) as Array<{ code?: unknown; balance?: unknown }>) {
+    const code = String(row.code ?? '').trim()
+    if (!code) continue
+    const bal = Number(row.balance ?? 0) || 0
+    map.set(code, bal)
+  }
+  return map
 }
 
 async function ensureSchema(pool: mssql.ConnectionPool) {
@@ -3793,6 +3921,43 @@ app.get('/api/manim/receipts', async (req, res) => {
         bankAccountLabel: x.bankAccountLabel,
       })),
     })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
+app.post('/api/cari-balances', async (req, res) => {
+  try {
+    const userName = String(req.header('x-user') ?? '').trim()
+    if (!userName) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+
+    const parsedAsOf = parseYmdDateText(req.body?.asOfDate)
+    if (!parsedAsOf.ok) {
+      res.status(400).send(parsedAsOf.error)
+      return
+    }
+
+    const rawCodes = Array.isArray(req.body?.codes) ? (req.body.codes as unknown[]) : []
+    const codes = rawCodes
+      .map((x) => String(x ?? '').trim())
+      .filter((x) => !!x)
+      .slice(0, 800)
+
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const active = await requireActiveUser(pool, userName)
+    if (!active.active) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+
+    const map = await fetchCariBorcBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: codes })
+    const balances = codes.map((code) => ({ code, balance: map.get(code) ?? 0 }))
+    res.json({ ok: true, balances })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
     res.status(500).send(msg)

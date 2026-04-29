@@ -19,6 +19,7 @@ import {
   fetchPositions,
   fetchPositionRepresentatives,
   fetchUsers,
+  fetchCariBalances,
   importSalesFiles,
   deletePositionRepresentative,
   saveMutabakat,
@@ -150,6 +151,19 @@ function normalizeMatchCode(value?: string) {
     .trim()
     .toLocaleUpperCase('tr-TR')
     .replace(/[^A-Z0-9]/g, '')
+}
+
+function ymdAddDays(ymd: string, deltaDays: number) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd ?? '').trim())
+  if (!m) return ''
+  const yyyy = Number(m[1])
+  const mm = Number(m[2])
+  const dd = Number(m[3])
+  if (!Number.isFinite(yyyy) || !Number.isFinite(mm) || !Number.isFinite(dd)) return ''
+  const d = new Date(Date.UTC(yyyy, mm - 1, dd))
+  if (Number.isNaN(d.getTime())) return ''
+  d.setUTCDate(d.getUTCDate() + deltaDays)
+  return d.toISOString().slice(0, 10)
 }
 
 function isIncomingDirection(value?: string) {
@@ -529,6 +543,8 @@ export default function App() {
   const [cashDevicePassword, setCashDevicePassword] = useState('')
   const [helpOpen, setHelpOpen] = useState(false)
   const [helpTab, setHelpTab] = useState<'genel' | 'mutabakat' | 'nakit' | 'rapor' | 'yonetim' | 'kisayollar'>('genel')
+  const [cariBalancesByMatchCode, setCariBalancesByMatchCode] = useState<Record<string, number>>({})
+  const [cariBalancesLoading, setCariBalancesLoading] = useState(false)
   const [cashDeviceTesting, setCashDeviceTesting] = useState(false)
   const [cashDeviceSaving, setCashDeviceSaving] = useState(false)
   const [mutabakatDiffLimitTl, setMutabakatDiffLimitTl] = useState(0.01)
@@ -1318,16 +1334,67 @@ export default function App() {
 
   const manimIncomingByCorrespondentCode = useMemo(() => buildIncomingByCorrespondentCode(manimBayiMatchReceipts), [manimBayiMatchReceipts])
 
+  const cariBalanceAsOfDate = useMemo(() => (selectedDataset.date ? ymdAddDays(selectedDataset.date, -1) : ''), [selectedDataset.date])
+  const cariBalanceCodesKey = useMemo(() => {
+    const uniq = new Set<string>()
+    for (const r of havaleVadeliByBayiRows) {
+      const code = String(r.bayiKodu ?? '').trim()
+      if (code) uniq.add(code)
+    }
+    return Array.from(uniq.values()).sort((a, b) => a.localeCompare(b, 'tr', { sensitivity: 'base' })).join('|')
+  }, [havaleVadeliByBayiRows])
+
+  useEffect(() => {
+    if (!currentUser) {
+      setCariBalancesByMatchCode({})
+      setCariBalancesLoading(false)
+      return
+    }
+    if (!cariBalanceAsOfDate) {
+      setCariBalancesByMatchCode({})
+      setCariBalancesLoading(false)
+      return
+    }
+    const shouldFetch = page === 'bayi-havale-match' || (page === 'mutabakat' && mutabakatStep === 2)
+    if (!shouldFetch) return
+
+    const codes = cariBalanceCodesKey ? cariBalanceCodesKey.split('|').filter(Boolean) : []
+    if (codes.length === 0) {
+      setCariBalancesByMatchCode({})
+      setCariBalancesLoading(false)
+      return
+    }
+
+    setCariBalancesLoading(true)
+    fetchCariBalances({ userName: currentUser.userName, asOfDate: cariBalanceAsOfDate, codes })
+      .then((r) => {
+        if (!r.ok) throw new Error(r.message || 'Cari bakiye alınamadı')
+        const next: Record<string, number> = {}
+        for (const row of r.balances ?? []) {
+          const key = normalizeMatchCode(row.code)
+          if (!key) continue
+          next[key] = Number(row.balance) || 0
+        }
+        setCariBalancesByMatchCode(next)
+      })
+      .catch(() => {
+        setCariBalancesByMatchCode({})
+      })
+      .finally(() => setCariBalancesLoading(false))
+  }, [currentUser, cariBalanceAsOfDate, cariBalanceCodesKey, page, mutabakatStep])
+
   const bayiHavaleEslemeRows = useMemo(() => {
     return havaleVadeliByBayiRows.map((r) => {
       const matchCode = normalizeMatchCode(r.bayiKodu)
       const gelenTutarToplami = manimIncomingByCorrespondentCode.get(matchCode) ?? 0
-      const fark = (Number(gelenTutarToplami) || 0) - (Number(r.toplam) || 0)
+      const cariBorcBakiyesi = Number(cariBalancesByMatchCode[matchCode] ?? 0) || 0
+      const toplam = (Number(r.toplam) || 0) + cariBorcBakiyesi
+      const fark = (Number(gelenTutarToplami) || 0) - toplam
       const eslesti = Math.abs(fark) < 0.01
       const durum = eslesti ? 'Tam eşleşti' : fark < 0 ? 'Eksik ödeme' : 'Fazla ödeme'
-      return { ...r, gelenTutarToplami, fark, eslesti, durum }
+      return { ...r, cariBorcBakiyesi, toplam, gelenTutarToplami, fark, eslesti, durum }
     })
-  }, [havaleVadeliByBayiRows, manimIncomingByCorrespondentCode])
+  }, [havaleVadeliByBayiRows, manimIncomingByCorrespondentCode, cariBalancesByMatchCode])
 
   const bayiEslemeBeklenenToplam = useMemo(() => bayiHavaleEslemeRows.reduce((s, r) => s + (Number(r.toplam) || 0), 0), [bayiHavaleEslemeRows])
   const bayiEslemeGelenToplam = useMemo(() => bayiHavaleEslemeRows.reduce((s, r) => s + (Number(r.gelenTutarToplami) || 0), 0), [bayiHavaleEslemeRows])
@@ -1973,20 +2040,22 @@ export default function App() {
     const havaleEslemeRows = havaleVadeliRows.map((r) => {
       const matchCode = normalizeMatchCode(r.bayiKodu)
       const gelenTutarToplami = incomingByCorrespondentForPrint.get(matchCode) ?? 0
-      const fark = (Number(gelenTutarToplami) || 0) - (Number(r.toplam) || 0)
+      const cariBorcBakiyesi = Number(cariBalancesByMatchCode[matchCode] ?? 0) || 0
+      const toplam = (Number(r.toplam) || 0) + cariBorcBakiyesi
+      const fark = (Number(gelenTutarToplami) || 0) - toplam
       const eslesti = Math.abs(fark) < 0.01
       const durum = eslesti ? 'Tam eşleşti' : fark < 0 ? 'Eksik ödeme' : 'Fazla ödeme'
-      return { ...r, gelenTutarToplami, fark, eslesti, durum }
+      return { ...r, cariBorcBakiyesi, toplam, gelenTutarToplami, fark, eslesti, durum }
     })
     const havaleEslesmeyenRows = havaleEslemeRows.filter((r) => !r.eslesti)
 
     const havaleVadeliRowsHtml =
       havaleEslesmeyenRows.length === 0
-        ? `<tr><td colspan="8" class="empty">Eşleşmeyen kayıt yok</td></tr>`
+        ? `<tr><td colspan="9" class="empty">Eşleşmeyen kayıt yok</td></tr>`
         : havaleEslesmeyenRows
             .map(
               (r) =>
-                `<tr><td>${escapeHtml(r.bayiKodu)}</td><td>${escapeHtml(r.bayi)}</td><td class="num">${escapeHtml(money(r.havale))}</td><td class="num">${escapeHtml(money(r.vadeli))}</td><td class="num">${escapeHtml(money(r.toplam))}</td><td class="num">${escapeHtml(money(r.gelenTutarToplami))}</td><td class="num">${escapeHtml(money(r.fark))}</td><td class="nowrap">${escapeHtml(r.durum)}</td></tr>`,
+                `<tr><td>${escapeHtml(r.bayiKodu)}</td><td>${escapeHtml(r.bayi)}</td><td class="num">${escapeHtml(money(r.havale))}</td><td class="num">${escapeHtml(money(r.vadeli))}</td><td class="num">${escapeHtml(money(r.cariBorcBakiyesi))}</td><td class="num">${escapeHtml(money(r.toplam))}</td><td class="num">${escapeHtml(money(r.gelenTutarToplami))}</td><td class="num">${escapeHtml(money(r.fark))}</td><td class="nowrap">${escapeHtml(r.durum)}</td></tr>`,
             )
             .join('')
 
@@ -2212,7 +2281,7 @@ export default function App() {
     <div class="section">
       <div class="section-title">Bayi Havale Eşleme (Sadece Eşleşmeyenler)</div>
       <table>
-        <thead><tr><th>Bayi Kodu</th><th>Bayi</th><th class="num">Havale</th><th class="num">Vadeli Ödeme Havaleleri</th><th class="num">Toplam</th><th class="num">Gelen Tutar Toplamı</th><th class="num">Fark</th><th class="nowrap">Durum</th></tr></thead>
+        <thead><tr><th>Bayi Kodu</th><th>Bayi</th><th class="num">Havale</th><th class="num">Vadeli Ödeme Havaleleri</th><th class="num">Cari Borç Bakiyesi</th><th class="num">Toplam</th><th class="num">Gelen Tutar Toplamı</th><th class="num">Fark</th><th class="nowrap">Durum</th></tr></thead>
         <tbody>${havaleVadeliRowsHtml}</tbody>
       </table>
     </div>
@@ -3558,6 +3627,12 @@ export default function App() {
                     <div className="mutabakat-value">{selectedDataset.date ? `${formatDateTr(selectedDataset.date)} ve bir önceki gün` : '-'}</div>
                   </div>
                   <div className="mutabakat-meta-row">
+                    <div className="mutabakat-label">Cari Bakiye Tarihi</div>
+                    <div className="mutabakat-value">
+                      {cariBalanceAsOfDate ? `${formatDateTr(cariBalanceAsOfDate)}${cariBalancesLoading ? ' (yükleniyor...)' : ''}` : '-'}
+                    </div>
+                  </div>
+                  <div className="mutabakat-meta-row">
                     <div className="mutabakat-label">Beklenen Toplam</div>
                     <div className="mutabakat-value">{formatMoney(bayiEslemeBeklenenToplam)}</div>
                   </div>
@@ -3581,6 +3656,7 @@ export default function App() {
                         <th>Bayi Adı</th>
                         <th>Havale Faturaları</th>
                         <th>Vadeli Tahsilat Havaleleri</th>
+                        <th>Cari Borç Bakiyesi</th>
                         <th>Toplam</th>
                         <th>Gelen Tutar Toplamı</th>
                         <th>Fark</th>
@@ -3590,7 +3666,7 @@ export default function App() {
                     <tbody>
                       {bayiHavaleEslemeRows.length === 0 ? (
                         <tr>
-                          <td colSpan={8} style={{ textAlign: 'center', color: '#718096' }}>
+                          <td colSpan={9} style={{ textAlign: 'center', color: '#718096' }}>
                             {manimBayiMatchLoading ? 'Eşleştirme sürüyor...' : 'Kayıt yok'}
                           </td>
                         </tr>
@@ -3601,6 +3677,7 @@ export default function App() {
                             <td>{r.bayi}</td>
                             <td>{formatMoney(r.havale)}</td>
                             <td>{formatMoney(r.vadeli)}</td>
+                            <td>{formatMoney(r.cariBorcBakiyesi)}</td>
                             <td>{formatMoney(r.toplam)}</td>
                             <td>{formatMoney(r.gelenTutarToplami)}</td>
                             <td>{formatMoney(r.fark)}</td>
@@ -4228,6 +4305,12 @@ export default function App() {
                         <div className="mutabakat-value">{selectedDataset.date ? `${formatDateTr(selectedDataset.date)} ve bir önceki gün` : '-'}</div>
                       </div>
                       <div className="mutabakat-meta-row">
+                        <div className="mutabakat-label">Cari Bakiye Tarihi</div>
+                        <div className="mutabakat-value">
+                          {cariBalanceAsOfDate ? `${formatDateTr(cariBalanceAsOfDate)}${cariBalancesLoading ? ' (yükleniyor...)' : ''}` : '-'}
+                        </div>
+                      </div>
+                      <div className="mutabakat-meta-row">
                         <div className="mutabakat-label">Beklenen Toplam</div>
                         <div className="mutabakat-value">{formatMoney(bayiEslemeBeklenenToplam)}</div>
                       </div>
@@ -4251,6 +4334,7 @@ export default function App() {
                             <th>Bayi Adı</th>
                             <th>Havale Faturaları</th>
                             <th>Vadeli Tahsilat Havaleleri</th>
+                            <th>Cari Borç Bakiyesi</th>
                             <th>Toplam</th>
                             <th>Gelen Tutar Toplamı</th>
                             <th>Fark</th>
@@ -4260,7 +4344,7 @@ export default function App() {
                         <tbody>
                           {bayiHavaleEslemeRows.length === 0 ? (
                             <tr>
-                              <td colSpan={8} style={{ textAlign: 'center', color: '#718096' }}>
+                              <td colSpan={9} style={{ textAlign: 'center', color: '#718096' }}>
                                 {manimBayiMatchLoading ? 'Eşleştirme sürüyor...' : 'Kayıt yok'}
                               </td>
                             </tr>
@@ -4271,6 +4355,7 @@ export default function App() {
                                 <td>{r.bayi}</td>
                                 <td>{formatMoney(r.havale)}</td>
                                 <td>{formatMoney(r.vadeli)}</td>
+                                <td>{formatMoney(r.cariBorcBakiyesi)}</td>
                                 <td>{formatMoney(r.toplam)}</td>
                                 <td>{formatMoney(r.gelenTutarToplami)}</td>
                                 <td>{formatMoney(r.fark)}</td>
