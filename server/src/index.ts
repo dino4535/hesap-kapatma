@@ -1002,7 +1002,7 @@ async function fetchCariBorcBakiyeleri(args: { asOfDateYmd: string; cariCodes: s
     throw new Error('TBLCAHAR kolonları tespit edilemedi (cari kodu / tarih)')
   }
 
-  const balanceCol = pickColumnName(colsUpper, ['BAKIYE', 'CARIBAKIYE', 'CARI_BAKIYE', 'BAK', 'NETBAKIYE', 'NET_BAKIYE'])
+  const balanceColCandidate = pickColumnName(colsUpper, ['BAKIYE', 'CARIBAKIYE', 'CARI_BAKIYE', 'BAK', 'NETBAKIYE', 'NET_BAKIYE'])
   const borcCol = pickColumnName(colsUpper, ['BORC', 'BORC_TUTAR', 'BORC_TUTARI', 'DEBIT', 'DB'])
   const alacakCol = pickColumnName(colsUpper, ['ALACAK', 'ALACAK_TUTAR', 'ALACAK_TUTARI', 'CREDIT', 'CR'])
 
@@ -1012,6 +1012,15 @@ async function fetchCariBorcBakiyeleri(args: { asOfDateYmd: string; cariCodes: s
     .slice(0, 800)
 
   if (values.length === 0) return new Map<string, number>()
+
+  let balanceCol: string | null = balanceColCandidate
+  if (balanceCol) {
+    const probe = await pool
+      .request()
+      .query(`SELECT TOP 1 1 AS ok FROM dbo.TBLCAHAR WITH (NOLOCK) WHERE [${balanceCol}] IS NOT NULL`)
+    const hasAny = (probe.recordset ?? []).length > 0
+    if (!hasAny) balanceCol = null
+  }
 
   const req = pool.request()
   req.input('AsOf', mssql.Date, args.asOfDateYmd)
@@ -1042,7 +1051,7 @@ WHERE rn = 1
     query = `
 SELECT
   CAST(${codeCol} AS NVARCHAR(64)) AS code,
-  CAST(SUM(COALESCE(${borcCol}, 0) - COALESCE(${alacakCol}, 0)) AS DECIMAL(18, 2)) AS balance
+  CAST(CASE WHEN SUM(COALESCE(${borcCol}, 0) - COALESCE(${alacakCol}, 0)) > 0 THEN SUM(COALESCE(${borcCol}, 0) - COALESCE(${alacakCol}, 0)) ELSE 0 END AS DECIMAL(18, 2)) AS balance
 FROM dbo.TBLCAHAR WITH (NOLOCK)
 WHERE ${dateCol} <= @AsOf
   AND ${codeCol} IN (${inParams.join(', ')})
