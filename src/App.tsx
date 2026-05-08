@@ -481,6 +481,8 @@ export default function App() {
   const [uploadDepotMap, setUploadDepotMap] = useState<Record<string, string>>({})
   const [uploadBulkDepot, setUploadBulkDepot] = useState('')
   const [importJobFiles, setImportJobFiles] = useState<ImportResultFile[]>([])
+  const [importBusy, setImportBusy] = useState(false)
+  const [importProgressPercent, setImportProgressPercent] = useState(0)
   const [page, setPage] = useState<'main' | 'mutabakat' | 'bayi-havale-match' | 'position-representative' | 'end-of-day-report' | 'user-admin'>('main')
   const [selectedPosition, setSelectedPosition] = useState<string | null>(null)
   const [detailSearch, setDetailSearch] = useState('')
@@ -1185,6 +1187,8 @@ export default function App() {
       return
     }
 
+    setImportBusy(true)
+    setImportProgressPercent(0)
     setStatus({ type: 'info', message: `Yükleme kuyruğa alınıyor: ${selectedFiles.length} dosya` })
     setImportJobFiles([])
     try {
@@ -1205,6 +1209,7 @@ export default function App() {
             return s + (f.positions ?? []).reduce((p, x) => p + x.totalInvoices + x.totalCollections, 0)
           }, 0)
           const percent = total > 0 ? Math.round((done * 100) / total) : 0
+          setImportProgressPercent(percent)
           const current = job.currentFileName ? ` (${job.currentFileName})` : ''
           setStatus({
             type: 'info',
@@ -1224,26 +1229,50 @@ export default function App() {
       const skippedPositionsCount = finished.files.reduce((s, f) => s + (f.skippedPositions?.length ?? 0), 0)
       const invoiceCount = imported.reduce((a, f) => a + f.invoiceCount, 0)
       const paymentCount = imported.reduce((a, f) => a + f.paymentCount, 0)
+      setImportProgressPercent(100)
+      const successMessage =
+        `SQL Server’a aktarıldı: ${invoiceCount} fatura, ${paymentCount} tahsilat` +
+        (skippedFileCount > 0 || skippedPositionsCount > 0 ? ` (Atlandı: ${skippedFileCount} dosya, ${skippedPositionsCount} pozisyon)` : '')
       setStatus({
         type: 'success',
-        message:
-          `SQL Server’a aktarıldı: ${invoiceCount} fatura, ${paymentCount} tahsilat` +
-          (skippedFileCount > 0 || skippedPositionsCount > 0
-            ? ` (Atlandı: ${skippedFileCount} dosya, ${skippedPositionsCount} pozisyon)`
-            : ''),
+        message: successMessage,
       })
       const list = await fetchImportFiles({ userName: currentUser.userName })
       if (list.ok) {
         setImportFiles(list.files)
         const firstImported = imported[0]
         if (firstImported?.fileDate) {
-          setSelectedDate((firstImported.fileDate ?? '').trim())
-          setSelectedDepot((firstImported.depotCode ?? '').trim())
+          const nextDate = (firstImported.fileDate ?? '').trim()
+          const nextDepot = (firstImported.depotCode ?? '').trim()
+          if (nextDate) setSelectedDate(nextDate)
+          if (nextDepot) setSelectedDepot(nextDepot)
+          if (nextDate && nextDepot) {
+            setPositionsLoading(true)
+            fetchPositions({ date: nextDate, depot: nextDepot })
+              .then((r) => {
+                if (!r.ok) throw new Error(r.message || 'Pozisyonlar alınamadı')
+                setPositions(r.positions)
+              })
+              .catch((e) => {
+                setStatus({ type: 'error', message: e instanceof Error ? e.message : 'Pozisyonlar alınamadı' })
+                setPositions([])
+              })
+              .finally(() => setPositionsLoading(false))
+          }
         }
       }
+      window.setTimeout(() => {
+        setStatus((prev) => {
+          if (!prev) return prev
+          if (prev.type === 'success' && prev.message === successMessage) return null
+          return prev
+        })
+      }, 2500)
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Import sırasında hata oluştu'
       setStatus({ type: 'error', message: msg })
+    } finally {
+      setImportBusy(false)
     }
 
     setSelectedFiles([])
@@ -4685,19 +4714,33 @@ export default function App() {
             </div>
           </div>
 
-          <div className="upload-section">
-            <div className="upload-box">
+          <div className="upload-section import-panel">
+            <div className="import-header">
+              <div>
+                <div className="import-title">JSON Yükleme</div>
+                <div className="import-subtitle">Dosyalar sunucuya gönderilir, import işlemi arka planda yürür.</div>
+              </div>
+              {importBusy ? <div className="import-badge">İşleniyor • %{importProgressPercent}</div> : importJobFiles.length > 0 ? <div className="import-badge done">Son durum hazır</div> : null}
+            </div>
+
+            <div className="import-actions">
               <input
                 key={fileInputKey}
                 type="file"
                 accept=".json"
                 multiple
+                disabled={importBusy}
                 onChange={(e) => setSelectedFiles(Array.from(e.target.files ?? []))}
               />
-              <button className="btn btn-primary" type="button" onClick={onUpload}>
-                JSON Yükle (SQL)
+              <button className="btn btn-primary" type="button" onClick={onUpload} disabled={importBusy}>
+                {importBusy ? 'Yükleniyor...' : 'JSON Yükle (SQL)'}
               </button>
             </div>
+            {importBusy ? (
+              <div className="import-progress" aria-label="Import ilerleme">
+                <div className="import-progress-bar" style={{ width: `${Math.min(100, Math.max(0, importProgressPercent))}%` }} />
+              </div>
+            ) : null}
             {selectedFiles.length > 0 ? (
               <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap' }}>
@@ -4750,41 +4793,29 @@ export default function App() {
               </div>
             ) : null}
             {importJobFiles.length > 0 ? (
-              <div style={{ marginTop: 10, border: '1px solid #e2e8f0', borderRadius: 10, padding: 10, background: '#fff' }}>
-                <div style={{ fontWeight: 700, color: '#2d3748', marginBottom: 8 }}>Import Pozisyon Durumu</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <details className="import-details" open={importBusy}>
+                <summary>Import Pozisyon Durumu</summary>
+                <div className="import-files">
                   {importJobFiles.map((f) => (
-                    <div key={f.fileName} style={{ border: '1px solid #edf2f7', borderRadius: 8, padding: 8 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-                        <div style={{ fontWeight: 700, color: '#2d3748' }}>{f.fileName}</div>
-                        <div style={{ color: '#4a5568', fontWeight: 700 }}>%{f.progressPercent ?? 0}</div>
+                    <div key={f.fileName} className="import-file">
+                      <div className="import-file-header">
+                        <div className="import-file-name">{f.fileName}</div>
+                        <div className="import-file-percent">%{f.progressPercent ?? 0}</div>
                       </div>
-                      <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div className="import-positions">
                         {(f.positions ?? []).map((p) => {
                           const done = p.processedInvoices + p.processedCollections
                           const total = p.totalInvoices + p.totalCollections
                           const isDone = p.status === 'imported'
                           const isSkipped = p.status === 'skipped'
                           return (
-                            <div
-                              key={`${f.fileName}-${p.positionCode}`}
-                              style={{
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                gap: 10,
-                                flexWrap: 'wrap',
-                                padding: '4px 6px',
-                                borderRadius: 6,
-                                background: isDone ? '#f0fff4' : isSkipped ? '#fffaf0' : '#f7fafc',
-                                color: '#2d3748',
-                              }}
-                            >
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <div key={`${f.fileName}-${p.positionCode}`} className={`import-position ${isDone ? 'done' : isSkipped ? 'skipped' : ''}`}>
+                              <div className="import-position-left">
                                 <span>{p.positionCode}</span>
-                                {isDone ? <span style={{ color: '#2f855a', fontWeight: 700 }}>✓</span> : null}
-                                {isSkipped ? <span style={{ color: '#b7791f', fontWeight: 700 }}>⏭</span> : null}
+                                {isDone ? <span className="import-position-mark done">✓</span> : null}
+                                {isSkipped ? <span className="import-position-mark skipped">⏭</span> : null}
                               </div>
-                              <div style={{ color: '#4a5568', fontSize: 12 }}>
+                              <div className="import-position-right">
                                 %{p.progressPercent} ({done}/{total})
                               </div>
                             </div>
@@ -4794,9 +4825,16 @@ export default function App() {
                     </div>
                   ))}
                 </div>
+              </details>
+            ) : null}
+            {status ? (
+              <div className={`import-status toast ${status.type}`}>
+                <div className="toast-message">{status.message}</div>
+                <button className="toast-close" type="button" onClick={() => setStatus(null)}>
+                  ×
+                </button>
               </div>
             ) : null}
-            <div className={`upload-status ${status?.type ?? ''}`}>{status?.message ?? ''}</div>
           </div>
 
           <div className="position-list">
