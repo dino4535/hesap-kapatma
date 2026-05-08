@@ -576,6 +576,7 @@ export default function App() {
   const [editIsActive, setEditIsActive] = useState(true)
   const [editPermissions, setEditPermissions] = useState<ScreenPermissions>(() => defaultPermissionsForRole('SHEF'))
   const [adminStatus, setAdminStatus] = useState<{ type: StatusType; message: string } | null>(null)
+  const [adminUserSearch, setAdminUserSearch] = useState('')
   const [adminDeleteDate, setAdminDeleteDate] = useState('')
   const [adminDeleteDepot, setAdminDeleteDepot] = useState('')
   const [adminDeleteFileName, setAdminDeleteFileName] = useState('')
@@ -814,6 +815,24 @@ export default function App() {
     list.sort((a, b) => String(b.importedAt ?? '').localeCompare(String(a.importedAt ?? '')))
     return list
   }, [importFiles])
+
+  const filteredAdminUsers = useMemo(() => {
+    const q = adminUserSearch.trim().toLocaleLowerCase('tr-TR')
+    if (!q) return adminUsers
+    return adminUsers.filter((u) => {
+      const perms = [
+        u.permissions.canMain ? 'Pozisyon' : null,
+        u.permissions.canMutabakat ? 'Mutabakat' : null,
+        u.permissions.canBayiHavaleMatch ? 'Bayi Havale' : null,
+        u.permissions.canPositionRepresentative ? 'Pozisyon-Temsilci' : null,
+        u.permissions.canUserAdmin ? 'Kullanıcı Yönetimi' : null,
+      ]
+        .filter(Boolean)
+        .join(', ')
+      const hay = `${u.userName} ${roleLabel(u.roleCode)} ${u.isActive ? 'evet' : 'hayır'} ${perms}`.toLocaleLowerCase('tr-TR')
+      return hay.includes(q)
+    })
+  }, [adminUsers, adminUserSearch])
 
   useEffect(() => {
     const d = adminDeleteDate.trim()
@@ -3206,7 +3225,6 @@ export default function App() {
           <div className="header">
             <h1>Kullanıcı Yönetimi</h1>
             <p>Admin kullanıcılar rol ve ekran izinlerini yönetebilir.</p>
-            {adminStatus ? <div className={`upload-status ${adminStatus.type}`}>{adminStatus.message}</div> : null}
           </div>
 
           {!canUserAdminPage ? (
@@ -3220,226 +3238,300 @@ export default function App() {
             </div>
           ) : (
             <>
-              <div className="upload-section">
-                <div className="upload-box" style={{ gap: 10, alignItems: 'end', marginBottom: 10 }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 220 }}>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Mutabakat Fark Limiti (TL)</label>
-                    <input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={adminMutabakatDiffLimitInput}
-                      onChange={(e) => setAdminMutabakatDiffLimitInput(e.target.value)}
-                    />
-                  </div>
-                  <button
-                    className="btn btn-secondary"
-                    type="button"
-                    onClick={async () => {
-                      const value = parseTrDecimalInput(adminMutabakatDiffLimitInput)
-                      if (!Number.isFinite(value) || value < 0) {
-                        setAdminStatus({ type: 'error', message: 'Limit 0 veya daha büyük olmalı' })
-                        return
-                      }
-                      setAdminStatus({ type: 'info', message: 'Ayar kaydediliyor...' })
-                      const r = await updateMutabakatSettings({ userName: currentUser.userName, diffLimitTl: value })
-                      if (!r.ok || !r.settings) {
-                        setAdminStatus({ type: 'error', message: r.message || 'Ayar kaydedilemedi' })
-                        return
-                      }
-                      setMutabakatDiffLimitTl(r.settings.diffLimitTl)
-                      setAdminMutabakatDiffLimitInput(String(r.settings.diffLimitTl))
-                      setAdminStatus({ type: 'success', message: 'Mutabakat fark limiti güncellendi' })
-                    }}
-                  >
-                    Ayarı Kaydet
-                  </button>
-                </div>
-                <div className="upload-box" style={{ gap: 10, alignItems: 'end', marginBottom: 10 }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 180 }}>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Depo</label>
-                    <select value={cashDeviceDepot} onChange={(e) => setCashDeviceDepot(e.target.value)}>
-                      <option value="">Seçiniz</option>
-                      {allDepotOptions.map((d) => (
-                        <option key={d} value={d}>
-                          {depotLabel(d)}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 180 }}>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Cihaz IP</label>
-                    <input value={cashDeviceIp} onChange={(e) => setCashDeviceIp(e.target.value)} placeholder="192.168.1.10" />
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 180 }}>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Cihaz Kullanıcı</label>
-                    <input value={cashDeviceUser} onChange={(e) => setCashDeviceUser(e.target.value)} placeholder="admin" />
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 180 }}>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Cihaz Şifre</label>
-                    <input type="password" value={cashDevicePassword} onChange={(e) => setCashDevicePassword(e.target.value)} placeholder="şifre" />
-                  </div>
-                  <button
-                    className="btn btn-secondary"
-                    type="button"
-                    disabled={cashDeviceTesting || cashDeviceSaving}
-                    onClick={async () => {
-                      const ip = cashDeviceIp.trim()
-                      const user = cashDeviceUser.trim()
-                      const pass = cashDevicePassword
-                      if (!ip || !user || !pass) {
-                        setAdminStatus({ type: 'error', message: 'Test için IP, kullanıcı ve şifre zorunlu' })
-                        return
-                      }
-                      setCashDeviceTesting(true)
-                      setAdminStatus({ type: 'info', message: 'Cihaz bağlantısı test ediliyor...' })
-                      const r = await testCashDeviceConnection({
-                        userName: currentUser.userName,
-                        deviceIp: ip,
-                        deviceUser: user,
-                        devicePassword: pass,
-                      })
-                      if (!r.ok) {
-                        setAdminStatus({ type: 'error', message: r.message || 'Cihaz bağlantı testi başarısız' })
-                        setCashDeviceTesting(false)
-                        return
-                      }
-                      setAdminStatus({ type: 'success', message: `Bağlantı başarılı (${Number(r.count ?? 0)} sayım bulundu)` })
-                      setCashDeviceTesting(false)
-                    }}
-                  >
-                    {cashDeviceTesting ? 'Test Ediliyor...' : 'Bağlantı Test Et'}
-                  </button>
-                  <button
-                    className="btn btn-primary"
-                    type="button"
-                    disabled={cashDeviceTesting || cashDeviceSaving}
-                    onClick={async () => {
-                      const depot = cashDeviceDepot.trim()
-                      const ip = cashDeviceIp.trim()
-                      const user = cashDeviceUser.trim()
-                      const pass = cashDevicePassword
-                      if (!depot || !ip || !user || !pass) {
-                        setAdminStatus({ type: 'error', message: 'Depo, IP, kullanıcı ve şifre zorunlu' })
-                        return
-                      }
-                      setCashDeviceSaving(true)
-                      setAdminStatus({ type: 'info', message: 'Depo cihaz ayarı kaydediliyor...' })
-                      const r = await saveCashDeviceSetting({
-                        userName: currentUser.userName,
-                        depotCode: depot,
-                        deviceIp: ip,
-                        deviceUser: user,
-                        devicePassword: pass,
-                      })
-                      if (!r.ok) {
-                        setAdminStatus({ type: 'error', message: r.message || 'Cihaz ayarı kaydedilemedi' })
-                        setCashDeviceSaving(false)
-                        return
-                      }
-                      const list = await fetchCashDeviceSettings({ userName: currentUser.userName })
-                      if (list.ok) setCashDeviceSettings(list.settings)
-                      setCashDevicePassword('')
-                      setAdminStatus({ type: 'success', message: 'Depo cihaz ayarı kaydedildi' })
-                      setCashDeviceSaving(false)
-                    }}
-                  >
-                    {cashDeviceSaving ? 'Kaydediliyor...' : 'Cihaz Ayarını Kaydet'}
-                  </button>
-                </div>
-                <div className="upload-box" style={{ gap: 10, alignItems: 'end' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 220 }}>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Kullanıcı Adı</label>
-                    <input value={newUserName} onChange={(e) => setNewUserName(e.target.value)} placeholder="kullanıcı adı" />
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 220 }}>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Şifre</label>
-                    <input value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)} placeholder="şifre" type="password" />
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 220 }}>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Yetki</label>
-                    <select
-                      value={newUserRoleCode}
-                      onChange={(e) => {
-                        const value = (e.target.value as RoleCode) || 'SHEF'
-                        setNewUserRoleCode(value)
-                        setNewUserPermissions(defaultPermissionsForRole(value))
-                      }}
-                    >
-                      <option value="ADMIN">Admin</option>
-                      <option value="PLAN_MUHASEBE">Planlama/Muhasebe</option>
-                      <option value="SHEF">Şef</option>
-                    </select>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 300 }}>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Ekran İzinleri</label>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(120px,1fr))', gap: 6 }}>
-                      <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
-                        <input type="checkbox" checked={newUserPermissions.canMain} onChange={(e) => updateCreatePermission('canMain', e.target.checked)} />
-                        Pozisyon
-                      </label>
-                      <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
-                        <input type="checkbox" checked={newUserPermissions.canMutabakat} onChange={(e) => updateCreatePermission('canMutabakat', e.target.checked)} />
-                        Mutabakat
-                      </label>
-                      <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
+              <div className="admin-layout">
+                <div className="admin-grid">
+                  <div className="admin-card">
+                    <div className="admin-card-header">
+                      <div>
+                        <div className="admin-card-title">Ayarlar</div>
+                        <div className="admin-card-subtitle">Mutabakat fark limiti ve kasa sayım cihazı ayarları.</div>
+                      </div>
+                    </div>
+
+                    <div className="admin-form-grid">
+                      <div className="admin-field">
+                        <label>Mutabakat Fark Limiti (TL)</label>
                         <input
-                          type="checkbox"
-                          checked={newUserPermissions.canBayiHavaleMatch}
-                          onChange={(e) => updateCreatePermission('canBayiHavaleMatch', e.target.checked)}
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={adminMutabakatDiffLimitInput}
+                          onChange={(e) => setAdminMutabakatDiffLimitInput(e.target.value)}
                         />
-                        Bayi Havale
-                      </label>
-                      <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
-                        <input
-                          type="checkbox"
-                          checked={newUserPermissions.canPositionRepresentative}
-                          onChange={(e) => updateCreatePermission('canPositionRepresentative', e.target.checked)}
-                        />
-                        Pozisyon-Temsilci
-                      </label>
+                      </div>
+                      <div className="admin-field admin-field-actions">
+                        <button
+                          className="btn btn-secondary"
+                          type="button"
+                          onClick={async () => {
+                            const value = parseTrDecimalInput(adminMutabakatDiffLimitInput)
+                            if (!Number.isFinite(value) || value < 0) {
+                              setAdminStatus({ type: 'error', message: 'Limit 0 veya daha büyük olmalı' })
+                              return
+                            }
+                            setAdminStatus({ type: 'info', message: 'Ayar kaydediliyor...' })
+                            const r = await updateMutabakatSettings({ userName: currentUser.userName, diffLimitTl: value })
+                            if (!r.ok || !r.settings) {
+                              setAdminStatus({ type: 'error', message: r.message || 'Ayar kaydedilemedi' })
+                              return
+                            }
+                            setMutabakatDiffLimitTl(r.settings.diffLimitTl)
+                            setAdminMutabakatDiffLimitInput(String(r.settings.diffLimitTl))
+                            setAdminStatus({ type: 'success', message: 'Mutabakat fark limiti güncellendi' })
+                          }}
+                        >
+                          Ayarı Kaydet
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="admin-divider" />
+
+                    <div className="admin-card-title small">Kasa Sayım Cihazı</div>
+                    <div className="admin-form-grid">
+                      <div className="admin-field">
+                        <label>Depo</label>
+                        <select value={cashDeviceDepot} onChange={(e) => setCashDeviceDepot(e.target.value)}>
+                          <option value="">Seçiniz</option>
+                          {allDepotOptions.map((d) => (
+                            <option key={d} value={d}>
+                              {depotLabel(d)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="admin-field">
+                        <label>Cihaz IP</label>
+                        <input value={cashDeviceIp} onChange={(e) => setCashDeviceIp(e.target.value)} placeholder="192.168.1.10" />
+                      </div>
+                      <div className="admin-field">
+                        <label>Cihaz Kullanıcı</label>
+                        <input value={cashDeviceUser} onChange={(e) => setCashDeviceUser(e.target.value)} placeholder="admin" />
+                      </div>
+                      <div className="admin-field">
+                        <label>Cihaz Şifre</label>
+                        <input type="password" value={cashDevicePassword} onChange={(e) => setCashDevicePassword(e.target.value)} placeholder="şifre" />
+                      </div>
+                      <div className="admin-field admin-field-actions">
+                        <div className="admin-actions-row">
+                          <button
+                            className="btn btn-secondary"
+                            type="button"
+                            disabled={cashDeviceTesting || cashDeviceSaving}
+                            onClick={async () => {
+                              const ip = cashDeviceIp.trim()
+                              const user = cashDeviceUser.trim()
+                              const pass = cashDevicePassword
+                              if (!ip || !user || !pass) {
+                                setAdminStatus({ type: 'error', message: 'Test için IP, kullanıcı ve şifre zorunlu' })
+                                return
+                              }
+                              setCashDeviceTesting(true)
+                              setAdminStatus({ type: 'info', message: 'Cihaz bağlantısı test ediliyor...' })
+                              const r = await testCashDeviceConnection({
+                                userName: currentUser.userName,
+                                deviceIp: ip,
+                                deviceUser: user,
+                                devicePassword: pass,
+                              })
+                              if (!r.ok) {
+                                setAdminStatus({ type: 'error', message: r.message || 'Cihaz bağlantı testi başarısız' })
+                                setCashDeviceTesting(false)
+                                return
+                              }
+                              setAdminStatus({ type: 'success', message: `Bağlantı başarılı (${Number(r.count ?? 0)} sayım bulundu)` })
+                              setCashDeviceTesting(false)
+                            }}
+                          >
+                            {cashDeviceTesting ? 'Test Ediliyor...' : 'Bağlantı Test Et'}
+                          </button>
+                          <button
+                            className="btn btn-primary"
+                            type="button"
+                            disabled={cashDeviceTesting || cashDeviceSaving}
+                            onClick={async () => {
+                              const depot = cashDeviceDepot.trim()
+                              const ip = cashDeviceIp.trim()
+                              const user = cashDeviceUser.trim()
+                              const pass = cashDevicePassword
+                              if (!depot || !ip || !user || !pass) {
+                                setAdminStatus({ type: 'error', message: 'Depo, IP, kullanıcı ve şifre zorunlu' })
+                                return
+                              }
+                              setCashDeviceSaving(true)
+                              setAdminStatus({ type: 'info', message: 'Depo cihaz ayarı kaydediliyor...' })
+                              const r = await saveCashDeviceSetting({
+                                userName: currentUser.userName,
+                                depotCode: depot,
+                                deviceIp: ip,
+                                deviceUser: user,
+                                devicePassword: pass,
+                              })
+                              if (!r.ok) {
+                                setAdminStatus({ type: 'error', message: r.message || 'Cihaz ayarı kaydedilemedi' })
+                                setCashDeviceSaving(false)
+                                return
+                              }
+                              const list = await fetchCashDeviceSettings({ userName: currentUser.userName })
+                              if (list.ok) setCashDeviceSettings(list.settings)
+                              setCashDevicePassword('')
+                              setAdminStatus({ type: 'success', message: 'Depo cihaz ayarı kaydedildi' })
+                              setCashDeviceSaving(false)
+                            }}
+                          >
+                            {cashDeviceSaving ? 'Kaydediliyor...' : 'Cihaz Ayarını Kaydet'}
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                  <button
-                    className="btn btn-primary"
-                    type="button"
-                    onClick={async () => {
-                      const u = newUserName.trim()
-                      const p = newUserPassword
-                      if (!u || !p) {
-                        setAdminStatus({ type: 'error', message: 'Kullanıcı adı ve şifre zorunlu' })
-                        return
-                      }
-                      setAdminStatus({ type: 'info', message: 'Kullanıcı oluşturuluyor...' })
-                      const r = await createUserAsAdmin({
-                        userName: currentUser.userName,
-                        newUserName: u,
-                        password: p,
-                        roleCode: newUserRoleCode,
-                        permissions: { ...newUserPermissions, canUserAdmin: newUserRoleCode === 'ADMIN' },
-                      })
-                      if (!r.ok) {
-                        setAdminStatus({ type: 'error', message: r.message || 'Kullanıcı oluşturulamadı' })
-                        return
-                      }
-                      setNewUserName('')
-                      setNewUserPassword('')
-                      setNewUserRoleCode('SHEF')
-                      setNewUserPermissions(defaultPermissionsForRole('SHEF'))
-                      const list = await fetchUsers({ userName: currentUser.userName })
-                      if (list.ok) setAdminUsers(list.users)
-                      setAdminStatus({ type: 'success', message: 'Kullanıcı oluşturuldu' })
-                    }}
-                  >
-                    Ekle
-                  </button>
+
+                  <div className="admin-card">
+                    <div className="admin-card-header">
+                      <div>
+                        <div className="admin-card-title">Kullanıcı Ekle</div>
+                        <div className="admin-card-subtitle">Rol ve ekran izinleriyle yeni kullanıcı oluşturun.</div>
+                      </div>
+                    </div>
+                    <div className="admin-form-grid">
+                      <div className="admin-field">
+                        <label>Kullanıcı Adı</label>
+                        <input value={newUserName} onChange={(e) => setNewUserName(e.target.value)} placeholder="kullanıcı adı" />
+                      </div>
+                      <div className="admin-field">
+                        <label>Şifre</label>
+                        <input value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)} placeholder="şifre" type="password" />
+                      </div>
+                      <div className="admin-field">
+                        <label>Yetki</label>
+                        <select
+                          value={newUserRoleCode}
+                          onChange={(e) => {
+                            const value = (e.target.value as RoleCode) || 'SHEF'
+                            setNewUserRoleCode(value)
+                            setNewUserPermissions(defaultPermissionsForRole(value))
+                          }}
+                        >
+                          <option value="ADMIN">Admin</option>
+                          <option value="PLAN_MUHASEBE">Planlama/Muhasebe</option>
+                          <option value="SHEF">Şef</option>
+                        </select>
+                      </div>
+                      <div className="admin-field admin-field-wide">
+                        <label>Ekran İzinleri</label>
+                        <div className="admin-check-grid">
+                          <label>
+                            <input type="checkbox" checked={newUserPermissions.canMain} onChange={(e) => updateCreatePermission('canMain', e.target.checked)} />
+                            Pozisyon
+                          </label>
+                          <label>
+                            <input type="checkbox" checked={newUserPermissions.canMutabakat} onChange={(e) => updateCreatePermission('canMutabakat', e.target.checked)} />
+                            Mutabakat
+                          </label>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={newUserPermissions.canBayiHavaleMatch}
+                              onChange={(e) => updateCreatePermission('canBayiHavaleMatch', e.target.checked)}
+                            />
+                            Bayi Havale
+                          </label>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={newUserPermissions.canPositionRepresentative}
+                              onChange={(e) => updateCreatePermission('canPositionRepresentative', e.target.checked)}
+                            />
+                            Pozisyon-Temsilci
+                          </label>
+                          <label className="admin-check-disabled">
+                            <input type="checkbox" checked={newUserRoleCode === 'ADMIN'} disabled />
+                            Kullanıcı Yönetimi
+                          </label>
+                        </div>
+                      </div>
+                      <div className="admin-field admin-field-actions">
+                        <button
+                          className="btn btn-primary"
+                          type="button"
+                          onClick={async () => {
+                            const u = newUserName.trim()
+                            const p = newUserPassword
+                            if (!u || !p) {
+                              setAdminStatus({ type: 'error', message: 'Kullanıcı adı ve şifre zorunlu' })
+                              return
+                            }
+                            setAdminStatus({ type: 'info', message: 'Kullanıcı oluşturuluyor...' })
+                            const r = await createUserAsAdmin({
+                              userName: currentUser.userName,
+                              newUserName: u,
+                              password: p,
+                              roleCode: newUserRoleCode,
+                              permissions: { ...newUserPermissions, canUserAdmin: newUserRoleCode === 'ADMIN' },
+                            })
+                            if (!r.ok) {
+                              setAdminStatus({ type: 'error', message: r.message || 'Kullanıcı oluşturulamadı' })
+                              return
+                            }
+                            setNewUserName('')
+                            setNewUserPassword('')
+                            setNewUserRoleCode('SHEF')
+                            setNewUserPermissions(defaultPermissionsForRole('SHEF'))
+                            const list = await fetchUsers({ userName: currentUser.userName })
+                            if (list.ok) setAdminUsers(list.users)
+                            setAdminStatus({ type: 'success', message: 'Kullanıcı oluşturuldu' })
+                          }}
+                        >
+                          Ekle
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
+
+                {adminStatus ? <div className={`admin-status upload-status ${adminStatus.type}`}>{adminStatus.message}</div> : null}
               </div>
 
               <div className="table-section">
                 <div className="table-header">
                   <span className="table-title">Kullanıcılar</span>
-                  <div className="actions"></div>
+                  <div className="actions">
+                    <span className="table-meta">
+                      {filteredAdminUsers.length}/{adminUsers.length}
+                    </span>
+                    <input
+                      type="search"
+                      className="table-search-input"
+                      value={adminUserSearch}
+                      onChange={(e) => setAdminUserSearch(e.target.value)}
+                      placeholder="Ara (kullanıcı/rol/izin)..."
+                    />
+                    {adminUserSearch.trim() ? (
+                      <button className="btn btn-secondary btn-icon" type="button" onClick={() => setAdminUserSearch('')} aria-label="Aramayı temizle">
+                        ×
+                      </button>
+                    ) : null}
+                    <button
+                      className="btn btn-secondary"
+                      type="button"
+                      onClick={async () => {
+                        if (!currentUser || !currentUser.isAdmin) return
+                        setAdminUsersLoading(true)
+                        setAdminStatus(null)
+                        const r = await fetchUsers({ userName: currentUser.userName })
+                        if (!r.ok) {
+                          setAdminStatus({ type: 'error', message: r.message || 'Kullanıcı listesi alınamadı' })
+                          setAdminUsers([])
+                          setAdminUsersLoading(false)
+                          return
+                        }
+                        setAdminUsers(r.users)
+                        setAdminUsersLoading(false)
+                      }}
+                    >
+                      Yenile
+                    </button>
+                  </div>
                 </div>
                 <div className="table-wrapper">
                   <table>
@@ -3460,27 +3552,51 @@ export default function App() {
                             Yükleniyor...
                           </td>
                         </tr>
-                      ) : adminUsers.length === 0 ? (
+                      ) : filteredAdminUsers.length === 0 ? (
                         <tr>
                           <td colSpan={6} style={{ textAlign: 'center', color: '#718096' }}>
                             Kayıt yok
                           </td>
                         </tr>
                       ) : (
-                        adminUsers.map((u) => (
+                        filteredAdminUsers.map((u) => (
                           <tr key={u.userName}>
                             <td>{u.userName}</td>
-                            <td>{roleLabel(u.roleCode)}</td>
-                            <td>{u.isActive ? 'Evet' : 'Hayır'}</td>
                             <td>
+                              <span
+                                className={`pill ${
+                                  u.roleCode === 'ADMIN' ? 'role-admin' : u.roleCode === 'PLAN_MUHASEBE' ? 'role-finance' : 'role-shef'
+                                }`}
+                              >
+                                {roleLabel(u.roleCode)}
+                              </span>
+                            </td>
+                            <td>
+                              <span className={`pill ${u.isActive ? 'pill-success' : 'pill-muted'}`}>{u.isActive ? 'Aktif' : 'Pasif'}</span>
+                            </td>
+                            <td>
+                              {(
+                                [
+                                  u.permissions.canMain ? 'Pozisyon' : null,
+                                  u.permissions.canMutabakat ? 'Mutabakat' : null,
+                                  u.permissions.canBayiHavaleMatch ? 'Bayi Havale' : null,
+                                  u.permissions.canPositionRepresentative ? 'Pozisyon-Temsilci' : null,
+                                  u.permissions.canUserAdmin ? 'Kullanıcı Yönetimi' : null,
+                                ].filter(Boolean) as string[]
+                              ).map((label) => (
+                                <span key={label} className="chip">
+                                  {label}
+                                </span>
+                              ))}
                               {[
-                                u.permissions.canMain ? 'Pozisyon' : null,
-                                u.permissions.canMutabakat ? 'Mutabakat' : null,
-                                u.permissions.canBayiHavaleMatch ? 'Bayi Havale' : null,
-                                u.permissions.canPositionRepresentative ? 'Pozisyon-Temsilci' : null,
-                              ]
-                                .filter(Boolean)
-                                .join(', ') || '-'}
+                                u.permissions.canMain,
+                                u.permissions.canMutabakat,
+                                u.permissions.canBayiHavaleMatch,
+                                u.permissions.canPositionRepresentative,
+                                u.permissions.canUserAdmin,
+                              ].some(Boolean)
+                                ? null
+                                : '-'}
                             </td>
                             <td>{u.createdAt ? formatDateTimeTr(u.createdAt) : '-'}</td>
                             <td>
@@ -3488,7 +3604,7 @@ export default function App() {
                                 Düzenle
                               </button>
                               <button
-                                className="btn btn-secondary"
+                                className="btn btn-danger"
                                 type="button"
                                 onClick={async () => {
                                   const ok = window.confirm(`${u.userName} kullanıcısı silinsin mi?`)
@@ -3516,15 +3632,17 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="table-section">
-                <div className="table-header">
-                  <span className="table-title">Veri Silme</span>
-                  <div className="actions"></div>
-                </div>
-                <div className="upload-section">
-                  <div className="upload-box" style={{ gap: 10, alignItems: 'end', flexWrap: 'wrap' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 180 }}>
-                      <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Tarih</label>
+              <div className="admin-grid">
+                <div className="admin-card admin-danger">
+                  <div className="admin-card-header">
+                    <div>
+                      <div className="admin-card-title">Tarih + Depo Sil</div>
+                      <div className="admin-card-subtitle">Seçilen tarih ve depodaki tüm import ve mutabakat verilerini kalıcı olarak siler.</div>
+                    </div>
+                  </div>
+                  <div className="admin-form-grid">
+                    <div className="admin-field">
+                      <label>Tarih</label>
                       <select value={adminDeleteDate} onChange={(e) => setAdminDeleteDate(e.target.value)}>
                         <option value="">Seçiniz</option>
                         {dateOptions.map((d) => (
@@ -3534,9 +3652,13 @@ export default function App() {
                         ))}
                       </select>
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 180 }}>
-                      <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Depo</label>
-                      <select value={adminDeleteDepot} disabled={!adminDeleteDate.trim() || adminDeleteDepotOptions.length === 0} onChange={(e) => setAdminDeleteDepot(e.target.value)}>
+                    <div className="admin-field">
+                      <label>Depo</label>
+                      <select
+                        value={adminDeleteDepot}
+                        disabled={!adminDeleteDate.trim() || adminDeleteDepotOptions.length === 0}
+                        onChange={(e) => setAdminDeleteDepot(e.target.value)}
+                      >
                         <option value="">Seçiniz</option>
                         {adminDeleteDepotOptions.map((d) => (
                           <option key={d} value={d}>
@@ -3545,73 +3667,92 @@ export default function App() {
                         ))}
                       </select>
                     </div>
-                    <button
-                      className="btn btn-secondary"
-                      type="button"
-                      onClick={async () => {
-                        if (!adminDeleteDate.trim() || !adminDeleteDepot.trim()) {
-                          setAdminStatus({ type: 'error', message: 'Tarih ve depo zorunlu' })
-                          return
-                        }
-                        const ok = window.confirm(`${formatDateTr(adminDeleteDate)} • ${depotLabel(adminDeleteDepot)} için tüm veriler silinsin mi?`)
-                        if (!ok) return
-                        setAdminStatus({ type: 'info', message: 'Siliniyor...' })
-                        const r = await deleteDataByDateDepot({
-                          userName: currentUser.userName,
-                          date: adminDeleteDate.trim(),
-                          depot: adminDeleteDepot.trim(),
-                        })
-                        if (!r.ok) {
-                          setAdminStatus({ type: 'error', message: r.message || 'Silinemedi' })
-                          return
-                        }
-                        const list = await fetchImportFiles({ userName: currentUser.userName })
-                        if (list.ok) setImportFiles(list.files)
-                        setSelectedPosition(null)
-                        setAdminStatus({ type: 'success', message: 'Silindi' })
-                      }}
-                    >
-                      Tarih + Depo Sil
-                    </button>
+                    <div className="admin-field admin-field-actions admin-field-wide">
+                      <div className="admin-actions-row">
+                        <button
+                          className="btn btn-danger"
+                          type="button"
+                          disabled={!adminDeleteDate.trim() || !adminDeleteDepot.trim()}
+                          onClick={async () => {
+                            if (!adminDeleteDate.trim() || !adminDeleteDepot.trim()) {
+                              setAdminStatus({ type: 'error', message: 'Tarih ve depo zorunlu' })
+                              return
+                            }
+                            const ok = window.confirm(`${formatDateTr(adminDeleteDate)} • ${depotLabel(adminDeleteDepot)} için tüm veriler silinsin mi?`)
+                            if (!ok) return
+                            setAdminStatus({ type: 'info', message: 'Siliniyor...' })
+                            const r = await deleteDataByDateDepot({
+                              userName: currentUser.userName,
+                              date: adminDeleteDate.trim(),
+                              depot: adminDeleteDepot.trim(),
+                            })
+                            if (!r.ok) {
+                              setAdminStatus({ type: 'error', message: r.message || 'Silinemedi' })
+                              return
+                            }
+                            const list = await fetchImportFiles({ userName: currentUser.userName })
+                            if (list.ok) setImportFiles(list.files)
+                            setSelectedPosition(null)
+                            setAdminStatus({ type: 'success', message: 'Silindi' })
+                          }}
+                        >
+                          Sil
+                        </button>
+                      </div>
+                    </div>
                   </div>
+                </div>
 
-                  <div className="upload-box" style={{ gap: 10, alignItems: 'end', flexWrap: 'wrap' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 420 }}>
-                      <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Yükleme (Dosya)</label>
+                <div className="admin-card admin-danger">
+                  <div className="admin-card-header">
+                    <div>
+                      <div className="admin-card-title">Yüklemeye Göre Sil</div>
+                      <div className="admin-card-subtitle">Seçilen import dosyasına bağlı tüm verileri kalıcı olarak siler.</div>
+                    </div>
+                  </div>
+                  <div className="admin-form-grid">
+                    <div className="admin-field admin-field-wide">
+                      <label>Yükleme (Dosya)</label>
                       <select value={adminDeleteFileName} onChange={(e) => setAdminDeleteFileName(e.target.value)}>
                         <option value="">Seçiniz</option>
                         {adminImportFileOptions.map((f) => (
                           <option key={f.fileName} value={f.fileName}>
-                            {(f.fileName ?? '').trim()} • {(f.importedAt ? formatDateTimeTr(f.importedAt) : '-')} • {(f.fileDate ? formatDateTr(f.fileDate) : '-')} • {(f.depotCode ? depotLabel(f.depotCode) : '-')}
+                            {(f.fileName ?? '').trim()} • {(f.importedAt ? formatDateTimeTr(f.importedAt) : '-')} • {(f.fileDate ? formatDateTr(f.fileDate) : '-')} •{' '}
+                            {(f.depotCode ? depotLabel(f.depotCode) : '-')}
                           </option>
                         ))}
                       </select>
                     </div>
-                    <button
-                      className="btn btn-secondary"
-                      type="button"
-                      onClick={async () => {
-                        const name = adminDeleteFileName.trim()
-                        if (!name) {
-                          setAdminStatus({ type: 'error', message: 'Dosya seçimi zorunlu' })
-                          return
-                        }
-                        const ok = window.confirm(`${name} için tüm veriler silinsin mi?`)
-                        if (!ok) return
-                        setAdminStatus({ type: 'info', message: 'Siliniyor...' })
-                        const r = await deleteDataByImportFile({ userName: currentUser.userName, fileName: name })
-                        if (!r.ok) {
-                          setAdminStatus({ type: 'error', message: r.message || 'Silinemedi' })
-                          return
-                        }
-                        const list = await fetchImportFiles({ userName: currentUser.userName })
-                        if (list.ok) setImportFiles(list.files)
-                        setSelectedPosition(null)
-                        setAdminStatus({ type: 'success', message: 'Silindi' })
-                      }}
-                    >
-                      Yüklemeye Göre Sil
-                    </button>
+                    <div className="admin-field admin-field-actions admin-field-wide">
+                      <div className="admin-actions-row">
+                        <button
+                          className="btn btn-danger"
+                          type="button"
+                          disabled={!adminDeleteFileName.trim()}
+                          onClick={async () => {
+                            const name = adminDeleteFileName.trim()
+                            if (!name) {
+                              setAdminStatus({ type: 'error', message: 'Dosya seçimi zorunlu' })
+                              return
+                            }
+                            const ok = window.confirm(`${name} için tüm veriler silinsin mi?`)
+                            if (!ok) return
+                            setAdminStatus({ type: 'info', message: 'Siliniyor...' })
+                            const r = await deleteDataByImportFile({ userName: currentUser.userName, fileName: name })
+                            if (!r.ok) {
+                              setAdminStatus({ type: 'error', message: r.message || 'Silinemedi' })
+                              return
+                            }
+                            const list = await fetchImportFiles({ userName: currentUser.userName })
+                            if (list.ok) setImportFiles(list.files)
+                            setSelectedPosition(null)
+                            setAdminStatus({ type: 'success', message: 'Silindi' })
+                          }}
+                        >
+                          Sil
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -3647,16 +3788,16 @@ export default function App() {
                     </div>
                     <div className="form-row">
                       <label>Ekran İzinleri</label>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(140px,1fr))', gap: 8 }}>
-                        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <div className="admin-check-grid">
+                        <label>
                           <input type="checkbox" checked={editPermissions.canMain} onChange={(e) => updateEditPermission('canMain', e.target.checked)} />
                           Pozisyon Hesabı
                         </label>
-                        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <label>
                           <input type="checkbox" checked={editPermissions.canMutabakat} onChange={(e) => updateEditPermission('canMutabakat', e.target.checked)} />
                           Mutabakat
                         </label>
-                        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <label>
                           <input
                             type="checkbox"
                             checked={editPermissions.canBayiHavaleMatch}
@@ -3664,13 +3805,17 @@ export default function App() {
                           />
                           Bayi Havale Eşleme
                         </label>
-                        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <label>
                           <input
                             type="checkbox"
                             checked={editPermissions.canPositionRepresentative}
                             onChange={(e) => updateEditPermission('canPositionRepresentative', e.target.checked)}
                           />
                           Pozisyon-Temsilci
+                        </label>
+                        <label className="admin-check-disabled">
+                          <input type="checkbox" checked={editRoleCode === 'ADMIN'} disabled />
+                          Kullanıcı Yönetimi
                         </label>
                       </div>
                     </div>
