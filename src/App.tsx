@@ -153,6 +153,28 @@ function normalizeMatchCode(value?: string) {
     .replace(/[^A-Z0-9]/g, '')
 }
 
+function normalizeTrTextForSearch(value?: string) {
+  const s = String(value ?? '').trim()
+  if (!s) return ''
+  return s
+    .toLocaleLowerCase('tr-TR')
+    .replace(/ı/g, 'i')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function trNameMatches(haystack: string, needle: string) {
+  const h = normalizeTrTextForSearch(haystack)
+  const n = normalizeTrTextForSearch(needle)
+  if (!h || !n) return false
+  const tokens = n.split(' ').filter(Boolean)
+  if (tokens.length === 0) return false
+  if (tokens.length === 1) return h.includes(tokens[0])
+  return tokens.every((t) => h.includes(t))
+}
+
 function ymdAddDays(ymd: string, deltaDays: number) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd ?? '').trim())
   if (!m) return ''
@@ -524,6 +546,7 @@ export default function App() {
   const [cashReceiptModalLoading, setCashReceiptModalLoading] = useState(false)
   const [cashReceiptModalSelectedIds, setCashReceiptModalSelectedIds] = useState<string[]>([])
   const [bankName, setBankName] = useState('')
+  const [bankNameTouched, setBankNameTouched] = useState(false)
   const [yatanTutar, setYatanTutar] = useState<number>(0)
   const [fieldErrors, setFieldErrors] = useState<{ bankName?: string; yatanTutar?: string; enteredTotal?: string }>({})
   const [manimDekontNo, setManimDekontNo] = useState('')
@@ -533,6 +556,8 @@ export default function App() {
   const [manimDekontCandidates, setManimDekontCandidates] = useState<ManimDekontCandidate[]>([])
   const [manimReceipts, setManimReceipts] = useState<ManimReceiptRow[]>([])
   const [manimReceiptSearch, setManimReceiptSearch] = useState('')
+  const [repReceiptMatches, setRepReceiptMatches] = useState<ManimReceiptRow[]>([])
+  const [repReceiptMatchLoading, setRepReceiptMatchLoading] = useState(false)
   const [mutabakatAdjustments, setMutabakatAdjustments] = useState<MutabakatAdjustment[]>([])
   const [mutabakatStep, setMutabakatStep] = useState<0 | 1 | 2 | 3>(0)
   const [mutabakatCorrectionsTab, setMutabakatCorrectionsTab] = useState<'faturalar' | 'tahsilatlar'>('faturalar')
@@ -1790,6 +1815,94 @@ export default function App() {
 
     return () => window.clearTimeout(handle)
   }, [currentUser, bankEnabled, mutabakatSaved?.status, bankName, selectedDataset.date, yatanTutar, manimDekontNo, autoDekontNo, cashEnabled, torbaTutari])
+
+  useEffect(() => {
+    if (!bankEnabled) {
+      setBankNameTouched(false)
+      setRepReceiptMatches([])
+      setRepReceiptMatchLoading(false)
+    }
+  }, [bankEnabled])
+
+  useEffect(() => {
+    if (!currentUser) return
+    if (!bankEnabled) {
+      setRepReceiptMatches([])
+      setRepReceiptMatchLoading(false)
+      return
+    }
+    if (mutabakatSaved?.status === 'COMPLETED') return
+    if (page !== 'mutabakat') return
+    if (mutabakatStep !== 0) return
+    const date = selectedDataset.date
+    if (!date || !selectedPosition) {
+      setRepReceiptMatches([])
+      setRepReceiptMatchLoading(false)
+      return
+    }
+    const repName = (selectedRepresentativeName || representativeByPositionCode.get(selectedPosition) || '').trim()
+    if (!repName) {
+      setRepReceiptMatches([])
+      setRepReceiptMatchLoading(false)
+      return
+    }
+
+    let alive = true
+    setRepReceiptMatchLoading(true)
+    const handle = window.setTimeout(() => {
+      fetchManimReceipts({ userName: currentUser.userName, date, allBanks: true, untilNow: true, limit: 5000 })
+        .then((r) => {
+          if (!alive) return
+          if (!r.ok) {
+            setRepReceiptMatches([])
+            setRepReceiptMatchLoading(false)
+            return
+          }
+          const list = (Array.isArray(r.receipts) ? r.receipts : []).filter((x) => isIncomingDirection(x.direction))
+          const matches = list.filter((x) => trNameMatches(`${x.explanation ?? ''} ${x.correspondentLabel ?? ''} ${x.correspondentCode ?? ''}`, repName))
+          matches.sort((a, b) => String(b.receiptDate ?? '').localeCompare(String(a.receiptDate ?? '')))
+          setRepReceiptMatches(matches.slice(0, 50))
+
+          const byBank = new Map<string, number>()
+          for (const m of matches) {
+            const label = (m.bankAccountLabel ?? '').trim()
+            if (!label) continue
+            const normalizedLabel = normalizeTrTextForSearch(label).replace(/\s+/g, '')
+            const best = [...BANKS]
+              .map((b) => ({ b, key: normalizeTrTextForSearch(b).replace(/\s+/g, '') }))
+              .filter((x) => x.key && normalizedLabel.includes(x.key))
+              .sort((x, y) => y.key.length - x.key.length)[0]?.b
+            if (!best) continue
+            byBank.set(best, (byBank.get(best) ?? 0) + 1)
+          }
+          const suggested = [...byBank.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? ''
+          if (suggested && !bankNameTouched && !bankName.trim()) setBankName(suggested)
+          setRepReceiptMatchLoading(false)
+        })
+        .catch(() => {
+          if (!alive) return
+          setRepReceiptMatches([])
+          setRepReceiptMatchLoading(false)
+        })
+    }, 350)
+
+    return () => {
+      alive = false
+      window.clearTimeout(handle)
+    }
+  }, [
+    currentUser,
+    bankEnabled,
+    bankName,
+    bankNameTouched,
+    mutabakatSaved?.status,
+    page,
+    mutabakatStep,
+    selectedDataset.date,
+    selectedPosition,
+    selectedRepresentativeName,
+    representativeByPositionCode,
+  ])
 
   useEffect(() => {
     if (!currentUser) return
@@ -4207,6 +4320,7 @@ export default function App() {
                               value={bankName}
                               onChange={(e) => {
                                 setBankName(e.target.value)
+                                setBankNameTouched(true)
                                 if (fieldErrors.bankName) setFieldErrors((prev) => ({ ...prev, bankName: undefined }))
                               }}
                               disabled={mutabakatSaved?.status === 'COMPLETED'}
@@ -4294,6 +4408,59 @@ export default function App() {
                             </div>
                           ) : null}
                         </div>
+                        <div className="mutabakat-section-title">Temsilciye Göre Bulunan Kayıtlar</div>
+                        <div className="mutabakat-hint">{selectedRepresentativeName ? `Temsilci: ${selectedRepresentativeName}` : 'Temsilci bilgisi bulunamadı'}</div>
+                        {repReceiptMatchLoading ? <div className="mutabakat-hint">Banka kayıtları taranıyor...</div> : null}
+                        {!repReceiptMatchLoading && repReceiptMatches.length === 0 ? <div className="mutabakat-hint">Eşleşen kayıt yok.</div> : null}
+                        {repReceiptMatches.length > 0 ? (
+                          <table className="mini-table" style={{ marginTop: 8 }}>
+                            <thead>
+                              <tr>
+                                <th>Tarih</th>
+                                <th>Dekont</th>
+                                <th>Tutar</th>
+                                <th>Hesap</th>
+                                <th>Açıklama</th>
+                                <th></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {repReceiptMatches.slice(0, 10).map((r) => (
+                                <tr key={`rep|${r.receiptNo}|${r.receiptDate}|${r.amount}`}>
+                                  <td>{formatDateTimeTr(r.receiptDate)}</td>
+                                  <td>{r.receiptNo}</td>
+                                  <td>{formatMoney(Number(r.amount) || 0)}</td>
+                                  <td>{(r.bankAccountLabel ?? '').trim() || '-'}</td>
+                                  <td>{(r.explanation ?? '').trim() || '-'}</td>
+                                  <td style={{ textAlign: 'right' }}>
+                                    <button
+                                      className="btn btn-secondary"
+                                      type="button"
+                                      disabled={mutabakatSaved?.status === 'COMPLETED'}
+                                      onClick={() => {
+                                        const label = (r.bankAccountLabel ?? '').trim()
+                                        const normalizedLabel = normalizeTrTextForSearch(label).replace(/\s+/g, '')
+                                        const best = [...BANKS]
+                                          .map((b) => ({ b, key: normalizeTrTextForSearch(b).replace(/\s+/g, '') }))
+                                          .filter((x) => x.key && normalizedLabel.includes(x.key))
+                                          .sort((x, y) => y.key.length - x.key.length)[0]?.b
+                                        if (best) setBankName(best)
+                                        setYatanTutar(Number(r.amount) || 0)
+                                        setManimDekontNo(String(r.receiptNo ?? '').trim())
+                                        setAutoDekontNo(String(r.receiptNo ?? '').trim())
+                                        setBankReceiptDateTime(String(r.receiptDate ?? '').trim())
+                                        setBankExplanation(String(r.explanation ?? '').trim())
+                                        setManimDekontCandidates([])
+                                      }}
+                                    >
+                                      Seç
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        ) : null}
                       </>
                     ) : null}
 
