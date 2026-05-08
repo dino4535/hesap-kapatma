@@ -2753,31 +2753,41 @@ export default function App() {
           <div className="app-container">
             {page === 'end-of-day-report' ? (
         <>
-          <div className="upload-section">
-            <div className="upload-box" style={{ gap: 10, alignItems: 'end', flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 180 }}>
-                <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Tarih</label>
-                <select value={endOfDayDate} onChange={(e) => setEndOfDayDate(e.target.value)}>
-                  <option value="">Tarih seçiniz</option>
-                  {dateOptions.map((d) => (
-                    <option key={d} value={d}>
-                      {formatDateTr(d)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 220 }}>
-                <label style={{ fontSize: 12, fontWeight: 700, color: '#4a5568' }}>Depo Filtresi</label>
-                <select value={endOfDayDepot} onChange={(e) => setEndOfDayDepot(e.target.value)} disabled={!endOfDayDate}>
-                  <option value="">Depo seçiniz</option>
-                  {endOfDayDepotOptions.map((d) => (
-                    <option key={d} value={d}>
-                      {depotLabel(d)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <button className="btn btn-secondary" type="button" onClick={() => setEndOfDayRefreshTick((x) => x + 1)} disabled={!endOfDayDate || !endOfDayDepot}>
+          <div className="filters">
+            <div className="filter-group">
+              <label>Tarih</label>
+              <select value={endOfDayDate} onChange={(e) => setEndOfDayDate(e.target.value)}>
+                <option value="">Tarih seçiniz</option>
+                {dateOptions.map((d) => (
+                  <option key={d} value={d}>
+                    {formatDateTr(d)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="filter-group" style={{ minWidth: 220 }}>
+              <label>Depo Filtresi</label>
+              <select value={endOfDayDepot} onChange={(e) => setEndOfDayDepot(e.target.value)} disabled={!endOfDayDate}>
+                <option value="">Depo seçiniz</option>
+                {endOfDayDepotOptions.map((d) => (
+                  <option key={d} value={d}>
+                    {depotLabel(d)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="filter-group">
+              <label>Durum</label>
+              <span className={`pill ${endOfDayLoading ? 'pill-muted' : 'pill-success'}`}>{endOfDayLoading ? 'Güncelleniyor' : 'Hazır'}</span>
+            </div>
+            <div className="filter-group">
+              <label>&nbsp;</label>
+              <button
+                className="btn btn-secondary"
+                type="button"
+                onClick={() => setEndOfDayRefreshTick((x) => x + 1)}
+                disabled={!endOfDayDate || !endOfDayDepot}
+              >
                 Yenile
               </button>
             </div>
@@ -2793,17 +2803,14 @@ export default function App() {
             <div className="empty-state">Rapor verisi bulunamadı.</div>
           ) : (
             <>
-              <div className="table-section">
-                <div className="table-header">
-                  <span className="table-title">Özet</span>
+              <div className="summary-cards">
+                <div className="card">
+                  <div className="card-title">Tamamlanan Mutabakat</div>
+                  <div className="card-code">{endOfDayReport.completedMutabakatCount}</div>
                 </div>
-                <div className="upload-box" style={{ gap: 20 }}>
-                  <div>
-                    <strong>Tamamlanan Mutabakat:</strong> {endOfDayReport.completedMutabakatCount}
-                  </div>
-                  <div>
-                    <strong>Toplam Yatan Tutar:</strong> {formatMoney(endOfDayReport.totalBankDeposit)}
-                  </div>
+                <div className="card total-card">
+                  <div className="card-title">Toplam Yatan Tutar</div>
+                  <div className="card-code">{formatMoney(endOfDayReport.totalBankDeposit)}</div>
                 </div>
               </div>
 
@@ -2831,8 +2838,8 @@ export default function App() {
                         endOfDayReport.bankTotals.map((x) => (
                           <tr key={x.bankName}>
                             <td>{x.bankName}</td>
-                            <td>{x.recordCount}</td>
-                            <td>{formatMoney(x.totalAmount)}</td>
+                            <td className="td-num">{x.recordCount}</td>
+                            <td className="td-num">{formatMoney(x.totalAmount)}</td>
                           </tr>
                         ))
                       )}
@@ -2875,14 +2882,14 @@ export default function App() {
                             <tr key={`${x.positionCode}|${x.representativeName}`}>
                               <td>{x.representativeName || '-'}</td>
                               <td>{x.positionCode || '-'}</td>
-                              <td>{Math.round((Number(x.denominationTotals['200'] ?? 0) || 0) / 200)}</td>
-                              <td>{Math.round((Number(x.denominationTotals['100'] ?? 0) || 0) / 100)}</td>
-                              <td>{Math.round((Number(x.denominationTotals['50'] ?? 0) || 0) / 50)}</td>
-                              <td>{Math.round((Number(x.denominationTotals['20'] ?? 0) || 0) / 20)}</td>
-                              <td>{Math.round((Number(x.denominationTotals['10'] ?? 0) || 0) / 10)}</td>
-                              <td>{Math.round((Number(x.denominationTotals['5'] ?? 0) || 0) / 5)}</td>
-                              <td>{formatMoney(x.denominationTotals['1'] ?? 0)}</td>
-                              <td>{formatMoney(x.totalCash)}</td>
+                              <td className="td-num">{Math.round((Number(x.denominationTotals['200'] ?? 0) || 0) / 200)}</td>
+                              <td className="td-num">{Math.round((Number(x.denominationTotals['100'] ?? 0) || 0) / 100)}</td>
+                              <td className="td-num">{Math.round((Number(x.denominationTotals['50'] ?? 0) || 0) / 50)}</td>
+                              <td className="td-num">{Math.round((Number(x.denominationTotals['20'] ?? 0) || 0) / 20)}</td>
+                              <td className="td-num">{Math.round((Number(x.denominationTotals['10'] ?? 0) || 0) / 10)}</td>
+                              <td className="td-num">{Math.round((Number(x.denominationTotals['5'] ?? 0) || 0) / 5)}</td>
+                              <td className="td-num">{formatMoney(x.denominationTotals['1'] ?? 0)}</td>
+                              <td className="td-num">{formatMoney(x.totalCash)}</td>
                             </tr>
                           ))
                       )}
@@ -2914,7 +2921,7 @@ export default function App() {
                         endOfDayReport.cashOverall.map((x) => (
                           <tr key={x.denomination}>
                             <td>{x.denomination === '1' ? 'Nikel' : `${x.denomination} TL`}</td>
-                            <td>{formatMoney(x.amount)}</td>
+                            <td className="td-num">{formatMoney(x.amount)}</td>
                           </tr>
                         ))
                       )}
@@ -2956,7 +2963,7 @@ export default function App() {
                             <td>{x.positionCode || '-'}</td>
                             <td>{x.type || '-'}</td>
                             <td>{x.description || '-'}</td>
-                            <td>{formatMoney(x.amount)}</td>
+                            <td className="td-num">{formatMoney(x.amount)}</td>
                           </tr>
                         ))
                       )}
