@@ -928,7 +928,7 @@ export default function App() {
       setCashReceiptModalReceipts([])
       return
     }
-    if (mutabakatStep !== 1) {
+    if (mutabakatStep !== 0) {
       setCashCountReceipts([])
       return
     }
@@ -3776,21 +3776,19 @@ export default function App() {
             <div className="flow">
               <div className="flow-steps">
                 <button className={`flow-step ${mutabakatStep === 0 ? 'active' : ''}`} type="button" onClick={() => setMutabakatStep(0)}>
-                  1. Düzeltmeler
+                  1. Ödeme
                 </button>
                 <button className={`flow-step ${mutabakatStep === 1 ? 'active' : ''}`} type="button" onClick={() => setMutabakatStep(1)}>
-                  2. Ödeme
+                  2. Düzeltmeler
                 </button>
                 <button
                   className={`flow-step ${mutabakatStep === 2 ? 'active' : ''}`}
                   type="button"
                   onClick={() => {
-                    if (mutabakatStep === 0) {
-                      setStatus({ type: 'info', message: 'Önce ödeme adımını tamamlayın' })
-                      setMutabakatStep(1)
+                    if (!validatePaymentInputs()) {
+                      if (mutabakatStep !== 0) setMutabakatStep(0)
                       return
                     }
-                    if (!validatePaymentInputs()) return
                     setMutabakatStep(2)
                   }}
                 >
@@ -3800,12 +3798,10 @@ export default function App() {
                   className={`flow-step ${mutabakatStep === 3 ? 'active' : ''}`}
                   type="button"
                   onClick={() => {
-                    if (mutabakatStep === 0) {
-                      setStatus({ type: 'info', message: 'Önce ödeme adımını tamamlayın' })
-                      setMutabakatStep(1)
+                    if (!validatePaymentInputs()) {
+                      if (mutabakatStep !== 0) setMutabakatStep(0)
                       return
                     }
-                    if (!validatePaymentInputs()) return
                     setMutabakatStep(3)
                   }}
                 >
@@ -3814,7 +3810,7 @@ export default function App() {
               </div>
 
               <div className="flow-body">
-                {mutabakatStep === 0 ? (
+                {mutabakatStep === 1 ? (
                   <div className="mutabakat">
                     <div className="mutabakat-section-title">Düzeltme Kayıtları</div>
                     <div className="mutabakat-actions">
@@ -3990,7 +3986,7 @@ export default function App() {
                       </table>
                     )}
                   </div>
-                ) : mutabakatStep === 1 ? (
+                ) : mutabakatStep === 0 ? (
                   <div className="mutabakat">
                     <div className="mutabakat-meta">
                       <div className="mutabakat-meta-row">
@@ -4626,7 +4622,7 @@ export default function App() {
                   className="btn btn-primary"
                   type="button"
                   onClick={() => {
-                    if (mutabakatStep === 1 && !validatePaymentInputs()) return
+                    if (mutabakatStep === 0 && !validatePaymentInputs()) return
                     setMutabakatStep((s) => (s === 3 ? 3 : ((s + 1) as 0 | 1 | 2 | 3)))
                   }}
                   disabled={mutabakatStep === 3}
