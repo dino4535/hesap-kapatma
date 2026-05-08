@@ -1468,9 +1468,12 @@ export default function App() {
       if (!Array.isArray(paymentAllocations[key]) || (paymentAllocations[key]?.length ?? 0) === 0) continue
       const before = derivePaymentAllocations(c)
       const after = getPaymentAllocations(key, c, paymentAllocations)
+      const cashTypes = new Set<PaymentType>(['NAKIT', 'VADETAH'])
       for (const move of diffAllocationTransfers(before, after)) {
-        if (move.from === 'VADETAHHAV' && move.to === 'VADETAH') totalEffect += move.amount
-        else if (move.from === 'VADETAH' && move.to === 'VADETAHHAV') totalEffect -= move.amount
+        const fromCash = cashTypes.has(move.from)
+        const toCash = cashTypes.has(move.to)
+        if (fromCash && !toCash) totalEffect -= move.amount
+        else if (!fromCash && toCash) totalEffect += move.amount
       }
     }
 
