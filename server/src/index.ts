@@ -3976,19 +3976,49 @@ async function fetchCariVadesiGelmisBakiyeleri(args: { asOfDateYmd: string; cari
   const dueBalanceCol = pickColumnName(colsUpper, [
     'VADESIGELMIS',
     'VADESI_GELMIS',
+    'VADESIGECMIS',
+    'VADESI_GECMIS',
+    'VADEGECMIS',
+    'VADE_GECMIS',
     'VADESIGELMISBORC',
     'VADESI_GELMIS_BORC',
+    'VADESIGECMISBORC',
+    'VADESI_GECMIS_BORC',
     'VADESIGELMISBAKIYE',
     'VADESI_GELMIS_BAKIYE',
+    'VADESIGECMISBAKIYE',
+    'VADESI_GECMIS_BAKIYE',
     'GECIKMISBORC',
     'GECIKMIS_BORC',
+    'GECIKMISBAKIYE',
+    'GECIKMIS_BAKIYE',
     'VGELMIS',
     'VGELMISBAKIYE',
   ])
 
   const dueDateCol = pickColumnName(colsUpper, ['VADETARIHI', 'VADE_TARIHI', 'VADETRH', 'VADE_TRH', 'VADE', 'VAD'])
-  const borcCol = pickColumnName(colsUpper, ['BORC', 'BORC_TUTAR', 'BORC_TUTARI', 'DEBIT', 'DB'])
-  const alacakCol = pickColumnName(colsUpper, ['ALACAK', 'ALACAK_TUTAR', 'ALACAK_TUTARI', 'CREDIT', 'CR'])
+  const borcCol = pickColumnName(colsUpper, [
+    'BORC',
+    'BORC_TUTAR',
+    'BORC_TUTARI',
+    'BORCTUTAR',
+    'BORCTUTARI',
+    'BORCTUT',
+    'BORC_TUT',
+    'DEBIT',
+    'DB',
+  ])
+  const alacakCol = pickColumnName(colsUpper, [
+    'ALACAK',
+    'ALACAK_TUTAR',
+    'ALACAK_TUTARI',
+    'ALACAKTUTAR',
+    'ALACAKTUTARI',
+    'ALACAKTUT',
+    'ALACAK_TUT',
+    'CREDIT',
+    'CR',
+  ])
 
   const req = pool.request()
   req.input('AsOf', mssql.Date, args.asOfDateYmd)
