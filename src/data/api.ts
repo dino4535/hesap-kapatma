@@ -420,7 +420,7 @@ export async function fetchCariBalances(args: {
   userName: string
   asOfDate: string
   codes: string[]
-  kind?: 'TOTAL' | 'DUE'
+  kind?: 'TOTAL' | 'OVERDUE' | 'NOT_DUE'
 }): Promise<{ ok: boolean; balances: Array<{ code: string; balance: number }>; message?: string }> {
   const res = await fetch('/api/cari-balances', {
     method: 'POST',

@@ -4077,6 +4077,122 @@ GROUP BY ${codeCol}
   return map
 }
 
+async function fetchCariVadesiGelmemisBakiyeleri(args: { asOfDateYmd: string; cariCodes: string[] }) {
+  const pool = await getCariPool()
+  const colsRes = await pool
+    .request()
+    .input('TableName', mssql.NVarChar(128), 'TBLCAHAR')
+    .query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @TableName`)
+  const colsUpper = new Set<string>((colsRes.recordset ?? []).map((r) => String((r as any).COLUMN_NAME ?? '').trim().toUpperCase()).filter(Boolean))
+
+  const codeCol = pickColumnName(colsUpper, ['CARKOD', 'CARIKOD', 'CARI_KOD', 'CARI_KODU', 'CHKODU', 'CH_KODU', 'CARI_CODE', 'CUST_CODE'])
+  const dateCol = pickColumnName(colsUpper, ['TARIH', 'TAR', 'ISLEM_TARIHI', 'ISLEMTARIHI', 'TARIHSAAT', 'TARIH_SAAT', 'DATE_', 'TRH'])
+  if (!codeCol || !dateCol) {
+    throw new Error('TBLCAHAR kolonları tespit edilemedi (cari kodu / tarih)')
+  }
+
+  const values = args.cariCodes
+    .map((x) => String(x ?? '').trim())
+    .filter((x) => !!x)
+    .slice(0, 800)
+  if (values.length === 0) return new Map<string, number>()
+
+  const notDueBalanceCol = pickColumnName(colsUpper, [
+    'VADESIGELMEMIS',
+    'VADESI_GELMEMIS',
+    'VADESIGELMEMISBORC',
+    'VADESI_GELMEMIS_BORC',
+    'VADESIGELMEMISBAKIYE',
+    'VADESI_GELMEMIS_BAKIYE',
+    'VADESIZBORC',
+    'VADESIZ_BORC',
+    'VGELMEMIS',
+    'VGELMEMISBAKIYE',
+    'VADESIGELMEMIS_TUTAR',
+    'VADESI_GELMEMIS_TUTAR',
+  ])
+
+  const dueDateCol = pickColumnName(colsUpper, ['VADETARIHI', 'VADE_TARIHI', 'VADETRH', 'VADE_TRH', 'VADE', 'VAD'])
+  const borcCol = pickColumnName(colsUpper, [
+    'BORC',
+    'BORC_TUTAR',
+    'BORC_TUTARI',
+    'BORCTUTAR',
+    'BORCTUTARI',
+    'BORCTUT',
+    'BORC_TUT',
+    'DEBIT',
+    'DB',
+  ])
+  const alacakCol = pickColumnName(colsUpper, [
+    'ALACAK',
+    'ALACAK_TUTAR',
+    'ALACAK_TUTARI',
+    'ALACAKTUTAR',
+    'ALACAKTUTARI',
+    'ALACAKTUT',
+    'ALACAK_TUT',
+    'CREDIT',
+    'CR',
+  ])
+
+  const req = pool.request()
+  req.input('AsOf', mssql.Date, args.asOfDateYmd)
+  const inParams: string[] = []
+  values.forEach((v, idx) => {
+    const name = `cnnd${idx}`
+    inParams.push(`@${name}`)
+    req.input(name, mssql.NVarChar(64), v)
+  })
+
+  let query: string
+  if (notDueBalanceCol) {
+    query = `
+;WITH base AS (
+  SELECT
+    CAST(${codeCol} AS NVARCHAR(64)) AS CariCode,
+    CAST(${notDueBalanceCol} AS DECIMAL(18, 2)) AS Balance,
+    ROW_NUMBER() OVER (PARTITION BY ${codeCol} ORDER BY ${dateCol} DESC) AS rn
+  FROM dbo.TBLCAHAR WITH (NOLOCK)
+  WHERE ${dateCol} <= @AsOf
+    AND ${codeCol} IN (${inParams.join(', ')})
+)
+SELECT CariCode AS code, Balance AS balance
+FROM base
+WHERE rn = 1
+`
+  } else if (dueDateCol && borcCol && alacakCol) {
+    query = `
+SELECT
+  CAST(${codeCol} AS NVARCHAR(64)) AS code,
+  CAST(
+    CASE
+      WHEN SUM(COALESCE(${borcCol}, 0) - COALESCE(${alacakCol}, 0)) > 0 THEN SUM(COALESCE(${borcCol}, 0) - COALESCE(${alacakCol}, 0))
+      ELSE 0
+    END
+  AS DECIMAL(18, 2)) AS balance
+FROM dbo.TBLCAHAR WITH (NOLOCK)
+WHERE ${dateCol} <= @AsOf
+  AND ${codeCol} IN (${inParams.join(', ')})
+  AND ${dueDateCol} IS NOT NULL
+  AND ${dueDateCol} > @AsOf
+GROUP BY ${codeCol}
+`
+  } else {
+    return await fetchCariBorcBakiyeleri(args)
+  }
+
+  const r = await req.query(query)
+  const map = new Map<string, number>()
+  for (const row of (r.recordset ?? []) as Array<{ code?: unknown; balance?: unknown }>) {
+    const code = String(row.code ?? '').trim()
+    if (!code) continue
+    const bal = Number(row.balance ?? 0) || 0
+    map.set(code, bal)
+  }
+  return map
+}
+
 async function fetchCariGunAlacakToplamlari(args: { dayYmd: string; cariCodes: string[] }) {
   const pool = await getCariPool()
   const colsRes = await pool
@@ -4197,7 +4313,7 @@ app.post('/api/cari-balances', async (req, res) => {
       .slice(0, 800)
 
     const kindRaw = String(req.body?.kind ?? '').trim().toUpperCase()
-    const kind = kindRaw === 'DUE' ? 'DUE' : 'TOTAL'
+    const kind = kindRaw === 'OVERDUE' ? 'OVERDUE' : kindRaw === 'NOT_DUE' ? 'NOT_DUE' : 'TOTAL'
 
     const pool = await getPool()
     await ensureSchema(pool)
@@ -4270,16 +4386,22 @@ GROUP BY c.customer_code
       }
     }
 
-    const map =
-      kind === 'DUE'
-        ? await fetchCariVadesiGelmisBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: codes })
-        : await fetchCariBorcBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: codes })
+    const totalMap = await fetchCariBorcBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: codes })
+    const notDueMap =
+      kind === 'OVERDUE' || kind === 'NOT_DUE'
+        ? await fetchCariVadesiGelmemisBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: codes })
+        : new Map<string, number>()
+
     const balances = codes.map((code) => {
-      const rawBase = Number(map.get(code) ?? 0) || 0
-      const base = kind === 'DUE' ? Math.abs(rawBase) : rawBase
       const dedHav = Number(vadeliHavaleTotals.get(code) ?? 0) || 0
       const dedVad = Number(vadeliTahsilatTotals.get(code) ?? 0) || 0
-      const next = Math.max(0, base - dedHav - dedVad)
+      const totalBase = Number(totalMap.get(code) ?? 0) || 0
+      const notDueBase = Number(notDueMap.get(code) ?? 0) || 0
+      const totalAfter = Math.max(0, totalBase - dedHav - dedVad)
+      const overdueAfter = Math.max(0, totalAfter - Math.max(0, notDueBase))
+      const notDueAfter = Math.max(0, totalAfter - overdueAfter)
+
+      const next = kind === 'OVERDUE' ? overdueAfter : kind === 'NOT_DUE' ? notDueAfter : totalAfter
       return { code, balance: next }
     })
     res.json({ ok: true, balances })

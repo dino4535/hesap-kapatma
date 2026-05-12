@@ -1475,7 +1475,7 @@ export default function App() {
     }
 
     setCariBalancesLoading(true)
-    fetchCariBalances({ userName: currentUser.userName, asOfDate: cariBalanceAsOfDate, codes, kind: 'DUE' })
+    fetchCariBalances({ userName: currentUser.userName, asOfDate: cariBalanceAsOfDate, codes, kind: 'OVERDUE' })
       .then((r) => {
         if (!r.ok) throw new Error(r.message || 'Cari bakiye alınamadı')
         const next: Record<string, number> = {}
@@ -2578,7 +2578,7 @@ export default function App() {
     <div class="section">
       <div class="section-title">Bayi Havale Eşleme (Sadece Eşleşmeyenler)</div>
       <table>
-        <thead><tr><th>Bayi Kodu</th><th>Bayi</th><th class="num">Havale</th><th class="num">Vadeli Ödeme Havaleleri</th><th class="num">Vadesi Gelmiş Borç</th><th class="num">Toplam</th><th class="num">Gelen Tutar Toplamı</th><th class="num">Fark</th><th class="nowrap">Durum</th></tr></thead>
+        <thead><tr><th>Bayi Kodu</th><th>Bayi</th><th class="num">Havale</th><th class="num">Vadeli Ödeme Havaleleri</th><th class="num">Vadesi Geçmiş Borç</th><th class="num">Toplam</th><th class="num">Gelen Tutar Toplamı</th><th class="num">Fark</th><th class="nowrap">Durum</th></tr></thead>
         <tbody>${havaleVadeliRowsHtml}</tbody>
       </table>
     </div>
@@ -4086,7 +4086,7 @@ export default function App() {
                         <th>Bayi Adı</th>
                         <th>Havale Faturaları</th>
                         <th>Vadeli Tahsilat Havaleleri</th>
-                        <th>Vadesi Gelmiş Borç</th>
+                        <th>Vadesi Geçmiş Borç</th>
                         <th>Toplam</th>
                         <th>Gelen Tutar Toplamı</th>
                         <th>Fark</th>
@@ -4814,7 +4814,7 @@ export default function App() {
                             <th>Bayi Adı</th>
                             <th>Havale Faturaları</th>
                             <th>Vadeli Tahsilat Havaleleri</th>
-                          <th>Vadesi Gelmiş Borç</th>
+                          <th>Vadesi Geçmiş Borç</th>
                             <th>Toplam</th>
                             <th>Gelen Tutar Toplamı</th>
                             <th>Fark</th>
