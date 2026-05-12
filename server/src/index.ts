@@ -4323,69 +4323,6 @@ app.post('/api/cari-balances', async (req, res) => {
       return
     }
 
-    const datasetDate = ymdAddDays(parsedAsOf.date, 1)
-    const vadeliHavaleTotals = new Map<string, number>()
-    const vadeliTahsilatTotals = new Map<string, number>()
-    if (datasetDate && codes.length > 0) {
-      const req2 = pool.request()
-      req2.input('DatasetDate', mssql.Date, datasetDate)
-      const inParams: string[] = []
-      codes.forEach((v, idx) => {
-        const name = `cc${idx}`
-        inParams.push(`@${name}`)
-        req2.input(name, mssql.NVarChar(30), v)
-      })
-      const r2 = await req2.query(`
-;WITH inv AS (
-  SELECT
-    c.customer_code AS code,
-    LEFT(RIGHT(c.invoice_code, 16), 7) + RIGHT(c.invoice_code, 8) AS invoice15,
-    SUM(COALESCE(c.amount, 0)) AS total
-  FROM dist2k.FACT_COLLECTION c WITH (NOLOCK)
-  WHERE c.source_file_date = @DatasetDate
-    AND c.customer_code IN (${inParams.join(', ')})
-    AND (
-      UPPER(LTRIM(RTRIM(ISNULL(c.paymentform_code, '')))) = 'VADETAHHAV'
-      OR LOWER(LTRIM(RTRIM(ISNULL(c.paymentform_desc, '')))) LIKE '%vadeli%havale%'
-    )
-    AND c.invoice_code IS NOT NULL AND LTRIM(RTRIM(c.invoice_code)) <> ''
-    AND LEN(c.invoice_code) >= 16
-  GROUP BY c.customer_code, LEFT(RIGHT(c.invoice_code, 16), 7) + RIGHT(c.invoice_code, 8)
-)
-SELECT
-  code,
-  CAST(SUM(COALESCE(total, 0)) AS DECIMAL(18, 2)) AS total
-FROM inv
-GROUP BY code
-`)
-      for (const row of (r2.recordset ?? []) as Array<{ code?: unknown; total?: unknown }>) {
-        const code = String(row.code ?? '').trim()
-        if (!code) continue
-        const total = Number(row.total ?? 0) || 0
-        if (total !== 0) vadeliHavaleTotals.set(code, total)
-      }
-
-      const r3 = await req2.query(`
-SELECT
-  c.customer_code AS code,
-  CAST(SUM(COALESCE(c.amount, 0)) AS DECIMAL(18, 2)) AS total
-FROM dist2k.FACT_COLLECTION c WITH (NOLOCK)
-WHERE c.source_file_date = @DatasetDate
-  AND c.customer_code IN (${inParams.join(', ')})
-  AND (
-    UPPER(LTRIM(RTRIM(ISNULL(c.paymentform_code, '')))) = 'VADETAH'
-    OR LOWER(LTRIM(RTRIM(ISNULL(c.paymentform_desc, '')))) = 'vadeli tahsilat'
-  )
-GROUP BY c.customer_code
-`)
-      for (const row of (r3.recordset ?? []) as Array<{ code?: unknown; total?: unknown }>) {
-        const code = String(row.code ?? '').trim()
-        if (!code) continue
-        const total = Number(row.total ?? 0) || 0
-        if (total !== 0) vadeliTahsilatTotals.set(code, total)
-      }
-    }
-
     const totalMap = await fetchCariBorcBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: codes })
     const notDueMap =
       kind === 'OVERDUE' || kind === 'NOT_DUE'
@@ -4393,15 +4330,10 @@ GROUP BY c.customer_code
         : new Map<string, number>()
 
     const balances = codes.map((code) => {
-      const dedHav = Number(vadeliHavaleTotals.get(code) ?? 0) || 0
-      const dedVad = Number(vadeliTahsilatTotals.get(code) ?? 0) || 0
-      const totalBase = Number(totalMap.get(code) ?? 0) || 0
-      const notDueBase = Number(notDueMap.get(code) ?? 0) || 0
-      const totalAfter = Math.max(0, totalBase - dedHav - dedVad)
-      const overdueAfter = Math.max(0, totalAfter - Math.max(0, notDueBase))
-      const notDueAfter = Math.max(0, totalAfter - overdueAfter)
-
-      const next = kind === 'OVERDUE' ? overdueAfter : kind === 'NOT_DUE' ? notDueAfter : totalAfter
+      const total = Math.max(0, Number(totalMap.get(code) ?? 0) || 0)
+      const notDue = Math.max(0, Number(notDueMap.get(code) ?? 0) || 0)
+      const overdue = Math.max(0, total - notDue)
+      const next = kind === 'OVERDUE' ? overdue : kind === 'NOT_DUE' ? notDue : total
       return { code, balance: next }
     })
     res.json({ ok: true, balances })

@@ -20,8 +20,6 @@ import {
   fetchPositionRepresentatives,
   fetchUsers,
   fetchCariBalances,
-  fetchCariDayCredits,
-  fetchCariCreditWindow,
   importSalesFiles,
   deletePositionRepresentative,
   saveMutabakat,
@@ -175,19 +173,6 @@ function trNameMatches(haystack: string, needle: string) {
   if (tokens.length === 0) return false
   if (tokens.length === 1) return h.includes(tokens[0])
   return tokens.every((t) => h.includes(t))
-}
-
-function ymdAddDays(ymd: string, deltaDays: number) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd ?? '').trim())
-  if (!m) return ''
-  const yyyy = Number(m[1])
-  const mm = Number(m[2])
-  const dd = Number(m[3])
-  if (!Number.isFinite(yyyy) || !Number.isFinite(mm) || !Number.isFinite(dd)) return ''
-  const d = new Date(Date.UTC(yyyy, mm - 1, dd))
-  if (Number.isNaN(d.getTime())) return ''
-  d.setUTCDate(d.getUTCDate() + deltaDays)
-  return d.toISOString().slice(0, 10)
 }
 
 function isIncomingDirection(value?: string) {
@@ -595,11 +580,10 @@ export default function App() {
   const [cashDevicePassword, setCashDevicePassword] = useState('')
   const [helpOpen, setHelpOpen] = useState(false)
   const [helpTab, setHelpTab] = useState<'genel' | 'mutabakat' | 'nakit' | 'rapor' | 'yonetim' | 'kisayollar'>('genel')
-  const [cariBalancesByMatchCode, setCariBalancesByMatchCode] = useState<Record<string, number>>({})
+  const [cariTotalBalancesByMatchCode, setCariTotalBalancesByMatchCode] = useState<Record<string, number>>({})
+  const [cariNotDueBalancesByMatchCode, setCariNotDueBalancesByMatchCode] = useState<Record<string, number>>({})
   const [cariBalancesLoading, setCariBalancesLoading] = useState(false)
   const [cariBalancesError, setCariBalancesError] = useState<string>('')
-  const [cariPrevDayCreditsByMatchCode, setCariPrevDayCreditsByMatchCode] = useState<Record<string, number>>({})
-  const [cariCreditWindowByMatchCode, setCariCreditWindowByMatchCode] = useState<Record<string, number>>({})
   const [cashDeviceTesting, setCashDeviceTesting] = useState(false)
   const [cashDeviceSaving, setCashDeviceSaving] = useState(false)
   const [mutabakatDiffLimitTl, setMutabakatDiffLimitTl] = useState(0.01)
@@ -1434,17 +1418,10 @@ export default function App() {
 
   const manimIncomingTodayByCorrespondentCode = useMemo(() => {
     if (!selectedDataset.date) return new Map<string, number>()
-    return buildIncomingByCorrespondentCode(manimBayiMatchReceipts, { onlyDay: selectedDataset.date })
+    return buildIncomingByCorrespondentCode(manimBayiMatchReceipts, { onlyDay: selectedDataset.date, excludeTransferred: true })
   }, [manimBayiMatchReceipts, selectedDataset.date])
 
-  const manimIncomingPrevByCorrespondentCode = useMemo(() => {
-    if (!selectedDataset.date) return new Map<string, number>()
-    const prev = ymdAddDays(selectedDataset.date, -1)
-    if (!prev) return new Map<string, number>()
-    return buildIncomingByCorrespondentCode(manimBayiMatchReceipts, { onlyDay: prev, excludeTransferred: true })
-  }, [manimBayiMatchReceipts, selectedDataset.date])
-
-  const cariBalanceAsOfDate = useMemo(() => (selectedDataset.date ? ymdAddDays(selectedDataset.date, -1) : ''), [selectedDataset.date])
+  const cariBalanceAsOfDate = useMemo(() => (selectedDataset.date ? selectedDataset.date : ''), [selectedDataset.date])
   const cariBalanceCodesKey = useMemo(() => {
     const uniq = new Set<string>()
     for (const r of havaleVadeliByBayiRows) {
@@ -1456,13 +1433,15 @@ export default function App() {
 
   useEffect(() => {
     if (!currentUser) {
-      setCariBalancesByMatchCode({})
+      setCariTotalBalancesByMatchCode({})
+      setCariNotDueBalancesByMatchCode({})
       setCariBalancesLoading(false)
       setCariBalancesError('')
       return
     }
     if (!cariBalanceAsOfDate) {
-      setCariBalancesByMatchCode({})
+      setCariTotalBalancesByMatchCode({})
+      setCariNotDueBalancesByMatchCode({})
       setCariBalancesLoading(false)
       setCariBalancesError('')
       return
@@ -1472,7 +1451,8 @@ export default function App() {
 
     const codes = cariBalanceCodesKey ? cariBalanceCodesKey.split('|').filter(Boolean) : []
     if (codes.length === 0) {
-      setCariBalancesByMatchCode({})
+      setCariTotalBalancesByMatchCode({})
+      setCariNotDueBalancesByMatchCode({})
       setCariBalancesLoading(false)
       setCariBalancesError('')
       return
@@ -1480,125 +1460,53 @@ export default function App() {
 
     setCariBalancesLoading(true)
     setCariBalancesError('')
-    fetchCariBalances({ userName: currentUser.userName, asOfDate: cariBalanceAsOfDate, codes, kind: 'OVERDUE' })
-      .then((r) => {
-        if (!r.ok) throw new Error(r.message || 'Cari bakiye alınamadı')
-        const next: Record<string, number> = {}
-        for (const row of r.balances ?? []) {
+    Promise.all([
+      fetchCariBalances({ userName: currentUser.userName, asOfDate: cariBalanceAsOfDate, codes, kind: 'TOTAL' }),
+      fetchCariBalances({ userName: currentUser.userName, asOfDate: cariBalanceAsOfDate, codes, kind: 'NOT_DUE' }),
+    ])
+      .then(([totalResp, notDueResp]) => {
+        if (!totalResp.ok) throw new Error(totalResp.message || 'Cari toplam borç alınamadı')
+        if (!notDueResp.ok) throw new Error(notDueResp.message || 'Cari vadesi gelmemiş tutar alınamadı')
+
+        const totalNext: Record<string, number> = {}
+        for (const row of totalResp.balances ?? []) {
           const key = normalizeMatchCode(row.code)
           if (!key) continue
-          next[key] = Number(row.balance) || 0
+          totalNext[key] = Number(row.balance) || 0
         }
-        setCariBalancesByMatchCode(next)
+        const notDueNext: Record<string, number> = {}
+        for (const row of notDueResp.balances ?? []) {
+          const key = normalizeMatchCode(row.code)
+          if (!key) continue
+          notDueNext[key] = Number(row.balance) || 0
+        }
+        setCariTotalBalancesByMatchCode(totalNext)
+        setCariNotDueBalancesByMatchCode(notDueNext)
       })
       .catch((e) => {
         const msg = e instanceof Error ? e.message : 'Cari bakiye alınamadı'
         setCariBalancesError(msg)
-        setCariBalancesByMatchCode({})
+        setCariTotalBalancesByMatchCode({})
+        setCariNotDueBalancesByMatchCode({})
       })
       .finally(() => setCariBalancesLoading(false))
   }, [currentUser, cariBalanceAsOfDate, cariBalanceCodesKey, page, mutabakatStep])
-
-  useEffect(() => {
-    if (!currentUser) {
-      setCariPrevDayCreditsByMatchCode({})
-      return
-    }
-    if (!cariBalanceAsOfDate) {
-      setCariPrevDayCreditsByMatchCode({})
-      return
-    }
-    const shouldFetch = page === 'bayi-havale-match'
-    if (!shouldFetch) return
-
-    const codes = cariBalanceCodesKey ? cariBalanceCodesKey.split('|').filter(Boolean) : []
-    if (codes.length === 0) {
-      setCariPrevDayCreditsByMatchCode({})
-      return
-    }
-
-    fetchCariDayCredits({ userName: currentUser.userName, day: cariBalanceAsOfDate, codes })
-      .then((r) => {
-        if (!r.ok) throw new Error(r.message || 'Netsis alacak toplamları alınamadı')
-        const next: Record<string, number> = {}
-        for (const row of r.credits ?? []) {
-          const key = normalizeMatchCode(row.code)
-          if (!key) continue
-          next[key] = Number(row.total) || 0
-        }
-        setCariPrevDayCreditsByMatchCode(next)
-      })
-      .catch(() => {
-        setCariPrevDayCreditsByMatchCode({})
-      })
-  }, [currentUser, cariBalanceAsOfDate, cariBalanceCodesKey, page])
-
-  useEffect(() => {
-    if (!currentUser) {
-      setCariCreditWindowByMatchCode({})
-      return
-    }
-    if (!cariBalanceAsOfDate) {
-      setCariCreditWindowByMatchCode({})
-      return
-    }
-    const shouldFetch = page === 'bayi-havale-match'
-    if (!shouldFetch) return
-
-    const codes = cariBalanceCodesKey ? cariBalanceCodesKey.split('|').filter(Boolean) : []
-    if (codes.length === 0) {
-      setCariCreditWindowByMatchCode({})
-      return
-    }
-
-    const start = ymdAddDays(cariBalanceAsOfDate, -30) || cariBalanceAsOfDate
-    fetchCariCreditWindow({ userName: currentUser.userName, start, end: cariBalanceAsOfDate, codes })
-      .then((r) => {
-        if (!r.ok) throw new Error(r.message || 'Netsis alacak toplamları alınamadı')
-        const next: Record<string, number> = {}
-        for (const row of r.credits ?? []) {
-          const key = normalizeMatchCode(row.code)
-          if (!key) continue
-          next[key] = Number(row.total) || 0
-        }
-        setCariCreditWindowByMatchCode(next)
-      })
-      .catch(() => setCariCreditWindowByMatchCode({}))
-  }, [currentUser, cariBalanceAsOfDate, cariBalanceCodesKey, page])
 
   const bayiHavaleEslemeRows = useMemo(() => {
     return havaleVadeliByBayiRows.map((r) => {
       const matchCode = normalizeMatchCode(r.bayiKodu)
       const gelenBugun = manimIncomingTodayByCorrespondentCode.get(matchCode) ?? 0
-      const gelenOncekiRaw = manimIncomingPrevByCorrespondentCode.get(matchCode) ?? 0
-      const netsisPrevAlacak = Number(cariPrevDayCreditsByMatchCode[matchCode] ?? 0) || 0
-      const prevPosted = (Number(gelenOncekiRaw) || 0) > 0.01 && netsisPrevAlacak >= (Number(gelenOncekiRaw) || 0) - 1
-      const gelenOnceki = prevPosted ? 0 : gelenOncekiRaw
-      const cariBorcBakiyesi = Number(cariBalancesByMatchCode[matchCode] ?? 0) || 0
-      const toplam = (Number(r.toplam) || 0) + cariBorcBakiyesi
-      const diffToday = (Number(gelenBugun) || 0) - toplam
-      let gelenTutarToplami =
-        Math.abs(diffToday) < 0.01 ? Number(gelenBugun) || 0 : diffToday > 0.01 ? Number(gelenBugun) || 0 : (Number(gelenBugun) || 0) + (Number(gelenOnceki) || 0)
-      let fark = (Number(gelenTutarToplami) || 0) - toplam
-      const netsisWindowAlacak = Number(cariCreditWindowByMatchCode[matchCode] ?? 0) || 0
-      const missing = Math.max(0, toplam - (Number(gelenTutarToplami) || 0))
-      const postedInWindow = cariBorcBakiyesi < 0.01 && missing > 0.01 && netsisWindowAlacak >= missing - 1
-      if (postedInWindow) {
-        gelenTutarToplami = toplam
-        fark = 0
-      }
+      const totalBorc = Number(cariTotalBalancesByMatchCode[matchCode] ?? 0) || 0
+      const notDue = Math.max(0, Number(cariNotDueBalancesByMatchCode[matchCode] ?? 0) || 0)
+      const netToplamBorc = Math.max(0, (Number(totalBorc) || 0) - (Number(r.vadeli) || 0) - notDue)
+      const toplam = (Number(r.toplam) || 0) + netToplamBorc
+      const gelenTutarToplami = Number(gelenBugun) || 0
+      const fark = (Number(gelenTutarToplami) || 0) - toplam
       const eslesti = Math.abs(fark) < 0.01
-      const durum = postedInWindow ? 'Netsis’te işlenmiş' : eslesti ? 'Tam eşleşti' : fark < 0 ? 'Eksik ödeme' : 'Fazla ödeme'
-      return { ...r, cariBorcBakiyesi, toplam, gelenTutarToplami, fark, eslesti, durum }
+      const durum = eslesti ? 'Tam eşleşti' : fark < 0 ? 'Eksik ödeme' : 'Fazla ödeme'
+      return { ...r, cariBorcBakiyesi: netToplamBorc, toplam, gelenTutarToplami, fark, eslesti, durum }
     })
-  }, [
-    havaleVadeliByBayiRows,
-    manimIncomingTodayByCorrespondentCode,
-    manimIncomingPrevByCorrespondentCode,
-    cariBalancesByMatchCode,
-    cariPrevDayCreditsByMatchCode,
-    cariCreditWindowByMatchCode,
-  ])
+  }, [havaleVadeliByBayiRows, manimIncomingTodayByCorrespondentCode, cariTotalBalancesByMatchCode, cariNotDueBalancesByMatchCode])
 
   const bayiEslemeBeklenenToplam = useMemo(() => bayiHavaleEslemeRows.reduce((s, r) => s + (Number(r.toplam) || 0), 0), [bayiHavaleEslemeRows])
   const bayiEslemeGelenToplam = useMemo(() => bayiHavaleEslemeRows.reduce((s, r) => s + (Number(r.gelenTutarToplami) || 0), 0), [bayiHavaleEslemeRows])
@@ -2068,7 +1976,7 @@ export default function App() {
     let alive = true
     setManimBayiMatchLoading(true)
     setManimBayiMatchReceipts([])
-    fetchManimReceipts({ userName: currentUser.userName, date, includePreviousDay: true, allBanks: true, untilNow: true, limit: 5000 })
+    fetchManimReceipts({ userName: currentUser.userName, date, allBanks: true, untilNow: true, limit: 5000 })
       .then((r) => {
         if (!alive) return
         if (!r.ok) {
@@ -2274,7 +2182,6 @@ export default function App() {
     const receiptsResp = await fetchManimReceipts({
       userName: currentUser.userName,
       date: rec.sourceFileDate,
-      includePreviousDay: true,
       allBanks: true,
       untilNow: true,
       limit: 5000,
@@ -2284,10 +2191,8 @@ export default function App() {
       return
     }
     const printReceipts = Array.isArray(receiptsResp.receipts) ? receiptsResp.receipts : []
-    const incomingTodayByCorrespondentForPrint = rec.sourceFileDate ? buildIncomingByCorrespondentCode(printReceipts, { onlyDay: rec.sourceFileDate }) : new Map<string, number>()
-    const prevPrintDay = rec.sourceFileDate ? ymdAddDays(rec.sourceFileDate, -1) : ''
-    const incomingPrevByCorrespondentForPrint = prevPrintDay
-      ? buildIncomingByCorrespondentCode(printReceipts, { onlyDay: prevPrintDay, excludeTransferred: true })
+    const incomingTodayByCorrespondentForPrint = rec.sourceFileDate
+      ? buildIncomingByCorrespondentCode(printReceipts, { onlyDay: rec.sourceFileDate, excludeTransferred: true })
       : new Map<string, number>()
 
     const completedAt = formatDateTimeTr(rec.completedAt || rec.updatedAt)
@@ -2337,19 +2242,56 @@ export default function App() {
         return a.bayiKodu.localeCompare(b.bayiKodu, 'tr', { sensitivity: 'base' })
       })
 
+    const cariCodesForPrint = Array.from(
+      new Set(
+        havaleVadeliRows
+          .map((r) => String(r.bayiKodu ?? '').trim())
+          .filter((x) => !!x),
+      ),
+    ).slice(0, 800)
+    const [totalResp, notDueResp] =
+      cariCodesForPrint.length === 0
+        ? [
+            { ok: true, balances: [] as Array<{ code: string; balance: number }> },
+            { ok: true, balances: [] as Array<{ code: string; balance: number }> },
+          ]
+        : await Promise.all([
+            fetchCariBalances({ userName: currentUser.userName, asOfDate: rec.sourceFileDate, codes: cariCodesForPrint, kind: 'TOTAL' }),
+            fetchCariBalances({ userName: currentUser.userName, asOfDate: rec.sourceFileDate, codes: cariCodesForPrint, kind: 'NOT_DUE' }),
+          ])
+    if (!totalResp.ok) {
+      setStatus({ type: 'error', message: totalResp.message || 'PDF için Netsis toplam borç alınamadı' })
+      return
+    }
+    if (!notDueResp.ok) {
+      setStatus({ type: 'error', message: notDueResp.message || 'PDF için Netsis vadesi gelmemiş tutar alınamadı' })
+      return
+    }
+    const netsisTotalByMatchCode = new Map<string, number>()
+    for (const row of totalResp.balances ?? []) {
+      const key = normalizeMatchCode(row.code)
+      if (!key) continue
+      netsisTotalByMatchCode.set(key, Number(row.balance) || 0)
+    }
+    const netsisNotDueByMatchCode = new Map<string, number>()
+    for (const row of notDueResp.balances ?? []) {
+      const key = normalizeMatchCode(row.code)
+      if (!key) continue
+      netsisNotDueByMatchCode.set(key, Number(row.balance) || 0)
+    }
+
     const havaleEslemeRows = havaleVadeliRows.map((r) => {
       const matchCode = normalizeMatchCode(r.bayiKodu)
       const gelenBugun = incomingTodayByCorrespondentForPrint.get(matchCode) ?? 0
-      const gelenOnceki = incomingPrevByCorrespondentForPrint.get(matchCode) ?? 0
-      const cariBorcBakiyesi = Number(cariBalancesByMatchCode[matchCode] ?? 0) || 0
-      const toplam = (Number(r.toplam) || 0) + cariBorcBakiyesi
-      const diffToday = (Number(gelenBugun) || 0) - toplam
-      const gelenTutarToplami =
-        Math.abs(diffToday) < 0.01 ? Number(gelenBugun) || 0 : diffToday > 0.01 ? Number(gelenBugun) || 0 : (Number(gelenBugun) || 0) + (Number(gelenOnceki) || 0)
+      const totalBorc = Number(netsisTotalByMatchCode.get(matchCode) ?? 0) || 0
+      const notDue = Math.max(0, Number(netsisNotDueByMatchCode.get(matchCode) ?? 0) || 0)
+      const netToplamBorc = Math.max(0, (Number(totalBorc) || 0) - (Number(r.vadeli) || 0) - notDue)
+      const toplam = (Number(r.toplam) || 0) + netToplamBorc
+      const gelenTutarToplami = Number(gelenBugun) || 0
       const fark = (Number(gelenTutarToplami) || 0) - toplam
       const eslesti = Math.abs(fark) < 0.01
       const durum = eslesti ? 'Tam eşleşti' : fark < 0 ? 'Eksik ödeme' : 'Fazla ödeme'
-      return { ...r, cariBorcBakiyesi, toplam, gelenTutarToplami, fark, eslesti, durum }
+      return { ...r, cariBorcBakiyesi: netToplamBorc, toplam, gelenTutarToplami, fark, eslesti, durum }
     })
     const havaleEslesmeyenRows = havaleEslemeRows.filter((r) => !r.eslesti && (Number(r.fark) || 0) < -0.01)
 
@@ -2585,7 +2527,7 @@ export default function App() {
     <div class="section">
       <div class="section-title">Bayi Havale Eşleme (Sadece Eşleşmeyenler)</div>
       <table>
-        <thead><tr><th>Bayi Kodu</th><th>Bayi</th><th class="num">Havale</th><th class="num">Vadeli Ödeme Havaleleri</th><th class="num">Vadesi Geçmiş Borç</th><th class="num">Toplam</th><th class="num">Gelen Tutar Toplamı</th><th class="num">Fark</th><th class="nowrap">Durum</th></tr></thead>
+        <thead><tr><th>Bayi Kodu</th><th>Bayi</th><th class="num">Havale</th><th class="num">Vadeli Tahsilat Havaleleri</th><th class="num">Toplam Borç</th><th class="num">Toplam</th><th class="num">Gelen Tutar Toplamı</th><th class="num">Fark</th><th class="nowrap">Durum</th></tr></thead>
         <tbody>${havaleVadeliRowsHtml}</tbody>
       </table>
     </div>
@@ -4060,8 +4002,8 @@ export default function App() {
                     <div className="mutabakat-value">{selectedDataset.date ? formatDateTr(selectedDataset.date) : '-'}</div>
                   </div>
                   <div className="mutabakat-meta-row">
-                    <div className="mutabakat-label">Manim Tarih Aralığı</div>
-                    <div className="mutabakat-value">{selectedDataset.date ? `${formatDateTr(selectedDataset.date)} ve bir önceki gün` : '-'}</div>
+                    <div className="mutabakat-label">Manim Tarihi</div>
+                    <div className="mutabakat-value">{selectedDataset.date ? `${formatDateTr(selectedDataset.date)}` : '-'}</div>
                   </div>
                   <div className="mutabakat-meta-row">
                     <div className="mutabakat-label">Cari Bakiye Tarihi</div>
@@ -4095,7 +4037,7 @@ export default function App() {
                         <th>Bayi Adı</th>
                         <th>Havale Faturaları</th>
                         <th>Vadeli Tahsilat Havaleleri</th>
-                        <th>Vadesi Geçmiş Borç</th>
+                        <th>Toplam Borç</th>
                         <th>Toplam</th>
                         <th>Gelen Tutar Toplamı</th>
                         <th>Fark</th>
@@ -4790,8 +4732,8 @@ export default function App() {
                         <div className="mutabakat-value">{selectedDataset.date ? formatDateTr(selectedDataset.date) : '-'}</div>
                       </div>
                       <div className="mutabakat-meta-row">
-                        <div className="mutabakat-label">Manim Tarih Aralığı</div>
-                        <div className="mutabakat-value">{selectedDataset.date ? `${formatDateTr(selectedDataset.date)} ve bir önceki gün` : '-'}</div>
+                        <div className="mutabakat-label">Manim Tarihi</div>
+                        <div className="mutabakat-value">{selectedDataset.date ? `${formatDateTr(selectedDataset.date)}` : '-'}</div>
                       </div>
                       <div className="mutabakat-meta-row">
                         <div className="mutabakat-label">Cari Bakiye Tarihi</div>
@@ -4825,7 +4767,7 @@ export default function App() {
                             <th>Bayi Adı</th>
                             <th>Havale Faturaları</th>
                             <th>Vadeli Tahsilat Havaleleri</th>
-                          <th>Vadesi Geçmiş Borç</th>
+                          <th>Toplam Borç</th>
                             <th>Toplam</th>
                             <th>Gelen Tutar Toplamı</th>
                             <th>Fark</th>
