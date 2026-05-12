@@ -2301,7 +2301,7 @@ export default function App() {
       const durum = eslesti ? 'Tam eşleşti' : fark < 0 ? 'Eksik ödeme' : 'Fazla ödeme'
       return { ...r, cariBorcBakiyesi, toplam, gelenTutarToplami, fark, eslesti, durum }
     })
-    const havaleEslesmeyenRows = havaleEslemeRows.filter((r) => !r.eslesti)
+    const havaleEslesmeyenRows = havaleEslemeRows.filter((r) => !r.eslesti && (Number(r.fark) || 0) < -0.01)
 
     const havaleVadeliRowsHtml =
       havaleEslesmeyenRows.length === 0

@@ -4195,7 +4195,8 @@ GROUP BY c.customer_code
         ? await fetchCariVadesiGelmisBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: codes })
         : await fetchCariBorcBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: codes })
     const balances = codes.map((code) => {
-      const base = Number(map.get(code) ?? 0) || 0
+      const rawBase = Number(map.get(code) ?? 0) || 0
+      const base = kind === 'DUE' ? Math.abs(rawBase) : rawBase
       const dedHav = Number(vadeliHavaleTotals.get(code) ?? 0) || 0
       const dedVad = Number(vadeliTahsilatTotals.get(code) ?? 0) || 0
       const next = Math.max(0, base - dedHav - dedVad)
