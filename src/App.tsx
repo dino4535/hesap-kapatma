@@ -1498,7 +1498,8 @@ export default function App() {
       const gelenBugun = manimIncomingTodayByCorrespondentCode.get(matchCode) ?? 0
       const totalBorc = Number(cariTotalBalancesByMatchCode[matchCode] ?? 0) || 0
       const notDue = Math.max(0, Number(cariNotDueBalancesByMatchCode[matchCode] ?? 0) || 0)
-      const netToplamBorc = Math.max(0, (Number(totalBorc) || 0) - (Number(r.vadeli) || 0) - notDue)
+      const netToplamBorc =
+        totalBorc < 0 ? totalBorc : (Number(totalBorc) || 0) - (Number(r.vadeli) || 0) - notDue
       const toplam = (Number(r.toplam) || 0) + netToplamBorc
       const gelenTutarToplami = Number(gelenBugun) || 0
       const fark = (Number(gelenTutarToplami) || 0) - toplam
@@ -2285,7 +2286,8 @@ export default function App() {
       const gelenBugun = incomingTodayByCorrespondentForPrint.get(matchCode) ?? 0
       const totalBorc = Number(netsisTotalByMatchCode.get(matchCode) ?? 0) || 0
       const notDue = Math.max(0, Number(netsisNotDueByMatchCode.get(matchCode) ?? 0) || 0)
-      const netToplamBorc = Math.max(0, (Number(totalBorc) || 0) - (Number(r.vadeli) || 0) - notDue)
+      const netToplamBorc =
+        totalBorc < 0 ? totalBorc : (Number(totalBorc) || 0) - (Number(r.vadeli) || 0) - notDue
       const toplam = (Number(r.toplam) || 0) + netToplamBorc
       const gelenTutarToplami = Number(gelenBugun) || 0
       const fark = (Number(gelenTutarToplami) || 0) - toplam

@@ -1067,7 +1067,7 @@ WHERE rn = 1
     query = `
 SELECT
   CAST(${codeCol} AS NVARCHAR(64)) AS code,
-  CAST(CASE WHEN SUM(COALESCE(${borcCol}, 0) - COALESCE(${alacakCol}, 0)) > 0 THEN SUM(COALESCE(${borcCol}, 0) - COALESCE(${alacakCol}, 0)) ELSE 0 END AS DECIMAL(18, 2)) AS balance
+  CAST(SUM(COALESCE(${borcCol}, 0) - COALESCE(${alacakCol}, 0)) AS DECIMAL(18, 2)) AS balance
 FROM dbo.TBLCAHAR WITH (NOLOCK)
 WHERE ${dateCol} <= @AsOf
   AND ${codeCol} IN (${inParams.join(', ')})
@@ -4330,10 +4330,11 @@ app.post('/api/cari-balances', async (req, res) => {
         : new Map<string, number>()
 
     const balances = codes.map((code) => {
-      const total = Math.max(0, Number(totalMap.get(code) ?? 0) || 0)
+      const totalRaw = Number(totalMap.get(code) ?? 0) || 0
+      const totalForOverdue = Math.max(0, totalRaw)
       const notDue = Math.max(0, Number(notDueMap.get(code) ?? 0) || 0)
-      const overdue = Math.max(0, total - notDue)
-      const next = kind === 'OVERDUE' ? overdue : kind === 'NOT_DUE' ? notDue : total
+      const overdue = Math.max(0, totalForOverdue - notDue)
+      const next = kind === 'OVERDUE' ? overdue : kind === 'NOT_DUE' ? notDue : totalRaw
       return { code, balance: next }
     })
     res.json({ ok: true, balances })
