@@ -261,12 +261,17 @@ function manimIstanbulDayKey(value?: string) {
   }
 }
 
-function buildIncomingByCorrespondentCode(receipts: ManimReceiptRow[], onlyDay?: string) {
+function buildIncomingByCorrespondentCode(receipts: ManimReceiptRow[], options?: { onlyDay?: string; excludeTransferred?: boolean }) {
   const totals = new Map<string, number>()
-  const dayKey = String(onlyDay ?? '').trim()
+  const dayKey = String(options?.onlyDay ?? '').trim()
+  const excludeTransferred = Boolean(options?.excludeTransferred)
   for (const r of receipts) {
     if (!isIncomingDirection(r.direction)) continue
     if (dayKey && manimIstanbulDayKey(r.receiptDate) !== dayKey) continue
+    if (excludeTransferred) {
+      const st = String((r as any).receiptStatusCode ?? '').trim().toUpperCase()
+      if (st === 'TRANSFERRED' || st === 'AKTARILDI' || st === 'AKTARILDI ' || st.includes('TRANSFER')) continue
+    }
     const code = normalizeMatchCode(r.correspondentCode)
     if (!code) continue
     totals.set(code, (totals.get(code) ?? 0) + (Number(r.amount) || 0))
@@ -1424,14 +1429,14 @@ export default function App() {
 
   const manimIncomingTodayByCorrespondentCode = useMemo(() => {
     if (!selectedDataset.date) return new Map<string, number>()
-    return buildIncomingByCorrespondentCode(manimBayiMatchReceipts, selectedDataset.date)
+    return buildIncomingByCorrespondentCode(manimBayiMatchReceipts, { onlyDay: selectedDataset.date })
   }, [manimBayiMatchReceipts, selectedDataset.date])
 
   const manimIncomingPrevByCorrespondentCode = useMemo(() => {
     if (!selectedDataset.date) return new Map<string, number>()
     const prev = ymdAddDays(selectedDataset.date, -1)
     if (!prev) return new Map<string, number>()
-    return buildIncomingByCorrespondentCode(manimBayiMatchReceipts, prev)
+    return buildIncomingByCorrespondentCode(manimBayiMatchReceipts, { onlyDay: prev, excludeTransferred: true })
   }, [manimBayiMatchReceipts, selectedDataset.date])
 
   const cariBalanceAsOfDate = useMemo(() => (selectedDataset.date ? ymdAddDays(selectedDataset.date, -1) : ''), [selectedDataset.date])
@@ -1466,7 +1471,7 @@ export default function App() {
     }
 
     setCariBalancesLoading(true)
-    fetchCariBalances({ userName: currentUser.userName, asOfDate: cariBalanceAsOfDate, codes })
+    fetchCariBalances({ userName: currentUser.userName, asOfDate: cariBalanceAsOfDate, codes, kind: 'NOT_DUE' })
       .then((r) => {
         if (!r.ok) throw new Error(r.message || 'Cari bakiye alınamadı')
         const next: Record<string, number> = {}
@@ -2184,9 +2189,11 @@ export default function App() {
       return
     }
     const printReceipts = Array.isArray(receiptsResp.receipts) ? receiptsResp.receipts : []
-    const incomingTodayByCorrespondentForPrint = rec.sourceFileDate ? buildIncomingByCorrespondentCode(printReceipts, rec.sourceFileDate) : new Map<string, number>()
+    const incomingTodayByCorrespondentForPrint = rec.sourceFileDate ? buildIncomingByCorrespondentCode(printReceipts, { onlyDay: rec.sourceFileDate }) : new Map<string, number>()
     const prevPrintDay = rec.sourceFileDate ? ymdAddDays(rec.sourceFileDate, -1) : ''
-    const incomingPrevByCorrespondentForPrint = prevPrintDay ? buildIncomingByCorrespondentCode(printReceipts, prevPrintDay) : new Map<string, number>()
+    const incomingPrevByCorrespondentForPrint = prevPrintDay
+      ? buildIncomingByCorrespondentCode(printReceipts, { onlyDay: prevPrintDay, excludeTransferred: true })
+      : new Map<string, number>()
 
     const completedAt = formatDateTimeTr(rec.completedAt || rec.updatedAt)
     const completedBy = (rec.completedBy || rec.updatedBy || currentUser?.userName || '').trim() || '-'
@@ -2483,7 +2490,7 @@ export default function App() {
     <div class="section">
       <div class="section-title">Bayi Havale Eşleme (Sadece Eşleşmeyenler)</div>
       <table>
-        <thead><tr><th>Bayi Kodu</th><th>Bayi</th><th class="num">Havale</th><th class="num">Vadeli Ödeme Havaleleri</th><th class="num">Cari Borç Bakiyesi</th><th class="num">Toplam</th><th class="num">Gelen Tutar Toplamı</th><th class="num">Fark</th><th class="nowrap">Durum</th></tr></thead>
+        <thead><tr><th>Bayi Kodu</th><th>Bayi</th><th class="num">Havale</th><th class="num">Vadeli Ödeme Havaleleri</th><th class="num">Vadesi Gelmemiş</th><th class="num">Toplam</th><th class="num">Gelen Tutar Toplamı</th><th class="num">Fark</th><th class="nowrap">Durum</th></tr></thead>
         <tbody>${havaleVadeliRowsHtml}</tbody>
       </table>
     </div>
@@ -3991,7 +3998,7 @@ export default function App() {
                         <th>Bayi Adı</th>
                         <th>Havale Faturaları</th>
                         <th>Vadeli Tahsilat Havaleleri</th>
-                        <th>Cari Borç Bakiyesi</th>
+                        <th>Vadesi Gelmemiş</th>
                         <th>Toplam</th>
                         <th>Gelen Tutar Toplamı</th>
                         <th>Fark</th>
@@ -4719,7 +4726,7 @@ export default function App() {
                             <th>Bayi Adı</th>
                             <th>Havale Faturaları</th>
                             <th>Vadeli Tahsilat Havaleleri</th>
-                            <th>Cari Borç Bakiyesi</th>
+                          <th>Vadesi Gelmemiş</th>
                             <th>Toplam</th>
                             <th>Gelen Tutar Toplamı</th>
                             <th>Fark</th>

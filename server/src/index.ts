@@ -527,6 +527,7 @@ type ManimReceiptCandidate = {
   correspondentLabel?: string
   bankAccountId?: string
   bankAccountLabel?: string
+  receiptStatusCode?: string
 }
 
 function manimIsoDay(d: Date) {
@@ -571,6 +572,7 @@ async function loadManimReceipts(accountId: string): Promise<ManimReceiptCandida
         const amount = typeof obj?.receiptAmount === 'number' ? obj.receiptAmount : toNumberFlexible(obj?.receiptAmount) ?? 0
         const direction = typeof obj?.direction === 'string' ? obj.direction : undefined
         const explanation = typeof obj?.explanation === 'string' ? obj.explanation : undefined
+        const receiptStatusCode = String(obj?.receiptStatus?.code ?? '').trim() || undefined
         const correspondentCode =
           String(
             obj?.correspondentCode ??
@@ -588,6 +590,7 @@ async function loadManimReceipts(accountId: string): Promise<ManimReceiptCandida
           amount,
           ...(direction ? { direction } : {}),
           ...(explanation ? { explanation } : {}),
+          ...(receiptStatusCode ? { receiptStatusCode } : {}),
           ...(correspondentCode ? { correspondentCode } : {}),
           ...(correspondentLabel ? { correspondentLabel } : {}),
           ...(bankAccountId ? { bankAccountId } : {}),
@@ -3941,6 +3944,7 @@ app.get('/api/manim/receipts', async (req, res) => {
         correspondentLabel: x.correspondentLabel,
         bankAccountId: x.bankAccountId,
         bankAccountLabel: x.bankAccountLabel,
+        receiptStatusCode: (x as any).receiptStatusCode,
       })),
     })
   } catch (e) {
@@ -3948,6 +3952,100 @@ app.get('/api/manim/receipts', async (req, res) => {
     res.status(500).send(msg)
   }
 })
+
+async function fetchCariVadesiGelmemisBakiyeleri(args: { asOfDateYmd: string; cariCodes: string[] }) {
+  const pool = await getCariPool()
+  const colsRes = await pool
+    .request()
+    .input('TableName', mssql.NVarChar(128), 'TBLCAHAR')
+    .query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @TableName`)
+  const colsUpper = new Set<string>((colsRes.recordset ?? []).map((r) => String((r as any).COLUMN_NAME ?? '').trim().toUpperCase()).filter(Boolean))
+
+  const codeCol = pickColumnName(colsUpper, ['CARKOD', 'CARIKOD', 'CARI_KOD', 'CARI_KODU', 'CHKODU', 'CH_KODU', 'CARI_CODE', 'CUST_CODE'])
+  const dateCol = pickColumnName(colsUpper, ['TARIH', 'TAR', 'ISLEM_TARIHI', 'ISLEMTARIHI', 'TARIHSAAT', 'TARIH_SAAT', 'DATE_', 'TRH'])
+  if (!codeCol || !dateCol) {
+    throw new Error('TBLCAHAR kolonları tespit edilemedi (cari kodu / tarih)')
+  }
+
+  const values = args.cariCodes
+    .map((x) => String(x ?? '').trim())
+    .filter((x) => !!x)
+    .slice(0, 800)
+  if (values.length === 0) return new Map<string, number>()
+
+  const notDueBalanceCol = pickColumnName(colsUpper, [
+    'VADESIGELMEMIS',
+    'VADESI_GELMEMIS',
+    'VADESIGELMEMISBORC',
+    'VADESI_GELMEMIS_BORC',
+    'VADESIGELMEMISBAKIYE',
+    'VADESI_GELMEMIS_BAKIYE',
+    'VADESIZBORC',
+    'VADESIZ_BORC',
+    'VGELMEMIS',
+    'VGELMEMISBAKIYE',
+  ])
+
+  const dueDateCol = pickColumnName(colsUpper, ['VADETARIHI', 'VADE_TARIHI', 'VADETRH', 'VADE_TRH', 'VADE', 'VAD'])
+  const borcCol = pickColumnName(colsUpper, ['BORC', 'BORC_TUTAR', 'BORC_TUTARI', 'DEBIT', 'DB'])
+  const alacakCol = pickColumnName(colsUpper, ['ALACAK', 'ALACAK_TUTAR', 'ALACAK_TUTARI', 'CREDIT', 'CR'])
+
+  const req = pool.request()
+  req.input('AsOf', mssql.Date, args.asOfDateYmd)
+  const inParams: string[] = []
+  values.forEach((v, idx) => {
+    const name = `cnd${idx}`
+    inParams.push(`@${name}`)
+    req.input(name, mssql.NVarChar(64), v)
+  })
+
+  let query: string
+  if (notDueBalanceCol) {
+    query = `
+;WITH base AS (
+  SELECT
+    CAST(${codeCol} AS NVARCHAR(64)) AS CariCode,
+    CAST(${notDueBalanceCol} AS DECIMAL(18, 2)) AS Balance,
+    ROW_NUMBER() OVER (PARTITION BY ${codeCol} ORDER BY ${dateCol} DESC) AS rn
+  FROM dbo.TBLCAHAR WITH (NOLOCK)
+  WHERE ${dateCol} <= @AsOf
+    AND ${codeCol} IN (${inParams.join(', ')})
+)
+SELECT CariCode AS code, Balance AS balance
+FROM base
+WHERE rn = 1
+`
+  } else if (dueDateCol && borcCol && alacakCol) {
+    query = `
+SELECT
+  CAST(${codeCol} AS NVARCHAR(64)) AS code,
+  CAST(
+    CASE
+      WHEN SUM(COALESCE(${borcCol}, 0) - COALESCE(${alacakCol}, 0)) > 0 THEN SUM(COALESCE(${borcCol}, 0) - COALESCE(${alacakCol}, 0))
+      ELSE 0
+    END
+  AS DECIMAL(18, 2)) AS balance
+FROM dbo.TBLCAHAR WITH (NOLOCK)
+WHERE ${dateCol} <= @AsOf
+  AND ${codeCol} IN (${inParams.join(', ')})
+  AND ${dueDateCol} IS NOT NULL
+  AND ${dueDateCol} > @AsOf
+GROUP BY ${codeCol}
+`
+  } else {
+    return await fetchCariBorcBakiyeleri(args)
+  }
+
+  const r = await req.query(query)
+  const map = new Map<string, number>()
+  for (const row of (r.recordset ?? []) as Array<{ code?: unknown; balance?: unknown }>) {
+    const code = String(row.code ?? '').trim()
+    if (!code) continue
+    const bal = Number(row.balance ?? 0) || 0
+    map.set(code, bal)
+  }
+  return map
+}
 
 app.post('/api/cari-balances', async (req, res) => {
   try {
@@ -3968,6 +4066,9 @@ app.post('/api/cari-balances', async (req, res) => {
       .map((x) => String(x ?? '').trim())
       .filter((x) => !!x)
       .slice(0, 800)
+
+    const kindRaw = String(req.body?.kind ?? '').trim().toUpperCase()
+    const kind = kindRaw === 'NOT_DUE' ? 'NOT_DUE' : 'TOTAL'
 
     const pool = await getPool()
     await ensureSchema(pool)
@@ -4040,7 +4141,10 @@ GROUP BY c.customer_code
       }
     }
 
-    const map = await fetchCariBorcBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: codes })
+    const map =
+      kind === 'NOT_DUE'
+        ? await fetchCariVadesiGelmemisBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: codes })
+        : await fetchCariBorcBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: codes })
     const balances = codes.map((code) => {
       const base = Number(map.get(code) ?? 0) || 0
       const dedHav = Number(vadeliHavaleTotals.get(code) ?? 0) || 0

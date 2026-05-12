@@ -420,11 +420,12 @@ export async function fetchCariBalances(args: {
   userName: string
   asOfDate: string
   codes: string[]
+  kind?: 'TOTAL' | 'NOT_DUE'
 }): Promise<{ ok: boolean; balances: Array<{ code: string; balance: number }>; message?: string }> {
   const res = await fetch('/api/cari-balances', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-user': args.userName },
-    body: JSON.stringify({ asOfDate: args.asOfDate, codes: args.codes }),
+    body: JSON.stringify({ asOfDate: args.asOfDate, codes: args.codes, kind: args.kind ?? 'TOTAL' }),
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
@@ -751,6 +752,7 @@ export interface ManimReceiptRow {
   correspondentLabel?: string
   bankAccountId?: string
   bankAccountLabel?: string
+  receiptStatusCode?: string
 }
 
 export async function fetchManimReceipts(args: {
