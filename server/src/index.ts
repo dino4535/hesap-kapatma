@@ -858,6 +858,8 @@ type ManimReceiptRaw = {
   receiptAmount?: unknown
   direction?: unknown
   explanation?: unknown
+  receiptStatus?: unknown
+  receiptStatusCode?: unknown
   correspondent?: unknown
   correspondentCode?: unknown
   bankAccount?: unknown
@@ -895,6 +897,14 @@ async function loadManimReceiptsRemote(args: {
       const amount = typeof obj?.receiptAmount === 'number' ? (obj.receiptAmount as number) : toNumberFlexible(obj?.receiptAmount) ?? 0
       const direction = typeof obj?.direction === 'string' ? obj.direction : undefined
       const explanation = typeof obj?.explanation === 'string' ? obj.explanation : undefined
+      const receiptStatusCode =
+        String(
+          (obj as any)?.receiptStatusCode ??
+            (typeof (obj as any)?.receiptStatus === 'object' && (obj as any)?.receiptStatus
+              ? (obj as any)?.receiptStatus?.code
+              : '') ??
+            '',
+        ).trim() || undefined
       const correspondentObj = typeof obj?.correspondent === 'object' && obj?.correspondent ? (obj.correspondent as Record<string, unknown>) : null
       const correspondentCode =
         String(
@@ -911,6 +921,7 @@ async function loadManimReceiptsRemote(args: {
         amount,
         ...(direction ? { direction } : {}),
         ...(explanation ? { explanation } : {}),
+        ...(receiptStatusCode ? { receiptStatusCode } : {}),
         ...(correspondentCode ? { correspondentCode } : {}),
         ...(correspondentLabel ? { correspondentLabel } : {}),
         bankAccountId: args.accountId,
