@@ -1416,10 +1416,26 @@ export default function App() {
       })
   }, [havaleInvoicesByBayi, vadeliTahsilatHavaleleriByBayi])
 
-  const manimIncomingTodayByCorrespondentCode = useMemo(() => {
+  const manimIncomingAllTodayByCorrespondentCode = useMemo(() => {
+    if (!selectedDataset.date) return new Map<string, number>()
+    return buildIncomingByCorrespondentCode(manimBayiMatchReceipts, { onlyDay: selectedDataset.date })
+  }, [manimBayiMatchReceipts, selectedDataset.date])
+
+  const manimIncomingNotTransferredTodayByCorrespondentCode = useMemo(() => {
     if (!selectedDataset.date) return new Map<string, number>()
     return buildIncomingByCorrespondentCode(manimBayiMatchReceipts, { onlyDay: selectedDataset.date, excludeTransferred: true })
   }, [manimBayiMatchReceipts, selectedDataset.date])
+
+  const manimIncomingTransferredTodayByCorrespondentCode = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const [code, total] of manimIncomingAllTodayByCorrespondentCode.entries()) {
+      const nonTransferred = manimIncomingNotTransferredTodayByCorrespondentCode.get(code) ?? 0
+      const transferred = (Number(total) || 0) - (Number(nonTransferred) || 0)
+      if (Math.abs(transferred) < 0.0001) continue
+      map.set(code, transferred)
+    }
+    return map
+  }, [manimIncomingAllTodayByCorrespondentCode, manimIncomingNotTransferredTodayByCorrespondentCode])
 
   const cariBalanceAsOfDate = useMemo(() => (selectedDataset.date ? selectedDataset.date : ''), [selectedDataset.date])
   const cariBalanceCodesKey = useMemo(() => {
@@ -1495,19 +1511,27 @@ export default function App() {
   const bayiHavaleEslemeRows = useMemo(() => {
     return havaleVadeliByBayiRows.map((r) => {
       const matchCode = normalizeMatchCode(r.bayiKodu)
-      const gelenBugun = manimIncomingTodayByCorrespondentCode.get(matchCode) ?? 0
+      const gelenBugun = manimIncomingAllTodayByCorrespondentCode.get(matchCode) ?? 0
+      const gelenBugunAktarildi = Math.max(0, manimIncomingTransferredTodayByCorrespondentCode.get(matchCode) ?? 0)
       const totalBorc = Number(cariTotalBalancesByMatchCode[matchCode] ?? 0) || 0
       const notDue = Math.max(0, Number(cariNotDueBalancesByMatchCode[matchCode] ?? 0) || 0)
       const netToplamBorc =
         totalBorc < 0 ? totalBorc : (Number(totalBorc) || 0) - (Number(r.vadeli) || 0) - notDue
-      const toplam = (Number(r.toplam) || 0) + netToplamBorc
+      const cariBorcBakiyesi = netToplamBorc + gelenBugunAktarildi
+      const toplam = (Number(r.toplam) || 0) + cariBorcBakiyesi
       const gelenTutarToplami = Number(gelenBugun) || 0
       const fark = (Number(gelenTutarToplami) || 0) - toplam
       const eslesti = Math.abs(fark) < 0.01
       const durum = eslesti ? 'Tam eşleşti' : fark < 0 ? 'Eksik ödeme' : 'Fazla ödeme'
-      return { ...r, cariBorcBakiyesi: netToplamBorc, toplam, gelenTutarToplami, fark, eslesti, durum }
+      return { ...r, cariBorcBakiyesi, toplam, gelenTutarToplami, fark, eslesti, durum }
     })
-  }, [havaleVadeliByBayiRows, manimIncomingTodayByCorrespondentCode, cariTotalBalancesByMatchCode, cariNotDueBalancesByMatchCode])
+  }, [
+    havaleVadeliByBayiRows,
+    manimIncomingAllTodayByCorrespondentCode,
+    manimIncomingTransferredTodayByCorrespondentCode,
+    cariTotalBalancesByMatchCode,
+    cariNotDueBalancesByMatchCode,
+  ])
 
   const bayiEslemeBeklenenToplam = useMemo(() => bayiHavaleEslemeRows.reduce((s, r) => s + (Number(r.toplam) || 0), 0), [bayiHavaleEslemeRows])
   const bayiEslemeGelenToplam = useMemo(() => bayiHavaleEslemeRows.reduce((s, r) => s + (Number(r.gelenTutarToplami) || 0), 0), [bayiHavaleEslemeRows])
@@ -2192,9 +2216,19 @@ export default function App() {
       return
     }
     const printReceipts = Array.isArray(receiptsResp.receipts) ? receiptsResp.receipts : []
-    const incomingTodayByCorrespondentForPrint = rec.sourceFileDate
+    const incomingAllTodayByCorrespondentForPrint = rec.sourceFileDate
+      ? buildIncomingByCorrespondentCode(printReceipts, { onlyDay: rec.sourceFileDate })
+      : new Map<string, number>()
+    const incomingNotTransferredTodayByCorrespondentForPrint = rec.sourceFileDate
       ? buildIncomingByCorrespondentCode(printReceipts, { onlyDay: rec.sourceFileDate, excludeTransferred: true })
       : new Map<string, number>()
+    const incomingTransferredTodayByCorrespondentForPrint = new Map<string, number>()
+    for (const [code, total] of incomingAllTodayByCorrespondentForPrint.entries()) {
+      const nonTransferred = incomingNotTransferredTodayByCorrespondentForPrint.get(code) ?? 0
+      const transferred = (Number(total) || 0) - (Number(nonTransferred) || 0)
+      if (Math.abs(transferred) < 0.0001) continue
+      incomingTransferredTodayByCorrespondentForPrint.set(code, transferred)
+    }
 
     const completedAt = formatDateTimeTr(rec.completedAt || rec.updatedAt)
     const completedBy = (rec.completedBy || rec.updatedBy || currentUser?.userName || '').trim() || '-'
@@ -2283,17 +2317,19 @@ export default function App() {
 
     const havaleEslemeRows = havaleVadeliRows.map((r) => {
       const matchCode = normalizeMatchCode(r.bayiKodu)
-      const gelenBugun = incomingTodayByCorrespondentForPrint.get(matchCode) ?? 0
+      const gelenBugun = incomingAllTodayByCorrespondentForPrint.get(matchCode) ?? 0
+      const gelenBugunAktarildi = Math.max(0, incomingTransferredTodayByCorrespondentForPrint.get(matchCode) ?? 0)
       const totalBorc = Number(netsisTotalByMatchCode.get(matchCode) ?? 0) || 0
       const notDue = Math.max(0, Number(netsisNotDueByMatchCode.get(matchCode) ?? 0) || 0)
       const netToplamBorc =
         totalBorc < 0 ? totalBorc : (Number(totalBorc) || 0) - (Number(r.vadeli) || 0) - notDue
-      const toplam = (Number(r.toplam) || 0) + netToplamBorc
+      const cariBorcBakiyesi = netToplamBorc + gelenBugunAktarildi
+      const toplam = (Number(r.toplam) || 0) + cariBorcBakiyesi
       const gelenTutarToplami = Number(gelenBugun) || 0
       const fark = (Number(gelenTutarToplami) || 0) - toplam
       const eslesti = Math.abs(fark) < 0.01
       const durum = eslesti ? 'Tam eşleşti' : fark < 0 ? 'Eksik ödeme' : 'Fazla ödeme'
-      return { ...r, cariBorcBakiyesi: netToplamBorc, toplam, gelenTutarToplami, fark, eslesti, durum }
+      return { ...r, cariBorcBakiyesi, toplam, gelenTutarToplami, fark, eslesti, durum }
     })
     const havaleEslesmeyenRows = havaleEslemeRows.filter((r) => !r.eslesti && (Number(r.fark) || 0) < -0.01)
 
