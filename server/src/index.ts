@@ -3953,7 +3953,7 @@ app.get('/api/manim/receipts', async (req, res) => {
   }
 })
 
-async function fetchCariVadesiGelmemisBakiyeleri(args: { asOfDateYmd: string; cariCodes: string[] }) {
+async function fetchCariVadesiGelmisBakiyeleri(args: { asOfDateYmd: string; cariCodes: string[] }) {
   const pool = await getCariPool()
   const colsRes = await pool
     .request()
@@ -3973,17 +3973,17 @@ async function fetchCariVadesiGelmemisBakiyeleri(args: { asOfDateYmd: string; ca
     .slice(0, 800)
   if (values.length === 0) return new Map<string, number>()
 
-  const notDueBalanceCol = pickColumnName(colsUpper, [
-    'VADESIGELMEMIS',
-    'VADESI_GELMEMIS',
-    'VADESIGELMEMISBORC',
-    'VADESI_GELMEMIS_BORC',
-    'VADESIGELMEMISBAKIYE',
-    'VADESI_GELMEMIS_BAKIYE',
-    'VADESIZBORC',
-    'VADESIZ_BORC',
-    'VGELMEMIS',
-    'VGELMEMISBAKIYE',
+  const dueBalanceCol = pickColumnName(colsUpper, [
+    'VADESIGELMIS',
+    'VADESI_GELMIS',
+    'VADESIGELMISBORC',
+    'VADESI_GELMIS_BORC',
+    'VADESIGELMISBAKIYE',
+    'VADESI_GELMIS_BAKIYE',
+    'GECIKMISBORC',
+    'GECIKMIS_BORC',
+    'VGELMIS',
+    'VGELMISBAKIYE',
   ])
 
   const dueDateCol = pickColumnName(colsUpper, ['VADETARIHI', 'VADE_TARIHI', 'VADETRH', 'VADE_TRH', 'VADE', 'VAD'])
@@ -4000,12 +4000,12 @@ async function fetchCariVadesiGelmemisBakiyeleri(args: { asOfDateYmd: string; ca
   })
 
   let query: string
-  if (notDueBalanceCol) {
+  if (dueBalanceCol) {
     query = `
 ;WITH base AS (
   SELECT
     CAST(${codeCol} AS NVARCHAR(64)) AS CariCode,
-    CAST(${notDueBalanceCol} AS DECIMAL(18, 2)) AS Balance,
+    CAST(${dueBalanceCol} AS DECIMAL(18, 2)) AS Balance,
     ROW_NUMBER() OVER (PARTITION BY ${codeCol} ORDER BY ${dateCol} DESC) AS rn
   FROM dbo.TBLCAHAR WITH (NOLOCK)
   WHERE ${dateCol} <= @AsOf
@@ -4029,7 +4029,7 @@ FROM dbo.TBLCAHAR WITH (NOLOCK)
 WHERE ${dateCol} <= @AsOf
   AND ${codeCol} IN (${inParams.join(', ')})
   AND ${dueDateCol} IS NOT NULL
-  AND ${dueDateCol} > @AsOf
+  AND ${dueDateCol} <= @AsOf
 GROUP BY ${codeCol}
 `
   } else {
@@ -4068,7 +4068,7 @@ app.post('/api/cari-balances', async (req, res) => {
       .slice(0, 800)
 
     const kindRaw = String(req.body?.kind ?? '').trim().toUpperCase()
-    const kind = kindRaw === 'NOT_DUE' ? 'NOT_DUE' : 'TOTAL'
+    const kind = kindRaw === 'DUE' ? 'DUE' : 'TOTAL'
 
     const pool = await getPool()
     await ensureSchema(pool)
@@ -4142,8 +4142,8 @@ GROUP BY c.customer_code
     }
 
     const map =
-      kind === 'NOT_DUE'
-        ? await fetchCariVadesiGelmemisBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: codes })
+      kind === 'DUE'
+        ? await fetchCariVadesiGelmisBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: codes })
         : await fetchCariBorcBakiyeleri({ asOfDateYmd: parsedAsOf.date, cariCodes: codes })
     const balances = codes.map((code) => {
       const base = Number(map.get(code) ?? 0) || 0
