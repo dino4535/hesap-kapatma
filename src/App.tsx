@@ -21,6 +21,7 @@ import {
   fetchUsers,
   fetchCariBalances,
   fetchCariDayCredits,
+  fetchCariCreditWindow,
   importSalesFiles,
   deletePositionRepresentative,
   saveMutabakat,
@@ -597,6 +598,7 @@ export default function App() {
   const [cariBalancesByMatchCode, setCariBalancesByMatchCode] = useState<Record<string, number>>({})
   const [cariBalancesLoading, setCariBalancesLoading] = useState(false)
   const [cariPrevDayCreditsByMatchCode, setCariPrevDayCreditsByMatchCode] = useState<Record<string, number>>({})
+  const [cariCreditWindowByMatchCode, setCariCreditWindowByMatchCode] = useState<Record<string, number>>({})
   const [cashDeviceTesting, setCashDeviceTesting] = useState(false)
   const [cashDeviceSaving, setCashDeviceSaving] = useState(false)
   const [mutabakatDiffLimitTl, setMutabakatDiffLimitTl] = useState(0.01)
@@ -1524,6 +1526,39 @@ export default function App() {
       })
   }, [currentUser, cariBalanceAsOfDate, cariBalanceCodesKey, page])
 
+  useEffect(() => {
+    if (!currentUser) {
+      setCariCreditWindowByMatchCode({})
+      return
+    }
+    if (!cariBalanceAsOfDate) {
+      setCariCreditWindowByMatchCode({})
+      return
+    }
+    const shouldFetch = page === 'bayi-havale-match'
+    if (!shouldFetch) return
+
+    const codes = cariBalanceCodesKey ? cariBalanceCodesKey.split('|').filter(Boolean) : []
+    if (codes.length === 0) {
+      setCariCreditWindowByMatchCode({})
+      return
+    }
+
+    const start = ymdAddDays(cariBalanceAsOfDate, -30) || cariBalanceAsOfDate
+    fetchCariCreditWindow({ userName: currentUser.userName, start, end: cariBalanceAsOfDate, codes })
+      .then((r) => {
+        if (!r.ok) throw new Error(r.message || 'Netsis alacak toplamları alınamadı')
+        const next: Record<string, number> = {}
+        for (const row of r.credits ?? []) {
+          const key = normalizeMatchCode(row.code)
+          if (!key) continue
+          next[key] = Number(row.total) || 0
+        }
+        setCariCreditWindowByMatchCode(next)
+      })
+      .catch(() => setCariCreditWindowByMatchCode({}))
+  }, [currentUser, cariBalanceAsOfDate, cariBalanceCodesKey, page])
+
   const bayiHavaleEslemeRows = useMemo(() => {
     return havaleVadeliByBayiRows.map((r) => {
       const matchCode = normalizeMatchCode(r.bayiKodu)
@@ -1535,11 +1570,18 @@ export default function App() {
       const cariBorcBakiyesi = Number(cariBalancesByMatchCode[matchCode] ?? 0) || 0
       const toplam = (Number(r.toplam) || 0) + cariBorcBakiyesi
       const diffToday = (Number(gelenBugun) || 0) - toplam
-      const gelenTutarToplami =
+      let gelenTutarToplami =
         Math.abs(diffToday) < 0.01 ? Number(gelenBugun) || 0 : diffToday > 0.01 ? Number(gelenBugun) || 0 : (Number(gelenBugun) || 0) + (Number(gelenOnceki) || 0)
-      const fark = (Number(gelenTutarToplami) || 0) - toplam
+      let fark = (Number(gelenTutarToplami) || 0) - toplam
+      const netsisWindowAlacak = Number(cariCreditWindowByMatchCode[matchCode] ?? 0) || 0
+      const missing = Math.max(0, toplam - (Number(gelenTutarToplami) || 0))
+      const postedInWindow = cariBorcBakiyesi < 0.01 && missing > 0.01 && netsisWindowAlacak >= missing - 1
+      if (postedInWindow) {
+        gelenTutarToplami = toplam
+        fark = 0
+      }
       const eslesti = Math.abs(fark) < 0.01
-      const durum = eslesti ? 'Tam eşleşti' : fark < 0 ? 'Eksik ödeme' : 'Fazla ödeme'
+      const durum = postedInWindow ? 'Netsis’te işlenmiş' : eslesti ? 'Tam eşleşti' : fark < 0 ? 'Eksik ödeme' : 'Fazla ödeme'
       return { ...r, cariBorcBakiyesi, toplam, gelenTutarToplami, fark, eslesti, durum }
     })
   }, [
@@ -1548,6 +1590,7 @@ export default function App() {
     manimIncomingPrevByCorrespondentCode,
     cariBalancesByMatchCode,
     cariPrevDayCreditsByMatchCode,
+    cariCreditWindowByMatchCode,
   ])
 
   const bayiEslemeBeklenenToplam = useMemo(() => bayiHavaleEslemeRows.reduce((s, r) => s + (Number(r.toplam) || 0), 0), [bayiHavaleEslemeRows])

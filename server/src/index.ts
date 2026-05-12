@@ -4096,6 +4096,56 @@ GROUP BY ${codeCol}
   return map
 }
 
+async function fetchCariAlacakPencereToplamlari(args: { startYmd: string; endYmd: string; cariCodes: string[] }) {
+  const pool = await getCariPool()
+  const colsRes = await pool
+    .request()
+    .input('TableName', mssql.NVarChar(128), 'TBLCAHAR')
+    .query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @TableName`)
+  const colsUpper = new Set<string>((colsRes.recordset ?? []).map((r) => String((r as any).COLUMN_NAME ?? '').trim().toUpperCase()).filter(Boolean))
+
+  const codeCol = pickColumnName(colsUpper, ['CARKOD', 'CARIKOD', 'CARI_KOD', 'CARI_KODU', 'CHKODU', 'CH_KODU', 'CARI_CODE', 'CUST_CODE'])
+  const dateCol = pickColumnName(colsUpper, ['TARIH', 'TAR', 'ISLEM_TARIHI', 'ISLEMTARIHI', 'TARIHSAAT', 'TARIH_SAAT', 'DATE_', 'TRH'])
+  const alacakCol = pickColumnName(colsUpper, ['ALACAK', 'ALACAK_TUTAR', 'ALACAK_TUTARI', 'CREDIT', 'CR'])
+  if (!codeCol || !dateCol || !alacakCol) return new Map<string, number>()
+
+  const values = args.cariCodes
+    .map((x) => String(x ?? '').trim())
+    .filter((x) => !!x)
+    .slice(0, 800)
+  if (values.length === 0) return new Map<string, number>()
+
+  const req = pool.request()
+  req.input('Start', mssql.Date, args.startYmd)
+  req.input('End', mssql.Date, args.endYmd)
+  const inParams: string[] = []
+  values.forEach((v, idx) => {
+    const name = `ccw${idx}`
+    inParams.push(`@${name}`)
+    req.input(name, mssql.NVarChar(64), v)
+  })
+
+  const r = await req.query(`
+SELECT
+  CAST(${codeCol} AS NVARCHAR(64)) AS code,
+  CAST(SUM(COALESCE(${alacakCol}, 0)) AS DECIMAL(18, 2)) AS total
+FROM dbo.TBLCAHAR WITH (NOLOCK)
+WHERE ${dateCol} >= @Start
+  AND ${dateCol} < DATEADD(DAY, 1, @End)
+  AND ${codeCol} IN (${inParams.join(', ')})
+GROUP BY ${codeCol}
+`)
+
+  const map = new Map<string, number>()
+  for (const row of (r.recordset ?? []) as Array<{ code?: unknown; total?: unknown }>) {
+    const code = String(row.code ?? '').trim()
+    if (!code) continue
+    const total = Number(row.total ?? 0) || 0
+    if (total !== 0) map.set(code, total)
+  }
+  return map
+}
+
 app.post('/api/cari-balances', async (req, res) => {
   try {
     const userName = String(req.header('x-user') ?? '').trim()
@@ -4238,6 +4288,50 @@ app.post('/api/cari-day-credits', async (req, res) => {
     }
 
     const map = await fetchCariGunAlacakToplamlari({ dayYmd: parsedDay.date, cariCodes: codes })
+    res.json({
+      ok: true,
+      credits: codes.map((code) => ({ code, total: Number(map.get(code) ?? 0) || 0 })),
+    })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Bilinmeyen hata'
+    res.status(500).send(msg)
+  }
+})
+
+app.post('/api/cari-credit-window', async (req, res) => {
+  try {
+    const userName = String(req.header('x-user') ?? '').trim()
+    if (!userName) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+
+    const parsedStart = parseYmdDateText(req.body?.start)
+    if (!parsedStart.ok) {
+      res.status(400).send(parsedStart.error)
+      return
+    }
+    const parsedEnd = parseYmdDateText(req.body?.end)
+    if (!parsedEnd.ok) {
+      res.status(400).send(parsedEnd.error)
+      return
+    }
+
+    const rawCodes = Array.isArray(req.body?.codes) ? (req.body.codes as unknown[]) : []
+    const codes = rawCodes
+      .map((x) => String(x ?? '').trim())
+      .filter((x) => !!x)
+      .slice(0, 800)
+
+    const pool = await getPool()
+    await ensureSchema(pool)
+    const active = await requireActiveUser(pool, userName)
+    if (!active.active) {
+      res.status(401).send('Yetkisiz')
+      return
+    }
+
+    const map = await fetchCariAlacakPencereToplamlari({ startYmd: parsedStart.date, endYmd: parsedEnd.date, cariCodes: codes })
     res.json({
       ok: true,
       credits: codes.map((code) => ({ code, total: Number(map.get(code) ?? 0) || 0 })),
