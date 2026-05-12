@@ -434,6 +434,23 @@ export async function fetchCariBalances(args: {
   return (await res.json()) as { ok: boolean; balances: Array<{ code: string; balance: number }> }
 }
 
+export async function fetchCariDayCredits(args: {
+  userName: string
+  day: string
+  codes: string[]
+}): Promise<{ ok: boolean; credits: Array<{ code: string; total: number }>; message?: string }> {
+  const res = await fetch('/api/cari-day-credits', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-user': args.userName },
+    body: JSON.stringify({ day: args.day, codes: args.codes }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, credits: [], message: text || `HTTP ${res.status}` }
+  }
+  return (await res.json()) as { ok: boolean; credits: Array<{ code: string; total: number }> }
+}
+
 export interface PositionRepresentativeRow {
   positionCode: string
   representativeName: string

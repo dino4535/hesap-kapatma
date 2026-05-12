@@ -20,6 +20,7 @@ import {
   fetchPositionRepresentatives,
   fetchUsers,
   fetchCariBalances,
+  fetchCariDayCredits,
   importSalesFiles,
   deletePositionRepresentative,
   saveMutabakat,
@@ -595,6 +596,7 @@ export default function App() {
   const [helpTab, setHelpTab] = useState<'genel' | 'mutabakat' | 'nakit' | 'rapor' | 'yonetim' | 'kisayollar'>('genel')
   const [cariBalancesByMatchCode, setCariBalancesByMatchCode] = useState<Record<string, number>>({})
   const [cariBalancesLoading, setCariBalancesLoading] = useState(false)
+  const [cariPrevDayCreditsByMatchCode, setCariPrevDayCreditsByMatchCode] = useState<Record<string, number>>({})
   const [cashDeviceTesting, setCashDeviceTesting] = useState(false)
   const [cashDeviceSaving, setCashDeviceSaving] = useState(false)
   const [mutabakatDiffLimitTl, setMutabakatDiffLimitTl] = useState(0.01)
@@ -1488,11 +1490,48 @@ export default function App() {
       .finally(() => setCariBalancesLoading(false))
   }, [currentUser, cariBalanceAsOfDate, cariBalanceCodesKey, page, mutabakatStep])
 
+  useEffect(() => {
+    if (!currentUser) {
+      setCariPrevDayCreditsByMatchCode({})
+      return
+    }
+    if (!cariBalanceAsOfDate) {
+      setCariPrevDayCreditsByMatchCode({})
+      return
+    }
+    const shouldFetch = page === 'bayi-havale-match'
+    if (!shouldFetch) return
+
+    const codes = cariBalanceCodesKey ? cariBalanceCodesKey.split('|').filter(Boolean) : []
+    if (codes.length === 0) {
+      setCariPrevDayCreditsByMatchCode({})
+      return
+    }
+
+    fetchCariDayCredits({ userName: currentUser.userName, day: cariBalanceAsOfDate, codes })
+      .then((r) => {
+        if (!r.ok) throw new Error(r.message || 'Netsis alacak toplamları alınamadı')
+        const next: Record<string, number> = {}
+        for (const row of r.credits ?? []) {
+          const key = normalizeMatchCode(row.code)
+          if (!key) continue
+          next[key] = Number(row.total) || 0
+        }
+        setCariPrevDayCreditsByMatchCode(next)
+      })
+      .catch(() => {
+        setCariPrevDayCreditsByMatchCode({})
+      })
+  }, [currentUser, cariBalanceAsOfDate, cariBalanceCodesKey, page])
+
   const bayiHavaleEslemeRows = useMemo(() => {
     return havaleVadeliByBayiRows.map((r) => {
       const matchCode = normalizeMatchCode(r.bayiKodu)
       const gelenBugun = manimIncomingTodayByCorrespondentCode.get(matchCode) ?? 0
-      const gelenOnceki = manimIncomingPrevByCorrespondentCode.get(matchCode) ?? 0
+      const gelenOncekiRaw = manimIncomingPrevByCorrespondentCode.get(matchCode) ?? 0
+      const netsisPrevAlacak = Number(cariPrevDayCreditsByMatchCode[matchCode] ?? 0) || 0
+      const prevPosted = (Number(gelenOncekiRaw) || 0) > 0.01 && netsisPrevAlacak >= (Number(gelenOncekiRaw) || 0) - 1
+      const gelenOnceki = prevPosted ? 0 : gelenOncekiRaw
       const cariBorcBakiyesi = Number(cariBalancesByMatchCode[matchCode] ?? 0) || 0
       const toplam = (Number(r.toplam) || 0) + cariBorcBakiyesi
       const diffToday = (Number(gelenBugun) || 0) - toplam
@@ -1503,7 +1542,13 @@ export default function App() {
       const durum = eslesti ? 'Tam eşleşti' : fark < 0 ? 'Eksik ödeme' : 'Fazla ödeme'
       return { ...r, cariBorcBakiyesi, toplam, gelenTutarToplami, fark, eslesti, durum }
     })
-  }, [havaleVadeliByBayiRows, manimIncomingTodayByCorrespondentCode, manimIncomingPrevByCorrespondentCode, cariBalancesByMatchCode])
+  }, [
+    havaleVadeliByBayiRows,
+    manimIncomingTodayByCorrespondentCode,
+    manimIncomingPrevByCorrespondentCode,
+    cariBalancesByMatchCode,
+    cariPrevDayCreditsByMatchCode,
+  ])
 
   const bayiEslemeBeklenenToplam = useMemo(() => bayiHavaleEslemeRows.reduce((s, r) => s + (Number(r.toplam) || 0), 0), [bayiHavaleEslemeRows])
   const bayiEslemeGelenToplam = useMemo(() => bayiHavaleEslemeRows.reduce((s, r) => s + (Number(r.gelenTutarToplami) || 0), 0), [bayiHavaleEslemeRows])
