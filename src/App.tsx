@@ -597,6 +597,7 @@ export default function App() {
   const [helpTab, setHelpTab] = useState<'genel' | 'mutabakat' | 'nakit' | 'rapor' | 'yonetim' | 'kisayollar'>('genel')
   const [cariBalancesByMatchCode, setCariBalancesByMatchCode] = useState<Record<string, number>>({})
   const [cariBalancesLoading, setCariBalancesLoading] = useState(false)
+  const [cariBalancesError, setCariBalancesError] = useState<string>('')
   const [cariPrevDayCreditsByMatchCode, setCariPrevDayCreditsByMatchCode] = useState<Record<string, number>>({})
   const [cariCreditWindowByMatchCode, setCariCreditWindowByMatchCode] = useState<Record<string, number>>({})
   const [cashDeviceTesting, setCashDeviceTesting] = useState(false)
@@ -1457,11 +1458,13 @@ export default function App() {
     if (!currentUser) {
       setCariBalancesByMatchCode({})
       setCariBalancesLoading(false)
+      setCariBalancesError('')
       return
     }
     if (!cariBalanceAsOfDate) {
       setCariBalancesByMatchCode({})
       setCariBalancesLoading(false)
+      setCariBalancesError('')
       return
     }
     const shouldFetch = page === 'bayi-havale-match' || (page === 'mutabakat' && mutabakatStep === 2)
@@ -1471,10 +1474,12 @@ export default function App() {
     if (codes.length === 0) {
       setCariBalancesByMatchCode({})
       setCariBalancesLoading(false)
+      setCariBalancesError('')
       return
     }
 
     setCariBalancesLoading(true)
+    setCariBalancesError('')
     fetchCariBalances({ userName: currentUser.userName, asOfDate: cariBalanceAsOfDate, codes, kind: 'OVERDUE' })
       .then((r) => {
         if (!r.ok) throw new Error(r.message || 'Cari bakiye alınamadı')
@@ -1486,7 +1491,9 @@ export default function App() {
         }
         setCariBalancesByMatchCode(next)
       })
-      .catch(() => {
+      .catch((e) => {
+        const msg = e instanceof Error ? e.message : 'Cari bakiye alınamadı'
+        setCariBalancesError(msg)
         setCariBalancesByMatchCode({})
       })
       .finally(() => setCariBalancesLoading(false))
@@ -4059,7 +4066,9 @@ export default function App() {
                   <div className="mutabakat-meta-row">
                     <div className="mutabakat-label">Cari Bakiye Tarihi</div>
                     <div className="mutabakat-value">
-                      {cariBalanceAsOfDate ? `${formatDateTr(cariBalanceAsOfDate)}${cariBalancesLoading ? ' (yükleniyor...)' : ''}` : '-'}
+                      {cariBalanceAsOfDate
+                        ? `${formatDateTr(cariBalanceAsOfDate)}${cariBalancesLoading ? ' (yükleniyor...)' : ''}${cariBalancesError ? ` (hata: ${cariBalancesError})` : ''}`
+                        : '-'}
                     </div>
                   </div>
                   <div className="mutabakat-meta-row">
@@ -4787,7 +4796,9 @@ export default function App() {
                       <div className="mutabakat-meta-row">
                         <div className="mutabakat-label">Cari Bakiye Tarihi</div>
                         <div className="mutabakat-value">
-                          {cariBalanceAsOfDate ? `${formatDateTr(cariBalanceAsOfDate)}${cariBalancesLoading ? ' (yükleniyor...)' : ''}` : '-'}
+                          {cariBalanceAsOfDate
+                            ? `${formatDateTr(cariBalanceAsOfDate)}${cariBalancesLoading ? ' (yükleniyor...)' : ''}${cariBalancesError ? ` (hata: ${cariBalancesError})` : ''}`
+                            : '-'}
                         </div>
                       </div>
                       <div className="mutabakat-meta-row">
