@@ -1793,11 +1793,17 @@ export default function App() {
     const entered = banknoteCounts[d] ?? 0
     return s + (d === 1 ? entered : d * entered)
   }, 0)
-  const adjustmentTotal = mutabakatAdjustments.reduce((s, a) => s + (Number(a.amount) || 0), 0)
+  const torbaExtraTotal = mutabakatAdjustments
+    .filter((a) => a.type === 'GELMEYEN_HAVALE_NAKIT')
+    .reduce((s, a) => s + Math.abs(Number(a.amount) || 0), 0)
+  const torbaTutariWithExtras = torbaTutari + torbaExtraTotal
+  const adjustmentTotal = mutabakatAdjustments
+    .filter((a) => a.type !== 'GELMEYEN_HAVALE_NAKIT')
+    .reduce((s, a) => s + (Number(a.amount) || 0), 0)
   const cashEnabled = mutabakatMode === 'NAKIT' || mutabakatMode === 'KARMA'
   const bankEnabled = mutabakatMode === 'BANKA' || mutabakatMode === 'KARMA'
   const enteredTotal = (cashEnabled ? cashTotal : 0) + (bankEnabled ? Number(yatanTutar) || 0 : 0)
-  const mutabakatFark = enteredTotal + adjustmentTotal - torbaTutari
+  const mutabakatFark = enteredTotal + adjustmentTotal - torbaTutariWithExtras
   const isWithinMutabakatDiffLimit = Math.abs(mutabakatFark) <= mutabakatDiffLimitTl + 1e-9
   const mutabakatFarkClass = Math.abs(mutabakatFark) < 0.01 ? 'is-zero' : mutabakatFark > 0 ? 'is-positive' : 'is-negative'
 
@@ -2138,7 +2144,7 @@ export default function App() {
         depotCode: selectedDataset.depot,
         positionCode: selectedPosition,
         mode: mutabakatMode,
-        torbaTutari,
+        torbaTutari: torbaTutariWithExtras,
         enteredAmount: enteredTotal,
         cashJson: cashEnabled
           ? {
@@ -2250,7 +2256,7 @@ export default function App() {
     const cashTotal = cashRows.reduce((s, r) => s + r.lineTotal, 0)
 
     const adjustments = rec.adjustments ?? []
-    const adjustTotal = adjustments.reduce((s, a) => s + (Number(a.amount) || 0), 0)
+    const adjustTotal = adjustments.filter((a) => a.type !== 'GELMEYEN_HAVALE_NAKIT').reduce((s, a) => s + (Number(a.amount) || 0), 0)
 
     const metaDate = rec.sourceFileDate ? formatDateTr(rec.sourceFileDate) : '-'
     const metaDepot = depotLabel(rec.depotCode) || rec.depotCode || '-'
@@ -4249,6 +4255,8 @@ export default function App() {
                                             ? Math.abs(rawAmount)
                                             : nextType === 'FAZLA'
                                               ? -Math.abs(rawAmount)
+                                              : nextType === 'GELMEYEN_HAVALE_NAKIT'
+                                                ? Math.abs(rawAmount)
                                               : rawAmount
                                         return { ...x, type: nextType, ...(autoDescription != null ? { description: autoDescription } : null), amount }
                                       }),
@@ -4258,6 +4266,7 @@ export default function App() {
                                 >
                                   <option value="ACIK">Temsilci Açığı</option>
                                   <option value="FAZLA">Temsilci Fazlası</option>
+                                  <option value="GELMEYEN_HAVALE_NAKIT">Gelmeyen Havale Nakit Alındı</option>
                                   <option value="HATALI_TAHSILAT">Hatalı Tahsilat</option>
                                   <option value="DIGER">Diğer</option>
                                 </select>
@@ -4280,7 +4289,13 @@ export default function App() {
                                         if (x.id !== a.id) return x
                                         const raw = parseTrDecimalInput(e.target.value)
                                         const next =
-                                          x.type === 'ACIK' ? Math.abs(raw) : x.type === 'FAZLA' ? -Math.abs(raw) : raw
+                                          x.type === 'ACIK'
+                                            ? Math.abs(raw)
+                                            : x.type === 'FAZLA'
+                                              ? -Math.abs(raw)
+                                              : x.type === 'GELMEYEN_HAVALE_NAKIT'
+                                                ? Math.abs(raw)
+                                                : raw
                                         return { ...x, amount: next }
                                       }),
                                     )
@@ -4422,7 +4437,7 @@ export default function App() {
                       </div>
                       <div className="mutabakat-meta-row">
                         <div className="mutabakat-label">Torba Tutarı</div>
-                        <div className="mutabakat-value">{formatMoney(torbaTutari)}</div>
+                        <div className="mutabakat-value">{formatMoney(torbaTutariWithExtras)}</div>
                       </div>
                     </div>
 
@@ -4882,7 +4897,7 @@ export default function App() {
                     <div className="mutabakat-meta">
                       <div className="mutabakat-meta-row">
                         <div className="mutabakat-label">Torba Tutarı</div>
-                        <div className="mutabakat-value">{formatMoney(torbaTutari)}</div>
+                        <div className="mutabakat-value">{formatMoney(torbaTutariWithExtras)}</div>
                       </div>
                       <div className="mutabakat-meta-row">
                         <div className="mutabakat-label">Nakit Toplam</div>
@@ -5408,7 +5423,7 @@ export default function App() {
                   </div>
                   <div className="summary-row total">
                     <div>TOPLAM NAKİT (Torba Tutarı)</div>
-                    <div>{formatMoney(summaryTotals.torbaTutari)}</div>
+                    <div>{formatMoney(torbaTutariWithExtras)}</div>
                   </div>
                   <div className="summary-row">
                     <div>FARK (Mutabakat)</div>

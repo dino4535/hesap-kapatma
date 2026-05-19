@@ -5026,7 +5026,11 @@ app.post('/api/mutabakat', async (req, res) => {
     const adjustments = req.body?.adjustments
     const adjustmentsJson = Array.isArray(adjustments) ? JSON.stringify(adjustments) : null
     const adjustmentAmount = Array.isArray(adjustments)
-      ? adjustments.reduce((s: number, a: any) => s + (toNumberFlexible(a?.amount) ?? toNumberOrUndef(a?.amount) ?? 0), 0)
+      ? adjustments.reduce((s: number, a: any) => {
+          const t = String(a?.type ?? '').trim().toUpperCase()
+          if (t === 'GELMEYEN_HAVALE_NAKIT') return s
+          return s + (toNumberFlexible(a?.amount) ?? toNumberOrUndef(a?.amount) ?? 0)
+        }, 0)
       : 0
     const diffAmount = enteredAmount + adjustmentAmount - torbaTutari
 

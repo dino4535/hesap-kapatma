@@ -319,7 +319,7 @@ export type MutabakatMode = 'NAKIT' | 'BANKA' | 'KARMA'
 
 export interface MutabakatAdjustment {
   id: string
-  type: 'ACIK' | 'FAZLA' | 'HATALI_TAHSILAT' | 'DIGER'
+  type: 'ACIK' | 'FAZLA' | 'GELMEYEN_HAVALE_NAKIT' | 'HATALI_TAHSILAT' | 'DIGER'
   description?: string
   amount: number
 }
