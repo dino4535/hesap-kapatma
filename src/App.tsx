@@ -1567,6 +1567,8 @@ export default function App() {
       for (const move of diffAllocationTransfers(before, after)) {
         if (move.from === 'HAVALE' && move.to === 'NAKIT') totalEffect += move.amount
         else if (move.from === 'NAKIT' && move.to === 'HAVALE') totalEffect -= move.amount
+        else if (move.from === 'VADELI' && move.to === 'NAKIT') totalEffect += move.amount
+        else if (move.from === 'NAKIT' && move.to === 'VADELI') totalEffect -= move.amount
       }
     }
 
