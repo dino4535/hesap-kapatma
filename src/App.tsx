@@ -2079,7 +2079,9 @@ export default function App() {
 
   const addMutabakatAdjustment = () => {
     const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
-    setMutabakatAdjustments((prev) => prev.concat([{ id, type: 'ACIK', description: '', amount: 0 }]))
+    const rep = (representativeByPositionCode.get((selectedPosition ?? '').trim()) || selectedRepresentativeName).trim()
+    const description = rep ? `${rep} hesap açığı` : 'Hesap açığı'
+    setMutabakatAdjustments((prev) => prev.concat([{ id, type: 'ACIK', description, amount: 0 }]))
   }
 
   const saveMutabakatData = async () => {
@@ -4225,10 +4227,37 @@ export default function App() {
                               <td>
                                 <select
                                   value={a.type}
-                                  onChange={(e) => setMutabakatAdjustments((prev) => prev.map((x) => (x.id === a.id ? { ...x, type: e.target.value as MutabakatAdjustment['type'] } : x)))}
+                                  onChange={(e) => {
+                                    const nextType = e.target.value as MutabakatAdjustment['type']
+                                    const rep = (representativeByPositionCode.get((selectedPosition ?? '').trim()) || selectedRepresentativeName).trim()
+                                    const autoDescription =
+                                      nextType === 'ACIK'
+                                        ? rep
+                                          ? `${rep} hesap açığı`
+                                          : 'Hesap açığı'
+                                        : nextType === 'FAZLA'
+                                          ? rep
+                                            ? `${rep} hesap fazlası`
+                                            : 'Hesap fazlası'
+                                          : null
+                                    setMutabakatAdjustments((prev) =>
+                                      prev.map((x) => {
+                                        if (x.id !== a.id) return x
+                                        const rawAmount = Number(x.amount) || 0
+                                        const amount =
+                                          nextType === 'ACIK'
+                                            ? Math.abs(rawAmount)
+                                            : nextType === 'FAZLA'
+                                              ? -Math.abs(rawAmount)
+                                              : rawAmount
+                                        return { ...x, type: nextType, ...(autoDescription != null ? { description: autoDescription } : null), amount }
+                                      }),
+                                    )
+                                  }}
                                   disabled={mutabakatSaved?.status === 'COMPLETED'}
                                 >
                                   <option value="ACIK">Temsilci Açığı</option>
+                                  <option value="FAZLA">Temsilci Fazlası</option>
                                   <option value="HATALI_TAHSILAT">Hatalı Tahsilat</option>
                                   <option value="DIGER">Diğer</option>
                                 </select>
@@ -4247,7 +4276,13 @@ export default function App() {
                                   value={a.amount || ''}
                                   onChange={(e) =>
                                     setMutabakatAdjustments((prev) =>
-                                      prev.map((x) => (x.id === a.id ? { ...x, amount: parseTrDecimalInput(e.target.value) } : x)),
+                                      prev.map((x) => {
+                                        if (x.id !== a.id) return x
+                                        const raw = parseTrDecimalInput(e.target.value)
+                                        const next =
+                                          x.type === 'ACIK' ? Math.abs(raw) : x.type === 'FAZLA' ? -Math.abs(raw) : raw
+                                        return { ...x, amount: next }
+                                      }),
                                     )
                                   }
                                   disabled={mutabakatSaved?.status === 'COMPLETED'}
